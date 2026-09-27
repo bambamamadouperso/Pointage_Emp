@@ -189,5 +189,13 @@
   }
   kind.addEventListener('change', () => { refreshDbTools(); chips.hidden = true; say(''); });
   refreshDbTools();
+
+  // Indique que le test est en cours (il peut durer jusqu'à ~30 s si le serveur ne répond pas).
+  form.addEventListener('submit', e => {
+    const btn = e.submitter;
+    if (btn && btn.value === 'test') {
+      setTimeout(() => { btn.disabled = true; btn.textContent = 'Test en cours… (30 s max.)'; }, 0);
+    }
+  });
 </script>
 {% endblock %}

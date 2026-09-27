@@ -101,7 +101,8 @@ def odbc_job(monkeypatch):
         db.query(SyncJob).filter_by(name="hf-job").delete()
         db.query(Connection).filter(Connection.name.in_(["hf-src", "hf-dst"])).delete()
         db.commit()
-        src = Connection(name="hf-src", kind="hfsql", host=u.host, port=4900, database=u.database,
+        # Port réel du serveur simulé : la connexion vérifie d'abord que le port répond.
+        src = Connection(name="hf-src", kind="hfsql", host=u.host, port=u.port or 5432, database=u.database,
                          username=u.username, password_enc=encrypt(u.password or ""))
         tgt = Connection(name="hf-dst", kind="postgresql", host=u.host, port=u.port or 5432, database=u.database,
                          username=u.username, password_enc=encrypt(u.password or ""))
@@ -161,3 +162,41 @@ def test_odbc_sync_end_to_end(odbc_job):
     # Réimport complet : fonctionne aussi pour une source HFSQL.
     run = _run(job_id, reset=True)
     assert run.status == "success" and run.rows_written == 3 + 2
+
+
+def test_unreachable_port_fails_fast(monkeypatch):
+    import time
+
+    monkeypatch.setattr(hfsql, "_pyodbc", lambda: FakePyodbc(["HFSQL"]))
+    start = time.monotonic()
+    with pytest.raises(hfsql.HfsqlError, match="Connexion refusée par 127.0.0.1:1"):
+        hfsql.connect(_conn(host="127.0.0.1", port=1))
+    assert time.monotonic() - start < 5
+
+
+def test_hanging_driver_times_out(monkeypatch):
+    import threading
+    import time
+
+    class HangingPyodbc(FakePyodbc):
+        Error = Exception
+
+        def connect(self, *a, **kw):
+            time.sleep(5)
+
+    monkeypatch.setattr(hfsql, "_pyodbc", lambda: HangingPyodbc(["HFSQL"]))
+    monkeypatch.setattr(hfsql, "check_port", lambda host, port: None)
+    monkeypatch.setattr(hfsql, "CONNECT_TIMEOUT", 1)
+    start = time.monotonic()
+    with pytest.raises(hfsql.HfsqlError, match="ne répond pas après 1 s"):
+        hfsql.connect(_conn())
+    assert time.monotonic() - start < 3
+
+
+def test_port_check_messages():
+    from app.netcheck import NetError, check_port
+
+    with pytest.raises(NetError, match="refusée"):
+        check_port("127.0.0.1", 1)
+    with pytest.raises(NetError, match="inconnu"):
+        check_port("hote-inexistant.invalid", 4900)

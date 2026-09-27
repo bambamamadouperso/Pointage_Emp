@@ -29,6 +29,7 @@ from sqlalchemy import (
 )
 
 from .crypto import decrypt
+from .netcheck import NetError, call_with_timeout, check_port
 
 DRIVER_HINTS = ("hfsql", "hyperfile")
 SQL_IDENTIFIER_QUOTE_CHAR = 29
@@ -96,10 +97,31 @@ def connection_string(conn) -> str:
     return ";".join(f"{k}={v if k == 'DRIVER' else _brace(str(v))}" for k, v in parts.items()) + ";"
 
 
+CONNECT_TIMEOUT = 30
+
+
 def connect(conn, timeout: int = 15):
     pyodbc = _pyodbc()
+    cs = connection_string(conn)  # vérifie aussi la présence du pilote
+    # 1) Le port HFSQL répond-il ? (réponse en quelques secondes au lieu d'un blocage du pilote)
     try:
-        return pyodbc.connect(connection_string(conn), timeout=timeout, autocommit=True)
+        check_port(conn.host, conn.port or 4900)
+    except NetError as exc:
+        raise HfsqlError(str(exc)) from exc
+
+    # 2) Connexion ODBC, avec un délai maximal : certains pilotes ignorent leur propre délai.
+    def _open():
+        return pyodbc.connect(cs, timeout=timeout, autocommit=True)
+
+    try:
+        return call_with_timeout(
+            _open, CONNECT_TIMEOUT,
+            f"Le pilote ODBC HFSQL ne répond pas après {CONNECT_TIMEOUT} s (le port {conn.port} est pourtant "
+            "joignable). Vérifiez le nom de la base, l'utilisateur et le mot de passe, et testez la connexion "
+            "dans l'administrateur ODBC 64 bits (odbcad32).",
+        )
+    except NetError as exc:
+        raise HfsqlError(str(exc)) from exc
     except pyodbc.Error as exc:
         raise HfsqlError(f"Connexion HFSQL impossible : {odbc_message(exc)}") from exc
 

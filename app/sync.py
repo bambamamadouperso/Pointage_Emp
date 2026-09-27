@@ -37,6 +37,7 @@ from . import gsheet, hfsql, watermark
 from .config import settings
 from .database import SessionLocal
 from .errors import friendly
+from .netcheck import NetError, call_with_timeout, check_port
 from .joblog import RunLogger, write_log
 from .models import MODE_FULL, MODE_INCREMENTAL, SOURCE_KINDS, Connection, JobRun, SyncJob, TableMapping, utcnow
 
@@ -72,7 +73,13 @@ def test_connection(conn: Connection) -> str:
         return gsheet.describe(conn)
     if conn.kind == "hfsql":
         with hfsql.Source(conn) as src:
-            return f"{src.describe()} — {len(src.tables())} table(s)"
+            summary = src.describe()
+            try:
+                count = call_with_timeout(lambda: len(src.tables()), 30, "liste des tables trop longue")
+                return f"{summary} — {count} table(s)"
+            except NetError:
+                return f"{summary} — connexion réussie (la liste des tables met plus de 30 s à répondre)"
+    check_port(conn.host, conn.port)
     engine = make_engine(conn)
     try:
         with engine.connect() as c:
