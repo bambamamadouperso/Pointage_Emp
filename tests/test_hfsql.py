@@ -206,3 +206,22 @@ def test_connection_string_dsn():
     cs = hfsql.connection_string(_conn(options="DSN=HRsmart", password_enc=encrypt("")))
     assert cs == "DSN=HRsmart;UID=admin;PWD=;"
     assert hfsql.masked("DSN=x;UID=a;PWD={p;w};") == "DSN=x;UID=a;PWD=*****;"
+
+
+def test_missing_dsn_lists_visible_sources(monkeypatch):
+    class Err(Exception):
+        pass
+
+    class DsnPyodbc(FakePyodbc):
+        Error = Err
+
+        def connect(self, *a, **kw):
+            raise Err("IM002", "[IM002] Source de données introuvable et nom de pilote non spécifié")
+
+        def dataSources(self):
+            return {"Autre": "SQL Server", "HRsmart32": "HFSQL"}
+
+    monkeypatch.setattr(hfsql, "_pyodbc", lambda: DsnPyodbc(["HFSQL"]))
+    monkeypatch.setattr(hfsql, "check_port", lambda host, port: None)
+    with pytest.raises(hfsql.HfsqlError, match="DSN système.*Sources visibles par l'application : Autre, HRsmart32"):
+        hfsql.connect(_conn(options="DSN=HRsmart"))

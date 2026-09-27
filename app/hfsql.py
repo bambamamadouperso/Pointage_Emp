@@ -136,7 +136,19 @@ def connect(conn, timeout: int = 15):
     except NetError as exc:
         raise HfsqlError(str(exc)) from exc
     except pyodbc.Error as exc:
-        raise HfsqlError(f"Connexion HFSQL impossible : {odbc_message(exc)}") from exc
+        message = odbc_message(exc)
+        if "IM002" in str(exc) or "IM002" in message:
+            try:
+                visible = sorted(pyodbc.dataSources())
+            except Exception:
+                visible = []
+            raise HfsqlError(
+                "Source ODBC introuvable pour l'application. Elle tourne en tâche de fond (compte SYSTEM) et ne voit "
+                "que les sources déclarées dans l'onglet « DSN système » de l'administrateur ODBC 64 bits "
+                "(C:\\Windows\\System32\\odbcad32.exe), pas les « DSN utilisateur » ni l'administrateur 32 bits. "
+                f"Sources visibles par l'application : {', '.join(visible) or 'aucune'}."
+            ) from exc
+        raise HfsqlError(f"Connexion HFSQL impossible : {message}") from exc
 
 
 def odbc_message(exc: Exception) -> str:
