@@ -149,6 +149,8 @@ function Wait-Docker([int]$TimeoutSeconds = 300, [string]$ExpectedOsType = "") {
             Write-Warn "Docker ne répond toujours pas après $elapsed s."
             Write-Warn "Regardez la fenêtre Docker Desktop : acceptez les conditions, cliquez sur 'Skip' si elle"
             Write-Warn "demande de se connecter, ou suivez son message (mise à jour de WSL, redémarrage...)."
+            Write-Warn "Si elle affiche 'Virtualization support not detected', Docker ne peut pas fonctionner"
+            Write-Warn "sur ce serveur : utilisez installer-windows-sans-docker.bat à la place."
             $answer = Read-Host "    Continuer d'attendre 5 minutes de plus ? (O/n)"
             if ($answer -match "^[nN]") { return $false }
             $TimeoutSeconds += 300

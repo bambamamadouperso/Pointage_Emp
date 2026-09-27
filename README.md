@@ -51,6 +51,21 @@ Le déroulé est enregistré dans `installation.log`.
 > l'écran *Connexions* (`localhost` désigne le conteneur). Docker Desktop démarre à l'ouverture de
 > session Windows : sur un serveur, configurez une ouverture de session automatique.
 
+### Serveur sans virtualisation : installation sans Docker
+
+Si Docker Desktop affiche **« Virtualization support not detected »** (machine virtuelle sans
+virtualisation imbriquée, VPS, virtualisation désactivée dans le BIOS), utilisez
+**`installer-windows-sans-docker.bat`** :
+
+- installe Python 3.12 si besoin, puis les dépendances dans un dossier `.venv` ;
+- crée le `.env` (même principe que ci-dessus) ;
+- enregistre l'application comme **tâche Windows lancée au démarrage du serveur** (compte SYSTEM,
+  relancée automatiquement en cas d'arrêt) : aucune session ouverte n'est nécessaire ;
+- ouvre le port dans le pare-feu. Journal technique : `logs\application.log`.
+
+Sans Docker, une base installée sur le même serveur s'atteint avec l'hôte **`localhost`**.
+Pour arrêter ou démarrer l'application : Planificateur de tâches → « Synchro MariaDB-PostgreSQL ».
+
 ## Démarrage rapide avec Docker
 
 ```bash
