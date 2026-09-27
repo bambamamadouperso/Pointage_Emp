@@ -22,6 +22,10 @@ avec historique et logs.
 - **Création automatique** du schéma et des tables cibles (types convertis : `UNSIGNED`, `ENUM`, `SET`,
   `TIME`, `YEAR`, `BIT`, dates `0000-00-00`, caractères NUL…). Une colonne ajoutée dans la source est
   ajoutée dans la cible au passage suivant.
+- **Données** : liste des tables PostgreSQL avec leur nombre de lignes, le job qui les alimente et la
+  comparaison avec la source (bouton « Comparer avec les sources »). Chaque table se consulte avec
+  recherche, filtres par colonne (=, ≠, >, ≥, <, ≤, contient, commence par, vide / non vide), tri,
+  pagination et export CSV des lignes filtrées.
 - **Tableau de bord** : état des jobs, prochaines exécutions, succès/erreurs sur 24 h, lignes transférées.
 - **Logs** : journal de chaque exécution et de chaque table, filtres (job, niveau, table, texte),
   pagination, export CSV. Purge automatique après `LOG_RETENTION_DAYS` jours.

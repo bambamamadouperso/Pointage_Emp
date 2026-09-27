@@ -75,6 +75,15 @@ def page_url(request: Request, page: int) -> str:
 templates.env.globals["page_url"] = page_url
 
 
+def sort_url(request: Request, column: str, direction: str) -> str:
+    """Même page, triée sur une colonne (retour à la première page)."""
+    params = [(k, v) for k, v in request.query_params.multi_items() if k not in ("sort", "dir", "page")]
+    return "?" + urlencode(params + [("sort", column), ("dir", direction)])
+
+
+templates.env.globals["sort_url"] = sort_url
+
+
 def render(request: Request, name: str, **context):
     context.setdefault("user", request.session.get("user"))
     return templates.TemplateResponse(request, name, context)

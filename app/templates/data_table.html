@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+{% block title %}{{ schema }}.{{ table }}{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>{{ schema }}.{{ table }}</h1>
+    <p class="muted">
+      {% if conn %}{{ conn.name }} — {{ conn.host }}/{{ conn.database }}{% endif %}
+      {% for m in mappings %} · alimentée par <a href="/jobs/{{ m.job_id }}">{{ m.job.name }}</a> ← {{ m.source_table }}
+        (synchro : {{ m.last_sync_at | dt }}){% endfor %}
+    </p>
+  </div>
+  <a href="/data{% if conn %}?conn_id={{ conn.id }}{% endif %}" class="muted">← Toutes les tables</a>
+</div>
+
+{% if conn and columns %}
+<form method="get" class="card data-filters" id="filters">
+  <input type="hidden" name="sort" value="{{ sort }}">
+  <input type="hidden" name="dir" value="{{ 'desc' if desc else 'asc' }}">
+  <div class="row">
+    <label class="grow">Recherche dans toutes les colonnes <input name="q" value="{{ search }}" placeholder="texte à rechercher"></label>
+    <label class="narrow-select">Lignes par page
+      <select name="size">{% for s in page_sizes %}<option value="{{ s }}" {{ 'selected' if s == size }}>{{ s }}</option>{% endfor %}</select>
+    </label>
+  </div>
+  <div id="filter_rows">
+    {% for f in filters %}
+    <div class="filter-row">
+      <select name="fc" aria-label="Colonne">
+        <option value="">— colonne —</option>
+        {% for name, type in columns %}<option value="{{ name }}" {{ 'selected' if f.column == name }}>{{ name }}</option>{% endfor %}
+      </select>
+      <select name="fo" aria-label="Opérateur">
+        {% for key, label in operators.items() %}<option value="{{ key }}" {{ 'selected' if f.op == key }}>{{ label }}</option>{% endfor %}
+      </select>
+      <input name="fv" value="{{ f.value }}" placeholder="valeur (ex. 2024-01-31, E001, 12.5)" aria-label="Valeur">
+      <button type="button" class="btn small ghost remove-filter" title="Retirer ce filtre">✕</button>
+    </div>
+    {% endfor %}
+  </div>
+  <div class="form-actions">
+    <button type="button" class="btn small" id="add_filter">+ Ajouter un filtre</button>
+    <button class="btn primary">Appliquer</button>
+    <a class="btn ghost" href="?">Réinitialiser</a>
+    {% if result %}<a class="btn" href="{{ request.url.path }}/export.csv?{{ request.query_params }}">Exporter CSV ({{ [result.filtered, 100000] | min | num }} lignes)</a>{% endif %}
+  </div>
+</form>
+{% endif %}
+
+{% if error %}<div class="flash err">{{ error }}</div>{% endif %}
+
+{% if result %}
+<section class="card">
+  <div class="card-head">
+    <h2>{{ result.filtered | num }} ligne(s){% if result.filtered != result.total %} <span class="muted small">sur {{ result.total | num }} au total</span>{% endif %}</h2>
+    <span class="muted small">{{ columns | length }} colonnes · cliquez sur un en-tête pour trier</span>
+  </div>
+  {% if not result.rows %}
+    <p class="empty">Aucune ligne ne correspond aux filtres.</p>
+  {% else %}
+  <div class="table-wrap data-grid"><table>
+    <thead><tr>
+      {% for name, type in result.columns %}
+        {% set active = sort == name %}
+        <th><a class="sort {{ 'active' if active }}" href="{{ sort_url(request, name, 'asc' if active and desc else ('desc' if active else 'asc')) }}" title="{{ type }}">
+          {{ name }}{% if active %} {{ '▼' if desc else '▲' }}{% endif %}</a>
+          <span class="coltype">{{ type | lower }}</span></th>
+      {% endfor %}
+    </tr></thead>
+    <tbody>
+    {% for row in result.rows %}
+      <tr>{% for value in row %}{% set shown, cls = display(value) %}<td class="{{ cls }}" {% if shown|length > 80 %}title="{{ shown }}"{% endif %}>{{ shown | truncate(80, True, '…', 0) }}</td>{% endfor %}</tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {% include "_pager.html" with context %}
+  {% endif %}
+</section>
+{% endif %}
+{% endblock %}
+{% block scripts %}
+<script>
+  const rows = document.getElementById('filter_rows');
+  if (rows) {
+    const noValue = {{ no_value_ops | list | tojson }};
+    const sync = row => {
+      const op = row.querySelector('[name=fo]').value;
+      const input = row.querySelector('[name=fv]');
+      input.hidden = noValue.includes(op);
+    };
+    const wire = row => {
+      row.querySelector('[name=fo]').addEventListener('change', () => sync(row));
+      row.querySelector('.remove-filter').addEventListener('click', () => {
+        if (rows.children.length > 1) row.remove();
+        else { row.querySelector('[name=fc]').value = ''; row.querySelector('[name=fv]').value = ''; }
+      });
+      sync(row);
+    };
+    [...rows.children].forEach(wire);
+    document.getElementById('add_filter').addEventListener('click', () => {
+      const row = rows.lastElementChild.cloneNode(true);
+      row.querySelector('[name=fc]').value = '';
+      row.querySelector('[name=fo]').value = 'contains';
+      row.querySelector('[name=fv]').value = '';
+      rows.appendChild(row);
+      wire(row);
+    });
+  }
+</script>
+{% endblock %}

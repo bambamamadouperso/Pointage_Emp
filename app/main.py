@@ -11,7 +11,7 @@ from . import scheduler
 from .config import settings
 from .database import init_db
 from .joblog import write_log
-from .routers import connections, jobs, monitoring
+from .routers import connections, data, jobs, monitoring
 from .web import LoginRequired, check_credentials, flash, redirect, render
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -68,3 +68,4 @@ def health():
 app.include_router(monitoring.router)
 app.include_router(connections.router)
 app.include_router(jobs.router)
+app.include_router(data.router)

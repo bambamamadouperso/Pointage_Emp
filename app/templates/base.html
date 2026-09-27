@@ -15,6 +15,7 @@
     {% set path = request.url.path %}
     <a href="/" class="{{ 'active' if path == '/' }}">Tableau de bord</a>
     <a href="/jobs" class="{{ 'active' if path.startswith('/jobs') }}">Jobs</a>
+    <a href="/data" class="{{ 'active' if path.startswith('/data') }}">Données</a>
     <a href="/connections" class="{{ 'active' if path.startswith('/connections') }}">Connexions</a>
     <a href="/runs" class="{{ 'active' if path.startswith('/runs') }}">Exécutions</a>
     <a href="/logs" class="{{ 'active' if path.startswith('/logs') }}">Logs</a>

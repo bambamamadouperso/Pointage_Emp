@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% block title %}Données{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Données</h1>
+    <p class="muted">Tables présentes dans PostgreSQL et leur nombre de lignes.</p>
+  </div>
+</div>
+
+{% if not targets %}
+  <section class="card"><p class="empty">Aucune base PostgreSQL. <a href="/connections/new?kind=postgresql">Ajoutez une connexion cible</a>.</p></section>
+{% else %}
+<form method="get" class="card filters">
+  <label>Base PostgreSQL
+    <select name="conn_id" onchange="this.form.submit()">
+      {% for c in targets %}<option value="{{ c.id }}" {{ 'selected' if conn and c.id == conn.id }}>{{ c.name }} — {{ c.host }}/{{ c.database }}</option>{% endfor %}
+    </select>
+  </label>
+  <label class="grow">Rechercher une table <input name="q" value="{{ q }}" placeholder="nom de table ou de schéma"></label>
+  <label class="check"><input type="checkbox" name="synced" value="1" {{ 'checked' if synced_only }}> Tables synchronisées uniquement</label>
+  <button class="btn">Filtrer</button>
+</form>
+
+{% if error %}<div class="flash err">{{ error }}</div>{% endif %}
+
+{% if conn and not error %}
+<section class="stats">
+  <div class="stat"><span class="label">Tables</span><span class="value">{{ tables|length }}</span></div>
+  <div class="stat"><span class="label">Lignes au total</span><span class="value">{{ total_rows | num }}</span></div>
+  <div class="stat"><span class="label">Tables synchronisées</span><span class="value">{{ tables | selectattr('mappings') | list | length }}</span></div>
+</section>
+
+<section class="card">
+  <div class="card-head">
+    <h2>{{ conn.database }} <span class="muted small">({{ conn.host }})</span></h2>
+    {% if job_ids %}<button type="button" class="btn small" id="compare">⇄ Comparer avec les sources</button>{% endif %}
+  </div>
+  {% if not tables %}
+    <p class="empty">Aucune table{% if q or synced_only %} ne correspond au filtre{% endif %}.</p>
+  {% else %}
+  <div class="table-wrap"><table>
+    <thead><tr>
+      <th>Schéma</th><th>Table</th><th class="right">Lignes</th><th>Alimentée par</th>
+      <th class="right">Lignes source</th><th class="right">Écart</th><th class="right">Taille</th><th>Dernière synchro</th><th></th>
+    </tr></thead>
+    <tbody>
+    {% for t in tables %}
+      <tr>
+        <td class="muted">{{ t.schema }}</td>
+        <td><a href="/data/{{ conn.id }}/{{ t.schema | urlencode }}/{{ t.name | urlencode }}"><strong>{{ t.name }}</strong></a></td>
+        <td class="right num" data-target-rows="{{ t.rows }}">{% if not t.exact %}<span title="Estimation (comptage trop long)">≈ </span>{% endif %}{{ t.rows | num }}</td>
+        <td>
+          {% for m in t.mappings %}
+            <a href="/jobs/{{ m.job_id }}">{{ m.job.name }}</a> <span class="muted small">← {{ m.source_table }}</span>{% if not loop.last %}<br>{% endif %}
+          {% else %}<span class="muted">—</span>{% endfor %}
+        </td>
+        <td class="right num source-count" {% if t.mappings %}data-job="{{ t.mappings[0].job_id }}" data-mapping="{{ t.mappings[0].id }}"{% endif %}>—</td>
+        <td class="right num diff">—</td>
+        <td class="right muted">{{ t.size_label }}</td>
+        <td>{% if t.mappings %}{{ t.mappings[0].last_sync_at | dt }}{% else %}—{% endif %}</td>
+        <td><a class="btn small ghost" href="/data/{{ conn.id }}/{{ t.schema | urlencode }}/{{ t.name | urlencode }}">Voir</a></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  <p class="muted small">« Lignes source » compte les lignes dans MariaDB ou Google Sheets. En mode incrémental, un écart peut
+    être normal (lignes supprimées dans la source, ou arrivées depuis la dernière synchro).</p>
+  {% endif %}
+</section>
+{% endif %}
+{% endif %}
+{% endblock %}
+{% block scripts %}
+<script>
+  const btn = document.getElementById('compare');
+  if (btn) btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    const cells = [...document.querySelectorAll('.source-count[data-job]')];
+    cells.forEach(c => c.textContent = '…');
+    const jobs = [...new Set(cells.map(c => c.dataset.job))];
+    const fmt = n => n.toLocaleString('fr-FR');
+    await Promise.all(jobs.map(async job => {
+      let data;
+      try {
+        const res = await fetch(`/data/source-counts/${job}`);
+        data = await res.json();
+        if (!res.ok) throw new Error(data.error);
+      } catch (e) {
+        cells.filter(c => c.dataset.job === job).forEach(c => { c.textContent = 'erreur'; c.title = e.message; });
+        return;
+      }
+      cells.filter(c => c.dataset.job === job).forEach(c => {
+        const info = data.counts[c.dataset.mapping] || {};
+        const diffCell = c.nextElementSibling;
+        if (info.error !== undefined) { c.textContent = 'erreur'; c.title = info.error; return; }
+        c.textContent = fmt(info.rows);
+        const target = Number(c.parentElement.querySelector('[data-target-rows]').dataset.targetRows);
+        const diff = target - info.rows;
+        diffCell.textContent = diff === 0 ? '✓' : (diff > 0 ? '+' : '') + fmt(diff);
+        diffCell.className = 'right num diff ' + (diff === 0 ? 'ok-text' : 'warn-text');
+      });
+    }));
+    btn.disabled = false;
+  });
+</script>
+{% endblock %}
