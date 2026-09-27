@@ -48,6 +48,11 @@ hôte du serveur HFSQL, port (**4900** par défaut), base, utilisateur (souvent 
 - Le pilote est détecté automatiquement (nom contenant « HFSQL » ou « HyperFile »). Le champ
   **Options ODBC** permet d'en imposer un (`DRIVER=HyperFileSQL`) et d'ajouter des paramètres, par
   exemple `Password=…` si les fichiers HFSQL sont protégés par mot de passe.
+- Alternative : déclarez une **source ODBC système** (odbcad32 64 bits → DSN système) et indiquez
+  `DSN=nom_de_la_source` dans Options ODBC ; le pilote y lit serveur, port et base.
+- En cas de blocage, lancez **`diagnostic-hfsql.bat`** dans une session Windows ouverte : il teste chaque
+  étape (port, connexion ODBC, tables) avec sa durée, affiche une éventuelle fenêtre du pilote et écrit
+  un rapport dans `logs\diagnostic-hfsql.txt`.
 - Les tables et leurs types sont lus par ODBC ; la clé primaire est utilisée pour l'upsert si le pilote
   l'expose, sinon indiquez des colonnes clés. Les modes Complet / Incrémental et le réimport complet
   fonctionnent comme pour MariaDB. Les dates vides HFSQL deviennent `NULL`.

@@ -200,3 +200,9 @@ def test_port_check_messages():
         check_port("127.0.0.1", 1)
     with pytest.raises(NetError, match="inconnu"):
         check_port("hote-inexistant.invalid", 4900)
+
+
+def test_connection_string_dsn():
+    cs = hfsql.connection_string(_conn(options="DSN=HRsmart", password_enc=encrypt("")))
+    assert cs == "DSN=HRsmart;UID=admin;PWD=;"
+    assert hfsql.masked("DSN=x;UID=a;PWD={p;w};") == "DSN=x;UID=a;PWD=*****;"

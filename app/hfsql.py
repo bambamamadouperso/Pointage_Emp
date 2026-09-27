@@ -84,17 +84,30 @@ def _brace(value: str) -> str:
 
 def connection_string(conn) -> str:
     options = parse_options(getattr(conn, "options", None))
-    driver = find_driver(options.pop("DRIVER", None) or options.pop("Driver", None))
-    parts = {
-        "DRIVER": "{" + driver + "}",
-        "Server Name": conn.host,
-        "Server Port": str(conn.port or 4900),
-        "Database": conn.database,
-        "UID": conn.username,
-        "PWD": decrypt(conn.password_enc),
-    }
+    dsn = options.pop("DSN", None) or options.pop("dsn", None)
+    if dsn:
+        # Source ODBC déclarée dans l'administrateur ODBC Windows (DSN système) : le pilote y trouve
+        # le serveur, le port et la base ; on ne transmet que l'utilisateur et le mot de passe.
+        parts = {"DSN": dsn, "UID": conn.username, "PWD": decrypt(conn.password_enc)}
+    else:
+        driver = find_driver(options.pop("DRIVER", None) or options.pop("Driver", None))
+        parts = {
+            "DRIVER": "{" + driver + "}",
+            "Server Name": conn.host,
+            "Server Port": str(conn.port or 4900),
+            "Database": conn.database,
+            "UID": conn.username,
+            "PWD": decrypt(conn.password_enc),
+        }
     parts.update(options)
-    return ";".join(f"{k}={v if k == 'DRIVER' else _brace(str(v))}" for k, v in parts.items()) + ";"
+    return ";".join(f"{k}={v if k == 'DRIVER' else _brace(str(v))}" for k, v in parts.items() if v is not None) + ";"
+
+
+def masked(connection: str) -> str:
+    """Chaîne de connexion affichable (mot de passe masqué)."""
+    import re
+
+    return re.sub(r"((?:PWD|Password)=)(\{[^}]*\}|[^;]*)", r"\1*****", connection, flags=re.IGNORECASE)
 
 
 CONNECT_TIMEOUT = 30

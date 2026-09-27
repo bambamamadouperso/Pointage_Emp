@@ -37,7 +37,8 @@
     <div class="help muted small" data-only-kind="hfsql">
       <p>Nécessite le <strong>pilote ODBC HFSQL 64 bits</strong> (PC SOFT) installé sur le serveur de l'application.
         Port HFSQL par défaut : 4900. Le pilote est détecté automatiquement ; « DRIVER=… » permet d'en imposer un
-        autre (anciennes versions : « HyperFileSQL »). Ajoutez « Password=… » si les fichiers HFSQL sont protégés par mot de passe.</p>
+        autre (anciennes versions : « HyperFileSQL »). Ajoutez « Password=… » si les fichiers HFSQL sont protégés par mot de passe.<br>Si le test reste bloqué : déclarez une source dans l'administrateur ODBC 64 bits (onglet
+        <strong>DSN système</strong>) puis indiquez ici <code>DSN=nom_de_la_source</code>.</p>
     </div>
     <div class="db-picker">
       <label>Base de données
