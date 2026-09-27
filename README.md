@@ -27,6 +27,30 @@ Application qui copie des tables d'une ou plusieurs bases **MariaDB/MySQL** vers
 > Le mode incrémental ne répercute pas les suppressions faites dans la source. Pour une table où des
 > lignes sont supprimées, utilisez le mode complet.
 
+## Installation sur Windows (le plus simple)
+
+1. Téléchargez le projet (bouton **Code → Download ZIP** sur GitHub) et extrayez-le, par ex. dans `C:\Pointage_Emp`.
+2. Double-cliquez sur **`installer-windows.bat`** et acceptez la demande de droits administrateur.
+3. Choisissez le mot de passe du compte `admin` quand il est demandé.
+
+Le script s'occupe de tout :
+
+- **Docker** : s'il est absent, active WSL 2 et installe Docker Desktop (un redémarrage peut être demandé ;
+  l'installation reprend seule à l'ouverture de session suivante). S'il est présent mais arrêté, il le
+  démarre ; s'il est en conteneurs Windows, il le bascule en conteneurs Linux.
+- crée le fichier `.env` (mot de passe admin, clé secrète aléatoire, fuseau `Africa/Dakar`) ;
+- construit et démarre l'application, vérifie qu'elle répond ;
+- ouvre le port dans le pare-feu Windows et affiche l'adresse du tableau de bord.
+
+Options (en PowerShell) : `.\installer-windows.ps1 -Port 8080 -OpenDatabasePorts` (`-OpenDatabasePorts`
+ouvre aussi 3306 et 5432 si les bases sont sur ce serveur ; `-NoFirewall` ne touche pas au pare-feu).
+Pour **mettre à jour**, remplacez les fichiers et relancez `installer-windows.bat` (le `.env` est conservé).
+Le déroulé est enregistré dans `installation.log`.
+
+> Pour une base installée sur le même serveur, saisissez l'hôte **`host.docker.internal`** dans
+> l'écran *Connexions* (`localhost` désigne le conteneur). Docker Desktop démarre à l'ouverture de
+> session Windows : sur un serveur, configurez une ouverture de session automatique.
+
 ## Démarrage rapide avec Docker
 
 ```bash
@@ -46,7 +70,8 @@ et `pointages`) et une base PostgreSQL `dwh`. Pour les essayer, créez dans **Co
 
 puis un **job** `src → dwh`, ajoutez les tables et cliquez sur **▶ Lancer maintenant**.
 
-En production, gardez uniquement le service `app` et déclarez vos vraies bases dans l'interface.
+En production, utilisez `compose.serveur.yml`, qui lance uniquement l'application :
+`docker compose -f compose.serveur.yml up -d --build`.
 
 ## Installation sans Docker
 

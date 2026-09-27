@@ -1,3 +1,4 @@
+# Installation sur un serveur (sous Windows : lancez installer-windows.bat)
 # Installation sur un serveur qui possède déjà ses bases MariaDB / PostgreSQL.
 # Lance uniquement l'application (pas de bases de démonstration).
 #   docker compose -f compose.serveur.yml up -d --build
@@ -5,7 +6,8 @@ services:
   app:
     build: .
     ports:
-      - "8000:8000"
+      # Port modifiable via APP_PORT dans .env
+      - "${APP_PORT:-8000}:8000"
     env_file: .env
     environment:
       APP_DB_URL: sqlite:////app/data/app.db

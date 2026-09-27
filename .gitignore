@@ -5,3 +5,4 @@ __pycache__/
 data/*.db
 data/*.db-*
 .pytest_cache/
+installation.log
