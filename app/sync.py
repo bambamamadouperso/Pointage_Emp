@@ -33,11 +33,11 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.schema import CreateSchema
 from sqlalchemy.types import JSON, TypeEngine
 
-from . import watermark
+from . import gsheet, watermark
 from .config import settings
 from .database import SessionLocal
 from .joblog import RunLogger, write_log
-from .models import MODE_FULL, MODE_INCREMENTAL, Connection, JobRun, SyncJob, TableMapping, utcnow
+from .models import MODE_FULL, MODE_INCREMENTAL, SOURCE_KINDS, Connection, JobRun, SyncJob, TableMapping, utcnow
 
 # Un verrou par job : une même synchronisation ne tourne jamais deux fois en parallèle.
 _job_locks: dict[int, threading.Lock] = {}
@@ -66,7 +66,9 @@ def make_engine(conn: Connection) -> Engine:
 
 
 def test_connection(conn: Connection) -> str:
-    """Teste la connexion et renvoie la version du serveur."""
+    """Teste la connexion et renvoie la version du serveur (ou un résumé du classeur)."""
+    if conn.kind == "gsheet":
+        return gsheet.describe(conn)
     engine = make_engine(conn)
     try:
         with engine.connect() as c:
@@ -76,6 +78,8 @@ def test_connection(conn: Connection) -> str:
 
 
 def list_tables(conn: Connection) -> list[str]:
+    if conn.kind == "gsheet":
+        return list(gsheet.load_sheets(conn))
     engine = make_engine(conn)
     try:
         return sorted(inspect(engine).get_table_names())
@@ -84,6 +88,16 @@ def list_tables(conn: Connection) -> list[str]:
 
 
 def list_columns(conn: Connection, table: str) -> list[dict]:
+    if conn.kind == "gsheet":
+        sheets = gsheet.load_sheets(conn)
+        if table not in sheets:
+            raise ValueError(f"Onglet « {table} » introuvable.")
+        data = sheets[table]
+        sheet_table = gsheet.build_table(table, data)
+        return [
+            {"name": c.name, "type": f"{c.type.__class__.__name__} ← « {h} »", "pk": False}
+            for c, h in zip(sheet_table.columns, data.headers)
+        ]
     engine = make_engine(conn)
     try:
         insp = inspect(engine)
@@ -236,6 +250,28 @@ def _split(value: Optional[str]) -> list[str]:
     return [v.strip() for v in (value or "").split(",") if v.strip()]
 
 
+def _make_writer(dst_table: Table, keys: list[str], columns: list[str]) -> Callable:
+    """Écriture d'un lot : upsert si des colonnes clés existent, insertion simple sinon."""
+    update_cols = [c for c in columns if c not in keys]
+
+    def write(conn, rows: list[dict]) -> None:
+        if not rows:
+            return
+        if keys:
+            stmt = pg_insert(dst_table)
+            if update_cols:
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=keys, set_={c: stmt.excluded[c] for c in update_cols}
+                )
+            else:
+                stmt = stmt.on_conflict_do_nothing(index_elements=keys)
+            conn.execute(stmt, rows)
+        else:
+            conn.execute(dst_table.insert(), rows)
+
+    return write
+
+
 def sync_table(
     src_engine: Engine,
     dst_engine: Engine,
@@ -267,22 +303,7 @@ def sync_table(
             out.append({c: converters[c](m[c]) for c in columns})
         return out
 
-    update_cols = [c for c in columns if c not in keys]
-
-    def write(conn, rows: list[dict]) -> None:
-        if not rows:
-            return
-        if keys:
-            stmt = pg_insert(dst_table)
-            if update_cols:
-                stmt = stmt.on_conflict_do_update(
-                    index_elements=keys, set_={c: stmt.excluded[c] for c in update_cols}
-                )
-            else:
-                stmt = stmt.on_conflict_do_nothing(index_elements=keys)
-            conn.execute(stmt, rows)
-        else:
-            conn.execute(dst_table.insert(), rows)
+    write = _make_writer(dst_table, keys, columns)
 
     rows_read = rows_written = 0
     stmt = select(*[src_table.columns[c] for c in columns])
@@ -336,6 +357,92 @@ def sync_table(
     return rows_read, rows_written
 
 
+def sync_sheet(
+    sheets: dict,
+    dst_engine: Engine,
+    mapping: TableMapping,
+    schema: str,
+    log: RunLogger,
+    batch_size: Optional[int] = None,
+) -> tuple[int, int]:
+    """Synchronise un onglet Google Sheets. Renvoie (lignes lues, lignes écrites)."""
+    batch_size = batch_size or settings.batch_size
+    name = mapping.source_table
+    if name not in sheets:
+        raise ValueError(f"Onglet « {name} » introuvable (onglets : {', '.join(sheets) or 'aucun'}).")
+    data = sheets[name]
+    if not data.columns:
+        raise ValueError(f"L'onglet « {name} » est vide.")
+    src_table = gsheet.build_table(name, data)
+
+    keys = _split(mapping.key_columns)
+    unknown = [k for k in keys if k not in src_table.columns]
+    if unknown:
+        raise ValueError(
+            f"Colonnes clés introuvables : {', '.join(unknown)} (colonnes : {', '.join(data.columns)})"
+        )
+    dst_table = ensure_target_table(dst_engine, src_table, mapping.target_table, schema, keys, log)
+    columns = [c for c in data.columns if c in dst_table.columns]
+    index = {c: data.columns.index(c) for c in columns}
+
+    # Conversion vers les types de la table cible ; une valeur illisible devient NULL (et est signalée).
+    rows, invalid = [], {}
+    for raw in data.rows:
+        row = {}
+        for c in columns:
+            try:
+                row[c] = gsheet.convert(raw[index[c]], dst_table.columns[c].type)
+            except (ValueError, TypeError, ArithmeticError):
+                row[c] = None
+                invalid.setdefault(c, []).append(raw[index[c]])
+        rows.append(row)
+    for c, values in invalid.items():
+        log.warning(
+            f"Colonne « {c} » : {len(values)} valeur(s) incompatible(s) avec le type "
+            f"{dst_table.columns[c].type} remplacée(s) par NULL (ex. {values[0]!r}).", name
+        )
+
+    if keys:
+        missing = [r for r in rows if any(r[k] is None for k in keys)]
+        if missing:
+            log.warning(f"{len(missing)} ligne(s) sans valeur de clé ignorée(s).", name)
+        # Doublons de clé dans la feuille : la dernière ligne l'emporte.
+        unique = {tuple(r[k] for k in keys): r for r in rows if all(r[k] is not None for k in keys)}
+        if len(unique) < len(rows) - len(missing):
+            log.warning(f"{len(rows) - len(missing) - len(unique)} doublon(s) de clé : dernière ligne conservée.", name)
+        rows = list(unique.values())
+
+    rows_read = len(data.rows)
+    write = _make_writer(dst_table, keys, columns)
+    preparer = dst_engine.dialect.identifier_preparer
+
+    if mapping.mode == MODE_INCREMENTAL:
+        inc = mapping.incremental_column
+        if not inc or inc not in columns:
+            raise ValueError(f"Colonne incrémentale « {inc} » introuvable (colonnes : {', '.join(data.columns)}).")
+        last = watermark.decode(mapping.last_value)
+        rows = [r for r in rows if r[inc] is not None]
+        if last is not None:
+            rows = [r for r in rows if (r[inc] >= last if keys else r[inc] > last)]
+            log.info(f"Lecture incrémentale : {inc} {'>=' if keys else '>'} {last}.", name)
+        else:
+            log.info(f"Première lecture incrémentale sur « {inc} » : lecture complète.", name)
+        rows.sort(key=lambda r: r[inc])
+        with dst_engine.begin() as dst:
+            for i in range(0, len(rows), batch_size):
+                write(dst, rows[i:i + batch_size])
+        if rows:
+            _save_watermark(mapping.id, rows[-1][inc])
+            mapping.last_value = watermark.encode(rows[-1][inc])
+    else:
+        # Mode complet : vidage puis rechargement dans une seule transaction.
+        with dst_engine.begin() as dst:
+            dst.execute(text(f"DELETE FROM {preparer.format_table(dst_table)}"))
+            for i in range(0, len(rows), batch_size):
+                write(dst, rows[i:i + batch_size])
+    return rows_read, len(rows)
+
+
 def _save_watermark(mapping_id: int, value: Any) -> None:
     db = SessionLocal()
     try:
@@ -377,24 +484,38 @@ def _run_job_locked(job_id: int, trigger: str) -> Optional[int]:
 
         src_engine = dst_engine = None
         try:
-            if job.source.kind != "mariadb" or job.target.kind != "postgresql":
-                raise ValueError("La source doit être MariaDB et la cible PostgreSQL.")
-            src_engine = make_engine(job.source)
+            if job.source.kind not in SOURCE_KINDS or job.target.kind != "postgresql":
+                raise ValueError("La source doit être MariaDB ou Google Sheets et la cible PostgreSQL.")
+            is_sheet = job.source.kind == "gsheet"
             dst_engine = make_engine(job.target)
-            # Vérifie les deux connexions avant de traiter les tables.
-            for label, eng in (("source", src_engine), ("cible", dst_engine)):
+            checks = [("cible", dst_engine)]
+            if not is_sheet:
+                src_engine = make_engine(job.source)
+                checks.insert(0, ("source", src_engine))
+            # Vérifie les connexions avant de traiter les tables.
+            for label, eng in checks:
                 try:
                     with eng.connect():
                         pass
                 except Exception as exc:
                     raise RuntimeError(f"connexion {label} impossible : {_short_error(exc)}") from exc
             mappings = [m for m in job.tables if m.enabled]
+            sheets = None
+            if is_sheet and mappings:
+                try:
+                    sheets = gsheet.load_sheets(job.source)
+                except Exception as exc:
+                    raise RuntimeError(f"classeur Google Sheets inaccessible : {_short_error(exc)}") from exc
+                log.info(f"Classeur Google Sheets téléchargé : {len(sheets)} onglet(s).")
             if not mappings:
                 log.warning("Aucune table active à synchroniser.")
             for mapping in mappings:
                 t0 = _time.monotonic()
                 try:
-                    read, written = sync_table(src_engine, dst_engine, mapping, job.target_schema, log)
+                    if is_sheet:
+                        read, written = sync_sheet(sheets, dst_engine, mapping, job.target_schema, log)
+                    else:
+                        read, written = sync_table(src_engine, dst_engine, mapping, job.target_schema, log)
                     run.rows_read += read
                     run.rows_written += written
                     run.tables_ok += 1

@@ -9,10 +9,10 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .crypto import decrypt
 from .database import Base
 
-SOURCE_KINDS = {"mariadb": "MariaDB / MySQL"}
+SOURCE_KINDS = {"mariadb": "MariaDB / MySQL", "gsheet": "Google Sheets"}
 TARGET_KINDS = {"postgresql": "PostgreSQL"}
 KIND_LABELS = {**SOURCE_KINDS, **TARGET_KINDS}
-DEFAULT_PORTS = {"mariadb": 3306, "postgresql": 5432}
+DEFAULT_PORTS = {"mariadb": 3306, "postgresql": 5432, "gsheet": 443}
 
 MODE_FULL = "full"
 MODE_INCREMENTAL = "incremental"
@@ -42,6 +42,23 @@ class Connection(Base):
     @property
     def kind_label(self) -> str:
         return KIND_LABELS.get(self.kind, self.kind)
+
+    # Pour Google Sheets : database = identifiant du classeur, username = mode d'accès,
+    # password_enc = clé JSON du compte de service (chiffrée).
+    @property
+    def is_gsheet(self) -> bool:
+        return self.kind == "gsheet"
+
+    @property
+    def location(self) -> str:
+        """Description courte affichée dans le tableau de bord."""
+        if self.is_gsheet:
+            return f"Google Sheets {self.database[:12]}…"
+        return f"{self.host}/{self.database}"
+
+    @property
+    def sheet_url(self) -> str:
+        return f"https://docs.google.com/spreadsheets/d/{self.database}" if self.is_gsheet else ""
 
     def sqlalchemy_url(self) -> URL:
         if self.kind == "mariadb":

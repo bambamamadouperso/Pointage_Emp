@@ -5,10 +5,10 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from .. import scheduler
+from .. import gsheet, scheduler
 from ..database import get_db
 from ..joblog import write_log
-from ..models import MODE_FULL, MODE_INCREMENTAL, MODE_LABELS, Connection, JobRun, SyncJob, TableMapping
+from ..models import MODE_FULL, MODE_INCREMENTAL, MODE_LABELS, SOURCE_KINDS, Connection, JobRun, SyncJob, TableMapping
 from ..sync import is_running, list_columns, list_tables
 from ..web import back_url, flash, redirect, render, require_login
 
@@ -26,6 +26,11 @@ def _split_interval(seconds: int) -> tuple[int, str]:
 
 def _connections(db: Session, kind: str):
     return db.scalars(select(Connection).where(Connection.kind == kind).order_by(Connection.name)).all()
+
+
+def _default_target(job: SyncJob, source_table: str) -> str:
+    """Nom de table cible par défaut : identique à la source, simplifié pour un onglet Google Sheets."""
+    return gsheet.normalize_identifier(source_table) if job.source.is_gsheet else source_table
 
 
 def _get_job(db: Session, job_id: int):
@@ -50,7 +55,7 @@ def _form(request: Request, db: Session, job: SyncJob):
         request,
         "job_form.html",
         job=job,
-        sources=_connections(db, "mariadb"),
+        sources=db.scalars(select(Connection).where(Connection.kind.in_(SOURCE_KINDS)).order_by(Connection.name)).all(),
         targets=_connections(db, "postgresql"),
         interval_value=value,
         interval_unit=unit,
@@ -87,8 +92,8 @@ def save_job(
     if job is None:
         return redirect("/jobs")
     source, target = db.get(Connection, source_id), db.get(Connection, target_id)
-    if source is None or source.kind != "mariadb" or target is None or target.kind != "postgresql":
-        flash(request, "Choisissez une source MariaDB et une cible PostgreSQL.", "err")
+    if source is None or source.kind not in SOURCE_KINDS or target is None or target.kind != "postgresql":
+        flash(request, "Choisissez une source (MariaDB ou Google Sheets) et une cible PostgreSQL.", "err")
         return redirect(f"/jobs/{job_id}/edit" if job_id else "/jobs/new")
     seconds = max(interval_value, 1) * UNITS.get(interval_unit, 60)
     if seconds < 10:
@@ -226,7 +231,7 @@ def add_table(
         TableMapping(
             job_id=job.id,
             source_table=source_table,
-            target_table=(target_table.strip() or source_table),
+            target_table=(target_table.strip() or _default_target(job, source_table)),
             mode=mode,
             incremental_column=incremental_column.strip() or None,
             key_columns=key_columns.strip() or None,
@@ -251,7 +256,7 @@ def add_all_tables(job_id: int, request: Request, db: Session = Depends(get_db))
     mapped = {m.source_table for m in job.tables}
     added = [t for t in tables if t not in mapped]
     for t in added:
-        db.add(TableMapping(job_id=job.id, source_table=t, target_table=t, mode=MODE_FULL))
+        db.add(TableMapping(job_id=job.id, source_table=t, target_table=_default_target(job, t), mode=MODE_FULL))
     db.commit()
     if added:
         write_log("INFO", f"{len(added)} table(s) ajoutée(s) au job en mode complet.", job_id=job.id)

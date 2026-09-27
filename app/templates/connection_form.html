@@ -12,24 +12,59 @@
     <label>Type
       <select name="kind" id="kind">
         {% for key, label in kinds.items() %}
-          <option value="{{ key }}" {{ 'selected' if conn.kind == key }}>{{ label }} — {{ 'source' if key == 'mariadb' else 'cible' }}</option>
+          <option value="{{ key }}" {{ 'selected' if conn.kind == key }}>{{ label }} — {{ 'cible' if key == 'postgresql' else 'source' }}</option>
         {% endfor %}
       </select>
     </label>
   </div>
-  <div class="row">
-    <label class="grow">Hôte <input name="host" value="{{ conn.host or '' }}" required placeholder="192.168.1.10"></label>
-    <label class="narrow">Port <input name="port" id="port" type="number" value="{{ conn.port }}" required></label>
-  </div>
-  <label>Base de données <input name="database" value="{{ conn.database or '' }}" required></label>
-  <div class="row">
-    <label>Utilisateur <input name="username" value="{{ conn.username or '' }}" required autocomplete="off"></label>
-    <label>Mot de passe
-      <input name="password" type="password" value="{{ keep_password or '' }}" autocomplete="new-password"
-             placeholder="{{ 'laisser vide pour conserver' if conn.id else '' }}">
+
+  <fieldset class="kind-fields" data-kind="db">
+    <div class="row">
+      <label class="grow">Hôte <input name="host" value="{{ conn.host or '' }}" required placeholder="192.168.1.10"></label>
+      <label class="narrow">Port <input name="port" id="port" type="number" value="{{ conn.port }}" required></label>
+    </div>
+    <label>Base de données <input name="database" value="{{ conn.database or '' }}" required></label>
+    <div class="row">
+      <label>Utilisateur <input name="username" value="{{ conn.username or '' }}" required autocomplete="off"></label>
+      <label>Mot de passe
+        <input name="password" type="password" value="{{ keep_password or '' }}" autocomplete="new-password"
+               placeholder="{{ 'laisser vide pour conserver' if conn.id else '' }}">
+      </label>
+    </div>
+    <p class="muted small">Le mot de passe est chiffré dans la base interne. Pour une source, un utilisateur en lecture seule suffit.</p>
+  </fieldset>
+
+  <fieldset class="kind-fields" data-kind="gsheet">
+    <label>Lien du classeur Google Sheets
+      <input name="sheet_link" value="{{ conn.sheet_url if conn.is_gsheet and conn.database else '' }}" required
+             placeholder="https://docs.google.com/spreadsheets/d/…/edit">
     </label>
-  </div>
-  <p class="muted small">Le mot de passe est chiffré dans la base interne. Pour une source, un utilisateur en lecture seule suffit.</p>
+    <label>Accès
+      <select name="sheet_auth" id="sheet_auth">
+        {% for key, label in sheet_auths.items() %}
+          <option value="{{ key }}" {{ 'selected' if conn.is_gsheet and conn.username == key }}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <div class="help muted small" data-auth="public">
+      <p>Dans Google Sheets : <strong>Partager</strong> → Accès général : <strong>Tous les utilisateurs disposant du lien</strong> (Lecteur).
+         Simple, mais toute personne ayant le lien peut lire le classeur.</p>
+    </div>
+    <div data-auth="service_account">
+      <label>Clé JSON du compte de service
+        <textarea name="sa_json" rows="6" spellcheck="false" autocomplete="off"
+                  placeholder='{{ "Clé enregistrée (" ~ sa_email ~ ") : laisser vide pour la conserver" if sa_email else "{ \"type\": \"service_account\", \"client_email\": …, \"private_key\": … }" }}'>{{ keep_password if conn.is_gsheet and keep_password else '' }}</textarea>
+      </label>
+      <div class="help muted small">
+        <p>1. Dans <a href="https://console.cloud.google.com/" target="_blank" rel="noopener">Google Cloud Console</a> : créez un projet, activez l'<strong>API Google Drive</strong>.</p>
+        <p>2. <em>IAM → Comptes de service</em> : créez un compte, puis <em>Clés → Ajouter une clé → JSON</em> ; collez ici le contenu du fichier.</p>
+        <p>3. Partagez le classeur (Lecteur) avec l'adresse e-mail du compte de service{% if sa_email %} : <code>{{ sa_email }}</code>{% endif %}.</p>
+      </div>
+    </div>
+    <p class="muted small">Chaque onglet devient une table : la <strong>première ligne</strong> contient les en-têtes
+      (convertis en noms de colonnes simples : « Date d'arrivée » → <code>date_d_arrivee</code>).</p>
+  </fieldset>
+
   <div class="form-actions">
     <button class="btn primary" name="action" value="save">Enregistrer</button>
     <button class="btn" name="action" value="test" formnovalidate>Tester la connexion</button>
@@ -39,9 +74,23 @@
 {% block scripts %}
 <script>
   const defaults = {mariadb: 3306, postgresql: 5432};
-  document.getElementById('kind').addEventListener('change', e => {
+  const kind = document.getElementById('kind');
+  const auth = document.getElementById('sheet_auth');
+  function refresh() {
+    const isSheet = kind.value === 'gsheet';
+    document.querySelectorAll('.kind-fields').forEach(f => {
+      const active = (f.dataset.kind === 'gsheet') === isSheet;
+      f.hidden = !active;
+      f.disabled = !active;  // les champs masqués ne sont ni envoyés ni validés
+    });
+    document.querySelectorAll('[data-auth]').forEach(d => { d.hidden = d.dataset.auth !== auth.value; });
+  }
+  kind.addEventListener('change', e => {
     const port = document.getElementById('port');
-    if (Object.values(defaults).includes(Number(port.value))) port.value = defaults[e.target.value];
+    if (defaults[e.target.value] && Object.values(defaults).includes(Number(port.value))) port.value = defaults[e.target.value];
+    refresh();
   });
+  auth.addEventListener('change', refresh);
+  refresh();
 </script>
 {% endblock %}

@@ -7,7 +7,7 @@
 </div>
 {% if not sources or not targets %}
   <div class="flash warn">
-    Il faut au moins une connexion source MariaDB et une connexion cible PostgreSQL.
+    Il faut au moins une source (MariaDB ou Google Sheets) et une connexion cible PostgreSQL.
     <a href="/connections">Gérer les connexions →</a>
   </div>
 {% endif %}
@@ -15,9 +15,9 @@
   <input type="hidden" name="job_id" value="{{ job.id or 0 }}">
   <label>Nom du job <input name="name" value="{{ job.name or '' }}" required placeholder="ex. pointage-vers-dwh"></label>
   <div class="row">
-    <label>Base source (MariaDB)
+    <label>Source (MariaDB ou Google Sheets)
       <select name="source_id" required>
-        {% for c in sources %}<option value="{{ c.id }}" {{ 'selected' if job.source_id == c.id }}>{{ c.name }} — {{ c.host }}/{{ c.database }}</option>{% endfor %}
+        {% for c in sources %}<option value="{{ c.id }}" {{ 'selected' if job.source_id == c.id }}>{{ c.name }} — {{ c.kind_label }}{% if not c.is_gsheet %} {{ c.host }}/{{ c.database }}{% endif %}</option>{% endfor %}
       </select>
     </label>
     <label>Base cible (PostgreSQL)

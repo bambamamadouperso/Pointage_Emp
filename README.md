@@ -1,11 +1,12 @@
-# Synchro MariaDB → PostgreSQL
+# Synchro MariaDB / Google Sheets → PostgreSQL
 
-Application qui copie des tables d'une ou plusieurs bases **MariaDB/MySQL** vers des bases **PostgreSQL**
-à intervalle régulier, administrée depuis un **tableau de bord web** avec historique et logs.
+Application qui copie des tables de bases **MariaDB/MySQL** et des onglets de classeurs **Google Sheets**
+vers des bases **PostgreSQL** à intervalle régulier, administrée depuis un **tableau de bord web**
+avec historique et logs.
 
 ## Fonctionnalités
 
-- **Connexions** : déclarez vos bases sources (MariaDB) et cibles (PostgreSQL), testez-les en un clic.
+- **Connexions** : déclarez vos sources (MariaDB, Google Sheets) et cibles (PostgreSQL), testez-les en un clic.
   Les mots de passe sont chiffrés dans la base interne.
 - **Jobs** : un job relie une source à une cible (et un schéma PostgreSQL) et s'exécute toutes les
   *N* secondes / minutes / heures / jours. Activation, désactivation et lancement manuel depuis l'interface.
@@ -26,6 +27,32 @@ Application qui copie des tables d'une ou plusieurs bases **MariaDB/MySQL** vers
 
 > Le mode incrémental ne répercute pas les suppressions faites dans la source. Pour une table où des
 > lignes sont supprimées, utilisez le mode complet.
+
+## Source Google Sheets
+
+Chaque **onglet** du classeur devient une table PostgreSQL. La **première ligne** contient les en-têtes,
+convertis en noms de colonnes simples (« Date d'arrivée » → `date_d_arrivee`). Les types (entier,
+décimal, date, date-heure, booléen, texte) sont déduits des cellules ; une valeur incompatible avec le
+type d'une colonne devient `NULL` et est signalée dans les logs. Le classeur est téléchargé une fois
+par exécution du job.
+
+Modes : **Complet** (la table reflète exactement l'onglet, suppressions comprises) ou **Incrémental**
+avec une colonne de suivi (ex. une date) ; indiquez des **colonnes clés** (ex. `matricule`) pour mettre à
+jour les lignes existantes (upsert). Les doublons de clé dans la feuille sont signalés, la dernière ligne
+l'emporte.
+
+Deux façons de donner l'accès, dans **Connexions → + Source Google Sheets** :
+
+1. **Lien public** (le plus simple) : dans Google Sheets, *Partager → Accès général : Tous les
+   utilisateurs disposant du lien (Lecteur)*, puis collez le lien du classeur.
+2. **Compte de service** (classeur privé, recommandé pour des données sensibles) :
+   - dans [Google Cloud Console](https://console.cloud.google.com/), créez un projet et activez
+     l'**API Google Drive** ;
+   - *IAM → Comptes de service* : créez un compte, puis *Clés → Ajouter une clé → JSON* ;
+   - collez le contenu du fichier JSON dans la connexion (il est chiffré dans la base interne) ;
+   - partagez le classeur (Lecteur) avec l'adresse e-mail du compte de service.
+
+Le serveur doit pouvoir joindre `docs.google.com` / `www.googleapis.com` en HTTPS.
 
 ## Installation sur Windows (le plus simple)
 

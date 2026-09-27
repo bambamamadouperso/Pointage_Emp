@@ -142,12 +142,15 @@ label.check { flex-direction: row; align-items: center; gap: .5rem; }
 label.narrow, input.narrow { max-width: 110px; }
 label.grow { flex: 2 1 240px; }
 .inline { display: flex; gap: .5rem; }
-input, select {
+fieldset.kind-fields { border: 0; padding: 0; margin: 0; min-width: 0; display: flex; flex-direction: column; gap: .8rem; }
+fieldset.kind-fields[hidden], [data-auth][hidden] { display: none; }
+textarea { font: .85rem/1.4 ui-monospace, monospace; resize: vertical; }
+input, select, textarea {
   font: inherit; padding: .45rem .6rem; border-radius: 6px; border: 1px solid var(--border);
   background: var(--bg); color: var(--text); width: 100%; min-width: 0;
 }
 input[type=checkbox] { width: auto; }
-input:focus, select:focus { outline: 2px solid color-mix(in srgb, var(--primary) 40%, transparent); border-color: var(--primary); }
+input:focus, select:focus, textarea:focus { outline: 2px solid color-mix(in srgb, var(--primary) 40%, transparent); border-color: var(--primary); }
 .form-actions { display: flex; gap: .5rem; flex-wrap: wrap; }
 .filters { display: flex; gap: .75rem; align-items: flex-end; flex-wrap: wrap; }
 .filters label { flex: 1 1 160px; }

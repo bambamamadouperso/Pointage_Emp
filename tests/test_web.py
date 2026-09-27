@@ -87,3 +87,55 @@ def test_connection_and_job_crud(logged_client):
     c.post(f"/connections/{src.id}/delete")
     with SessionLocal() as db:
         assert db.get(SyncJob, job.id) is None and db.get(Connection, src.id) is None
+
+
+def test_gsheet_connection_form(logged_client, monkeypatch):
+    from app import gsheet
+
+    c = logged_client
+    assert "Lien du classeur Google Sheets" in c.get("/connections/new?kind=gsheet").text
+
+    # Compte de service sans clé : refusé.
+    r = c.post("/connections/save", data={
+        "name": "gs-web", "kind": "gsheet", "sheet_link": "https://docs.google.com/spreadsheets/d/ABC123/edit",
+        "sheet_auth": "service_account", "sa_json": "", "action": "save",
+    })
+    assert "Collez la clé JSON" in r.text
+    r = c.post("/connections/save", data={
+        "name": "gs-web", "kind": "gsheet", "sheet_link": "x/spreadsheets/d/ABC123/edit",
+        "sheet_auth": "service_account", "sa_json": "{pas du json", "action": "save",
+    })
+    assert "Clé JSON invalide" in r.text
+
+    key = '{"type": "service_account", "client_email": "sa@p.iam.gserviceaccount.com", "private_key": "k"}'
+    r = c.post("/connections/save", data={
+        "name": "gs-web", "kind": "gsheet", "sheet_link": "https://docs.google.com/spreadsheets/d/ABC123/edit",
+        "sheet_auth": "service_account", "sa_json": key, "action": "save",
+    }, follow_redirects=False)
+    assert r.status_code == 303
+    with SessionLocal() as db:
+        conn = db.query(Connection).filter_by(name="gs-web").one()
+        assert conn.database == "ABC123" and conn.username == "service_account"
+        assert "private_key" not in conn.password_enc  # chiffrée
+        assert gsheet.service_account_email(conn) == "sa@p.iam.gserviceaccount.com"
+
+    # Modification sans ressaisir la clé : conservée ; l'e-mail du compte est affiché.
+    r = c.get(f"/connections/{conn.id}/edit")
+    assert "sa@p.iam.gserviceaccount.com" in r.text
+    c.post("/connections/save", data={
+        "conn_id": conn.id, "name": "gs-web", "kind": "gsheet", "sheet_link": "ABC123",
+        "sheet_auth": "service_account", "sa_json": "", "action": "save",
+    })
+    with SessionLocal() as db:
+        assert gsheet.service_account_email(db.get(Connection, conn.id)) == "sa@p.iam.gserviceaccount.com"
+
+    # Test de connexion : le résumé du classeur est affiché.
+    monkeypatch.setattr(gsheet, "describe", lambda conn: "classeur accessible : 2 onglet(s) (A, B)")
+    r = c.post("/connections/save", data={
+        "conn_id": conn.id, "name": "gs-web", "kind": "gsheet", "sheet_link": "ABC123",
+        "sheet_auth": "public", "action": "test",
+    })
+    assert "classeur accessible" in r.text
+    assert "Google Sheets" in c.get("/connections").text
+    assert "gs-web" in c.get("/jobs/new").text
+    c.post(f"/connections/{conn.id}/delete")

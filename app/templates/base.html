@@ -3,14 +3,14 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}Synchro{% endblock %} · MariaDB → PostgreSQL</title>
+  <title>{% block title %}Synchro{% endblock %} · Synchro vers PostgreSQL</title>
   <link rel="stylesheet" href="/static/style.css">
   {% block head %}{% endblock %}
 </head>
 <body>
 {% if user %}
 <header class="topbar">
-  <a class="brand" href="/">⇄ Synchro <span>MariaDB → PostgreSQL</span></a>
+  <a class="brand" href="/">⇄ Synchro <span>MariaDB · Google Sheets → PostgreSQL</span></a>
   <nav>
     {% set path = request.url.path %}
     <a href="/" class="{{ 'active' if path == '/' }}">Tableau de bord</a>
