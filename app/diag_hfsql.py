@@ -108,12 +108,29 @@ def main() -> int:
     if ok:
         say(f"    {len(tables)} table(s) : {', '.join(tables[:15])}{' …' if len(tables) > 15 else ''}")
         if tables:
-            src = hfsql.Source.__new__(hfsql.Source)
-            src.cnx, src.quote_char = cnx, (cnx.getinfo(hfsql.SQL_IDENTIFIER_QUOTE_CHAR) or "").strip()
-            ok, table = step(f"Lecture de la structure de « {tables[0]} »", lambda: src.build_table(tables[0]), 60)
+            quote = (cnx.getinfo(hfsql.SQL_IDENTIFIER_QUOTE_CHAR) or "").strip()
+            name = f"{quote}{tables[0]}{quote}"
+
+            def structure():
+                cur = cnx.cursor()
+                try:
+                    cur.execute(f"SELECT * FROM {name} WHERE 1=0")
+                    return [f"{d[0]} ({d[1].__name__})" for d in cur.description]
+                finally:
+                    cur.close()
+
+            def count():
+                cur = cnx.cursor()
+                try:
+                    cur.execute(f"SELECT COUNT(*) FROM {name}")
+                    return cur.fetchone()[0]
+                finally:
+                    cur.close()
+
+            ok, cols = step(f"Lecture de la structure de « {tables[0]} »", structure, 120)
             if ok:
-                say("    Colonnes : " + ", ".join(f"{c.name} ({c.type})" for c in table.columns))
-            ok, n = step(f"Comptage des lignes de « {tables[0]} »", lambda: src.count(tables[0]), 120)
+                say("    Colonnes : " + ", ".join(cols))
+            ok, n = step(f"Comptage des lignes de « {tables[0]} »", count, 300)
             if ok:
                 say(f"    {n} ligne(s)")
     try:

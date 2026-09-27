@@ -113,46 +113,11 @@ def masked(connection: str) -> str:
     return re.sub(r"((?:PWD|Password)=)(\{[^}]*\}|[^;]*)", r"\1*****", connection, flags=re.IGNORECASE)
 
 
-# Certains serveurs HFSQL mettent plus d'une minute à ouvrir une connexion ODBC : délai large, configurable.
+# Certains serveurs HFSQL mettent plus d'une minute à ouvrir une connexion ODBC : délais larges, configurables.
 CONNECT_TIMEOUT = int(os.getenv("HFSQL_CONNECT_TIMEOUT", "240"))
-
-
-def connect(conn, timeout: int = 15):
-    pyodbc = _pyodbc()
-    cs = connection_string(conn)  # vérifie aussi la présence du pilote
-    # 1) Le port HFSQL répond-il ? (réponse en quelques secondes au lieu d'un blocage du pilote)
-    try:
-        check_port(conn.host, conn.port or 4900)
-    except NetError as exc:
-        raise HfsqlError(str(exc)) from exc
-
-    # 2) Connexion ODBC, avec un délai maximal : certains pilotes ignorent leur propre délai.
-    def _open():
-        return pyodbc.connect(cs, timeout=timeout, autocommit=True)
-
-    try:
-        return call_with_timeout(
-            _open, CONNECT_TIMEOUT,
-            f"Le pilote ODBC HFSQL ne répond pas après {CONNECT_TIMEOUT} s (le port {conn.port} est pourtant "
-            "joignable). Vérifiez le nom de la base, l'utilisateur et le mot de passe, et testez la connexion "
-            "dans l'administrateur ODBC 64 bits (odbcad32).",
-        )
-    except NetError as exc:
-        raise HfsqlError(str(exc)) from exc
-    except pyodbc.Error as exc:
-        message = odbc_message(exc)
-        if "IM002" in str(exc) or "IM002" in message:
-            try:
-                visible = sorted(pyodbc.dataSources())
-            except Exception:
-                visible = []
-            raise HfsqlError(
-                "Source ODBC introuvable pour l'application. Elle tourne en tâche de fond (compte SYSTEM) et ne voit "
-                "que les sources déclarées dans l'onglet « DSN système » de l'administrateur ODBC 64 bits "
-                "(C:\\Windows\\System32\\odbcad32.exe), pas les « DSN utilisateur » ni l'administrateur 32 bits. "
-                f"Sources visibles par l'application : {', '.join(visible) or 'aucune'}."
-            ) from exc
-        raise HfsqlError(f"Connexion HFSQL impossible : {message}") from exc
+QUERY_TIMEOUT = int(os.getenv("HFSQL_QUERY_TIMEOUT", "1800"))
+META_TIMEOUT = 300
+IDLE_CHECK_AFTER = 300  # s : au-delà, on vérifie que la connexion gardée répond encore
 
 
 def odbc_message(exc: Exception) -> str:
@@ -160,25 +125,153 @@ def odbc_message(exc: Exception) -> str:
     return str(args[1] if len(args) > 1 else exc).strip()
 
 
-# Connexions ODBC gardées ouvertes entre deux exécutions (l'ouverture peut prendre plus d'une minute).
+def _missing_dsn_message(visible) -> str:
+    return (
+        "Source ODBC introuvable pour l'application. Elle tourne en tâche de fond (compte SYSTEM) et ne voit "
+        "que les sources déclarées dans l'onglet « DSN système » de l'administrateur ODBC 64 bits "
+        "(C:\\Windows\\System32\\odbcad32.exe), pas les « DSN utilisateur » ni l'administrateur 32 bits. "
+        f"Sources visibles par l'application : {', '.join(visible or []) or 'aucune'}."
+    )
+
+
+# --------------------------------------------------------------------------- processus du pilote
+
+
+class _ProcessWorker:
+    """Pilote ODBC exécuté dans un processus séparé (un plantage du pilote n'arrête pas le site)."""
+
+    def __init__(self):
+        import multiprocessing
+
+        from . import odbc_worker
+
+        ctx = multiprocessing.get_context("spawn")
+        self.pipe, child = ctx.Pipe()
+        self.proc = ctx.Process(target=odbc_worker.serve, args=(child,), daemon=True, name="pilote-hfsql")
+        self.proc.start()
+        child.close()
+
+    def call(self, op: str, timeout: float, **kw):
+        try:
+            self.pipe.send({"op": op, **kw})
+            ready = self.pipe.poll(timeout)
+        except (BrokenPipeError, EOFError, OSError):
+            ready = True
+        if not ready:
+            self.kill()
+            raise HfsqlError(f"Le pilote ODBC HFSQL ne répond pas après {timeout:.0f} s (opération : {op}).")
+        try:
+            reply = self.pipe.recv()
+        except (EOFError, OSError):
+            self.proc.join(5)
+            code = self.proc.exitcode
+            if isinstance(code, int) and code < 0:
+                code_txt = f"signal {-code}"
+            elif isinstance(code, int) and code > 255:
+                code_txt = f"0x{code:08X}"  # ex. 0xC0000005 : violation d'accès dans le pilote
+            else:
+                code_txt = str(code)
+            raise HfsqlError(
+                f"Le pilote ODBC HFSQL s'est arrêté brutalement (code {code_txt}) pendant « {op} ». "
+                "Le site reste disponible ; vérifiez la version du pilote ODBC HFSQL (identique à celle du serveur) "
+                "et lancez diagnostic-hfsql.bat pour plus de détails."
+            ) from None
+        if reply[0] == "err":
+            raise _RemoteError(reply[1], reply[2])
+        return reply[1]
+
+    def alive(self) -> bool:
+        return self.proc.is_alive()
+
+    def kill(self) -> None:
+        try:
+            self.pipe.send({"op": "quit"})
+        except Exception:
+            pass
+        self.proc.join(2)
+        if self.proc.is_alive():
+            self.proc.kill()
+            self.proc.join(5)
+        try:
+            self.pipe.close()
+        except Exception:
+            pass
+
+
+class _InlineWorker:
+    """Même protocole, exécuté dans le processus courant (tests avec un faux pyodbc)."""
+
+    def __init__(self):
+        self.state: dict = {}
+        self.dead = False
+
+    def call(self, op: str, timeout: float, **kw):
+        from . import odbc_worker
+
+        pyodbc = _pyodbc()
+        try:
+            return call_with_timeout(lambda: odbc_worker.handle(self.state, {"op": op, **kw}, pyodbc), timeout,
+                                     f"Le pilote ODBC HFSQL ne répond pas après {timeout:.0f} s (opération : {op}).")
+        except NetError as exc:
+            self.dead = True
+            raise HfsqlError(str(exc)) from exc
+        except odbc_worker.OdbcFailure as exc:
+            raise _RemoteError(str(exc), exc.visible) from exc
+        except Exception as exc:
+            raise _RemoteError(odbc_message(exc), None) from exc
+
+    def alive(self) -> bool:
+        return not self.dead
+
+    def kill(self) -> None:
+        cnx = self.state.get("cnx")
+        if cnx is not None:
+            try:
+                cnx.close()
+            except Exception:
+                pass
+        self.dead = True
+
+
+class _RemoteError(Exception):
+    def __init__(self, message: str, visible=None):
+        super().__init__(message)
+        self.visible = visible
+
+
+def _new_worker():
+    return _InlineWorker() if os.getenv("HFSQL_ISOLATION", "process") == "inline" else _ProcessWorker()
+
+
+def _open_worker(conn, cs: str):
+    """Démarre un processus pilote et y ouvre la connexion ODBC."""
+    try:
+        check_port(conn.host, conn.port or 4900)
+    except NetError as exc:
+        raise HfsqlError(str(exc)) from exc
+    worker = _new_worker()
+    try:
+        worker.call("connect", CONNECT_TIMEOUT, cs=cs, login_timeout=min(CONNECT_TIMEOUT, 600))
+    except _RemoteError as exc:
+        worker.kill()
+        if exc.visible is not None:
+            raise HfsqlError(_missing_dsn_message(exc.visible)) from exc
+        raise HfsqlError(f"Connexion HFSQL impossible : {exc}") from exc
+    except HfsqlError as exc:
+        worker.kill()
+        if "ne répond pas" in str(exc):
+            raise HfsqlError(
+                f"Le pilote ODBC HFSQL ne répond pas après {CONNECT_TIMEOUT} s (le port {conn.port} est pourtant "
+                "joignable). Vérifiez le nom de la base, l'utilisateur et le mot de passe, et testez la connexion "
+                "dans l'administrateur ODBC 64 bits (odbcad32)."
+            ) from exc
+        raise
+    return worker
+
+
+# Processus pilotes gardés ouverts entre deux exécutions (l'ouverture peut prendre plus d'une minute).
 _pool: dict[str, dict] = {}
 _pool_guard = threading.Lock()
-IDLE_CHECK_AFTER = 300  # s : au-delà, on vérifie que la connexion gardée répond encore
-
-
-def _alive(cnx) -> bool:
-    def probe():
-        cur = cnx.cursor()
-        try:
-            cur.tables(tableType="TABLE").fetchone()
-        finally:
-            cur.close()
-
-    try:
-        call_with_timeout(probe, 30, "sans réponse")
-        return True
-    except Exception:
-        return False
 
 
 def reset_pool() -> None:
@@ -186,69 +279,77 @@ def reset_pool() -> None:
         entries = list(_pool.values())
         _pool.clear()
     for entry in entries:
-        try:
-            entry["cnx"].close()
-        except Exception:
-            pass
+        entry["worker"].kill()
 
 
 class Source:
-    """Connexion ODBC HFSQL, réutilisée d'une exécution à l'autre quand c'est possible."""
+    """Connexion HFSQL (via le processus pilote), réutilisée d'une exécution à l'autre si possible."""
 
     def __init__(self, conn, reuse: bool = True):
         self.key = connection_string(conn)
         self.pooled = False
-        self.cnx = None
+        self.worker = None
         if reuse:
             with _pool_guard:
                 entry = _pool.get(self.key)
                 if entry and entry["lock"].acquire(blocking=False):
-                    self.cnx, self.entry, self.pooled = entry["cnx"], entry, True
-            if self.pooled and time.monotonic() - self.entry["used"] > IDLE_CHECK_AFTER and not _alive(self.cnx):
+                    self.worker, self.entry, self.pooled = entry["worker"], entry, True
+            if self.pooled and not self._healthy():
                 self._discard()
-        if self.cnx is None:
-            self.cnx = connect(conn)
+        if self.worker is None:
+            self.worker = _open_worker(conn, self.key)
             if reuse:
                 with _pool_guard:
                     if self.key not in _pool:
-                        self.entry = {"cnx": self.cnx, "lock": threading.Lock(), "used": time.monotonic()}
+                        self.entry = {"worker": self.worker, "lock": threading.Lock(), "used": time.monotonic()}
                         self.entry["lock"].acquire()
                         _pool[self.key] = self.entry
                         self.pooled = True
         try:
-            quote = self.cnx.getinfo(SQL_IDENTIFIER_QUOTE_CHAR)
-        except Exception:
+            quote = self._call("getinfo", META_TIMEOUT, code=SQL_IDENTIFIER_QUOTE_CHAR)
+        except HfsqlError:
             quote = '"'
         self.quote_char = (quote or "").strip()
 
+    def _healthy(self) -> bool:
+        if not self.worker.alive():
+            return False
+        if time.monotonic() - self.entry["used"] <= IDLE_CHECK_AFTER:
+            return True
+        try:
+            self.worker.call("probe", 60)
+            return True
+        except Exception:
+            return False
+
+    def _call(self, op: str, timeout: float, **kw):
+        try:
+            return self.worker.call(op, timeout, **kw)
+        except _RemoteError as exc:
+            raise HfsqlError(str(exc)) from exc
+
     def _discard(self) -> None:
         with _pool_guard:
-            if _pool.get(self.key) is self.entry:
+            if _pool.get(self.key) is getattr(self, "entry", None):
                 del _pool[self.key]
-        try:
-            self.cnx.close()
-        except Exception:
-            pass
-        self.cnx, self.pooled = None, False
+        self.worker.kill()
+        self.worker, self.pooled = None, False
 
     def close(self, discard: bool = False) -> None:
-        """Rend la connexion au pool (ou la ferme si elle a posé problème)."""
-        if self.cnx is None:
+        """Rend la connexion au pool (ou l'arrête si elle a posé problème)."""
+        if self.worker is None:
             return
-        if self.pooled and not discard:
+        if self.pooled and not discard and self.worker.alive():
             self.entry["used"] = time.monotonic()
             self.entry["lock"].release()
-            self.cnx = None
+            self.worker = None
             return
         if self.pooled:
             self.entry["lock"].release()
             self._discard()
             return
-        try:
-            self.cnx.close()
-        except Exception:
-            pass
-        self.cnx = None
+        self.worker.kill()
+        self.worker = None
 
     def __enter__(self):
         return self
@@ -263,52 +364,35 @@ class Source:
 
     def describe(self) -> str:
         try:
-            return f"{self.cnx.getinfo(SQL_DBMS_NAME)} {self.cnx.getinfo(SQL_DBMS_VER)}".strip()
-        except Exception:
+            return f"{self._call('getinfo', META_TIMEOUT, code=SQL_DBMS_NAME)} " \
+                   f"{self._call('getinfo', META_TIMEOUT, code=SQL_DBMS_VER)}".strip()
+        except HfsqlError:
             return "HFSQL"
 
     def tables(self) -> list[str]:
-        cur = self.cnx.cursor()
-        try:
-            names = [row.table_name for row in cur.tables(tableType="TABLE")]
-        finally:
-            cur.close()
-        return sorted({n for n in names if n})
+        return sorted({n for n in self._call("tables", META_TIMEOUT) if n})
 
     def primary_key(self, table: str) -> list[str]:
-        cur = self.cnx.cursor()
         try:
-            rows = sorted(cur.primaryKeys(table=table), key=lambda r: r.key_seq or 0)
-            return [r.column_name for r in rows]
-        except Exception:
-            return []  # fonction non gérée par le pilote
-        finally:
-            cur.close()
+            return self._call("primary_keys", META_TIMEOUT, table=table)
+        except HfsqlError:
+            return []
 
     def build_table(self, name: str) -> Table:
         """Décrit la table (types déduits de la description ODBC d'une requête vide)."""
-        cur = self.cnx.cursor()
         try:
-            cur.execute(f"SELECT * FROM {self.quote(name)} WHERE 1=0")
-            description = cur.description
-        except Exception as exc:
-            raise HfsqlError(f"Table HFSQL « {name} » illisible : {odbc_message(exc)}") from exc
-        finally:
-            cur.close()
+            description = self._call("describe", META_TIMEOUT, sql=f"SELECT * FROM {self.quote(name)} WHERE 1=0")
+        except HfsqlError as exc:
+            raise HfsqlError(f"Table HFSQL « {name} » illisible : {exc}") from exc
         pk = set(self.primary_key(name))
         columns = [
-            Column(d[0], map_type(d[1], d[4], d[5]), primary_key=d[0] in pk)
-            for d in description
+            Column(col, map_type(python_type, precision, scale), primary_key=col in pk)
+            for col, python_type, precision, scale in description
         ]
         return Table(name, MetaData(), *columns)
 
     def count(self, table: str) -> int:
-        cur = self.cnx.cursor()
-        try:
-            cur.execute(f"SELECT COUNT(*) FROM {self.quote(table)}")
-            return int(cur.fetchone()[0])
-        finally:
-            cur.close()
+        return int(self._call("scalar", QUERY_TIMEOUT, sql=f"SELECT COUNT(*) FROM {self.quote(table)}"))
 
     def select(self, table: str, columns: list[str], inc: Optional[str] = None,
                last: Any = None, strict: bool = True):
@@ -321,9 +405,22 @@ class Source:
                 sql += f" AND {self.quote(inc)} {'>' if strict else '>='} ?"
                 params.append(last)
             sql += f" ORDER BY {self.quote(inc)}"
-        cur = self.cnx.cursor()
-        cur.execute(sql, *params)
-        return cur
+        self._call("execute", QUERY_TIMEOUT, sql=sql, params=params)
+        return _RemoteCursor(self)
+
+
+class _RemoteCursor:
+    def __init__(self, source: Source):
+        self.source = source
+
+    def fetchmany(self, n: int) -> list[tuple]:
+        return self.source._call("fetchmany", QUERY_TIMEOUT, n=n)
+
+    def close(self) -> None:
+        try:
+            self.source._call("close_cursor", 60)
+        except HfsqlError:
+            pass
 
 
 def map_type(python_type, precision, scale):

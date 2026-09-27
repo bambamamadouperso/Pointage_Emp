@@ -18,6 +18,16 @@ from app.models import Connection, JobRun, SyncJob, TableMapping
 from app.sync import run_job
 
 
+@pytest.fixture(autouse=True)
+def _inline_for_fakes(request, monkeypatch):
+    """Les tests avec un faux pyodbc s'exécutent dans le processus courant ; les autres utilisent le vrai
+    processus pilote isolé."""
+    if "odbc_job" not in request.fixturenames and "real_process" not in request.keywords:
+        monkeypatch.setenv("HFSQL_ISOLATION", "inline")
+    yield
+    hfsql.reset_pool()
+
+
 class FakePyodbc:
     def __init__(self, drivers):
         self._drivers = drivers
@@ -171,7 +181,7 @@ def test_unreachable_port_fails_fast(monkeypatch):
     monkeypatch.setattr(hfsql, "_pyodbc", lambda: FakePyodbc(["HFSQL"]))
     start = time.monotonic()
     with pytest.raises(hfsql.HfsqlError, match="Connexion refusée par 127.0.0.1:1"):
-        hfsql.connect(_conn(host="127.0.0.1", port=1))
+        hfsql.Source(_conn(host="127.0.0.1", port=1), reuse=False)
     assert time.monotonic() - start < 5
 
 
@@ -190,7 +200,7 @@ def test_hanging_driver_times_out(monkeypatch):
     monkeypatch.setattr(hfsql, "CONNECT_TIMEOUT", 1)
     start = time.monotonic()
     with pytest.raises(hfsql.HfsqlError, match="ne répond pas après 1 s"):
-        hfsql.connect(_conn())
+        hfsql.Source(_conn(), reuse=False)
     assert time.monotonic() - start < 3
 
 
@@ -225,7 +235,7 @@ def test_missing_dsn_lists_visible_sources(monkeypatch):
     monkeypatch.setattr(hfsql, "_pyodbc", lambda: DsnPyodbc(["HFSQL"]))
     monkeypatch.setattr(hfsql, "check_port", lambda host, port: None)
     with pytest.raises(hfsql.HfsqlError, match="DSN système.*Sources visibles par l'application : Autre, HRsmart32"):
-        hfsql.connect(_conn(options="DSN=HRsmart"))
+        hfsql.Source(_conn(options="DSN=HRsmart"), reuse=False)
 
 
 def test_connection_is_reused_between_runs(monkeypatch):
@@ -268,3 +278,17 @@ def test_connection_is_reused_between_runs(monkeypatch):
         pass
     assert len(opened) == 3
     hfsql.reset_pool()
+
+
+@pytest.mark.real_process
+def test_driver_crash_does_not_kill_the_server():
+    """Un plantage natif du pilote n'emporte que son processus : le serveur continue et affiche une erreur."""
+    worker = hfsql._ProcessWorker()
+    with pytest.raises(hfsql.HfsqlError, match="arrêté brutalement"):
+        worker.call("_crash", 30)
+    assert not worker.alive()
+    # Le processus courant (le serveur web) est toujours là et peut relancer un pilote.
+    other = hfsql._ProcessWorker()
+    with pytest.raises(hfsql._RemoteError, match="non ouverte"):
+        other.call("tables", 30)
+    other.kill()

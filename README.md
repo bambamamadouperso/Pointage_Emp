@@ -53,6 +53,9 @@ hôte du serveur HFSQL, port (**4900** par défaut), base, utilisateur (souvent 
 - L'ouverture d'une connexion HFSQL peut être lente (plus d'une minute sur certains serveurs) : le délai
   est de 4 minutes (`HFSQL_CONNECT_TIMEOUT` dans `.env`, en secondes) et la connexion est **gardée ouverte**
   entre deux exécutions, pour ne payer ce délai qu'une fois.
+- Le pilote ODBC HFSQL s'exécute dans un **processus séparé** : s'il plante ou bloque, seul ce processus
+  est arrêté, le site reste disponible et l'erreur est affichée (délai des requêtes : `HFSQL_QUERY_TIMEOUT`,
+  1800 s par défaut).
 - En cas de blocage, lancez **`diagnostic-hfsql.bat`** dans une session Windows ouverte : il teste chaque
   étape (port, connexion ODBC, tables) avec sa durée, affiche une éventuelle fenêtre du pilote et écrit
   un rapport dans `logs\diagnostic-hfsql.txt`.
