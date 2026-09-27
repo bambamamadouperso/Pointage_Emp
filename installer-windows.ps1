@@ -49,6 +49,20 @@ if (-not $isAdmin) {
     exit
 }
 
+# Désactive le mode "Sélection" de la console : un clic dans la fenêtre ne met plus le script en pause.
+try {
+    Add-Type -Namespace Console -Name Mode -MemberDefinition @'
+[DllImport("kernel32.dll")] public static extern System.IntPtr GetStdHandle(int h);
+[DllImport("kernel32.dll")] public static extern bool GetConsoleMode(System.IntPtr h, out uint m);
+[DllImport("kernel32.dll")] public static extern bool SetConsoleMode(System.IntPtr h, uint m);
+'@
+    $handle = [Console.Mode]::GetStdHandle(-10)
+    $mode = 0
+    if ([Console.Mode]::GetConsoleMode($handle, [ref]$mode)) {
+        [void][Console.Mode]::SetConsoleMode($handle, ($mode -band (-bnot 0x0040)) -bor 0x0080)
+    }
+} catch { }
+
 $Root = $PSScriptRoot
 Set-Location $Root
 $ComposeFile = Join-Path $Root "compose.serveur.yml"
@@ -99,23 +113,48 @@ function Update-SessionPath {
 function Test-DockerCommand { return [bool](Get-Command docker -ErrorAction SilentlyContinue) }
 
 function Get-DockerOsType {
-    if (-not (Test-DockerCommand)) { return $null }
-    $out = Invoke-Native { docker info --format "{{.OSType}}" }
-    if ($LASTEXITCODE -ne 0) { return $null }
-    return ($out | Select-Object -Last 1).Trim()
+    # "docker info" peut rester bloqué pendant le démarrage du moteur : on limite l'attente à 20 s.
+    $docker = Get-Command docker -ErrorAction SilentlyContinue
+    if (-not $docker) { return $null }
+    $psi = New-Object Diagnostics.ProcessStartInfo
+    $psi.FileName = $docker.Source
+    $psi.Arguments = 'info --format "{{.OSType}}"'
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+    $process = [Diagnostics.Process]::Start($psi)
+    if (-not $process.WaitForExit(20000)) {
+        try { $process.Kill() } catch { }
+        return $null
+    }
+    if ($process.ExitCode -ne 0) { return $null }
+    $value = $process.StandardOutput.ReadToEnd().Trim()
+    if ($value) { return $value } else { return $null }
 }
 
 function Wait-Docker([int]$TimeoutSeconds = 300, [string]$ExpectedOsType = "") {
-    Write-Host "    Attente de Docker (jusqu'à $([int]($TimeoutSeconds / 60)) min)" -NoNewline
+    Write-Host "    Démarrage du moteur Docker (la première fois : 2 à 5 min)..."
     $watch = [Diagnostics.Stopwatch]::StartNew()
-    while ($watch.Elapsed.TotalSeconds -lt $TimeoutSeconds) {
+    $nextMessage = 30
+    while ($true) {
         $current = Get-DockerOsType
-        if ($current -and (-not $ExpectedOsType -or $current -eq $ExpectedOsType)) { Write-Host ""; return $true }
-        Write-Host "." -NoNewline
+        if ($current -and (-not $ExpectedOsType -or $current -eq $ExpectedOsType)) { return $true }
+        $elapsed = [int]$watch.Elapsed.TotalSeconds
+        if ($elapsed -ge $nextMessage) {
+            Write-Host "    ... toujours en attente ($elapsed s)"
+            $nextMessage += 30
+        }
+        if ($elapsed -ge $TimeoutSeconds) {
+            Write-Warn "Docker ne répond toujours pas après $elapsed s."
+            Write-Warn "Regardez la fenêtre Docker Desktop : acceptez les conditions, cliquez sur 'Skip' si elle"
+            Write-Warn "demande de se connecter, ou suivez son message (mise à jour de WSL, redémarrage...)."
+            $answer = Read-Host "    Continuer d'attendre 5 minutes de plus ? (O/n)"
+            if ($answer -match "^[nN]") { return $false }
+            $TimeoutSeconds += 300
+        }
         Start-Sleep -Seconds 5
     }
-    Write-Host ""
-    return $false
 }
 
 function Start-DockerDesktop {
