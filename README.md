@@ -53,6 +53,9 @@ hôte du serveur HFSQL, port (**4900** par défaut), base, utilisateur (souvent 
 - L'ouverture d'une connexion HFSQL peut être lente (plus d'une minute sur certains serveurs) : le délai
   est de 4 minutes (`HFSQL_CONNECT_TIMEOUT` dans `.env`, en secondes) et la connexion est **gardée ouverte**
   entre deux exécutions, pour ne payer ce délai qu'une fois.
+- Sous Windows, HFSQL est lu via **.NET (System.Data.Odbc)** dans un processus PowerShell dédié
+  (`app/odbc_bridge.ps1`) : le pilote HFSQL plante avec pyodbc (violation d'accès 0xC0000005) mais fonctionne
+  avec .NET. `HFSQL_ENGINE=pyodbc` dans `.env` force l'ancien moteur.
 - Le pilote ODBC HFSQL s'exécute dans un **processus séparé** : s'il plante ou bloque, seul ce processus
   est arrêté, le site reste disponible et l'erreur est affichée (délai des requêtes : `HFSQL_QUERY_TIMEOUT`,
   1800 s par défaut).

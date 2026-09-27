@@ -239,8 +239,177 @@ class _RemoteError(Exception):
         self.visible = visible
 
 
+class _DotnetWorker:
+    """Pilote ODBC utilisé via .NET (System.Data.Odbc), dans un processus PowerShell isolé.
+
+    Le pilote HFSQL plante avec pyodbc (violation d'accès 0xC0000005) alors qu'il fonctionne avec .NET :
+    sous Windows, c'est donc ce moteur qui est utilisé par défaut (voir odbc_bridge.ps1).
+    """
+
+    SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "odbc_bridge.ps1")
+
+    def __init__(self):
+        import queue
+        import shutil
+        import subprocess
+
+        exe = os.getenv("HFSQL_POWERSHELL") or shutil.which("powershell.exe") or shutil.which("pwsh") \
+            or shutil.which("powershell")
+        if not exe:
+            raise HfsqlError("PowerShell introuvable : il est nécessaire pour lire HFSQL via .NET.")
+        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        self.proc = subprocess.Popen(
+            [exe, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", self.SCRIPT],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=flags,
+        )
+        self.lines: "queue.Queue" = queue.Queue()
+        self.errors: list[str] = []
+        threading.Thread(target=self._pump, args=(self.proc.stdout, self.lines), daemon=True).start()
+        threading.Thread(target=self._drain, daemon=True).start()
+
+    @staticmethod
+    def _pump(stream, q):
+        for raw in iter(stream.readline, b""):
+            q.put(raw.decode("utf-8", "replace"))
+        q.put(None)
+
+    def _drain(self):
+        for raw in iter(self.proc.stderr.readline, b""):
+            self.errors.append(raw.decode("utf-8", "replace").strip())
+            del self.errors[:-20]
+
+    @staticmethod
+    def _param(value) -> str:
+        from decimal import Decimal as _D
+
+        if isinstance(value, bool):
+            return "b:" + ("1" if value else "0")
+        if isinstance(value, int):
+            return f"i:{value}"
+        if isinstance(value, float):
+            return f"f:{value!r}"
+        if isinstance(value, _D):
+            return f"n:{value}"
+        if isinstance(value, dt.datetime):
+            return "d:" + value.isoformat()
+        if isinstance(value, dt.date):
+            return "d:" + value.isoformat() + "T00:00:00"
+        if isinstance(value, dt.timedelta):
+            return f"t:{int(value.total_seconds() * 10_000_000)}"
+        if isinstance(value, dt.time):
+            return f"t:{(value.hour * 3600 + value.minute * 60 + value.second) * 10_000_000 + value.microsecond * 10}"
+        return "s:" + str(value)
+
+    def _args(self, op: str, kw: dict) -> list[str]:
+        if op == "connect":
+            return [kw["cs"], str(int(kw.get("login_timeout", 240)))]
+        if op == "getinfo":
+            return [str(kw["code"])]
+        if op == "describe":
+            return [kw["sql"]]
+        if op in ("scalar", "execute"):
+            return [kw["sql"]] + [self._param(p) for p in kw.get("params", [])]
+        if op == "fetchmany":
+            return [str(kw["n"])]
+        return []
+
+    def call(self, op: str, timeout: float, **kw):
+        import base64
+        import json
+        import queue
+
+        if op == "primary_keys":
+            return []  # la clé est fournie par « describe » (IsKey)
+        line = op + "".join("\t" + base64.b64encode(a.encode("utf-8")).decode() for a in self._args(op, kw))
+        try:
+            self.proc.stdin.write((line + "\n").encode("utf-8"))
+            self.proc.stdin.flush()
+        except (BrokenPipeError, OSError):
+            pass
+        try:
+            reply = self.lines.get(timeout=timeout)
+        except queue.Empty:
+            self.kill()
+            raise HfsqlError(f"Le pilote ODBC HFSQL ne répond pas après {timeout:.0f} s (opération : {op}).") from None
+        if reply is None:
+            self.proc.wait(10)
+            code = self.proc.returncode
+            detail = " ".join(self.errors[-3:])[:500]
+            code_txt = f"0x{code & 0xFFFFFFFF:08X}" if isinstance(code, int) and (code < 0 or code > 255) else code
+            raise HfsqlError(
+                f"Le pont .NET du pilote HFSQL s'est arrêté (code {code_txt}) pendant « {op} »."
+                + (f" Détail : {detail}" if detail else "")
+            )
+        data = json.loads(reply, object_hook=_decode_bridge)
+        if not data["ok"]:
+            message = data["error"]
+            visible = _windows_dsns() if "IM002" in message else None
+            raise _RemoteError(message, visible)
+        return data["result"]
+
+    def alive(self) -> bool:
+        return self.proc.poll() is None
+
+    def kill(self) -> None:
+        try:
+            self.proc.stdin.write(b"quit\n")
+            self.proc.stdin.flush()
+            self.proc.wait(3)
+        except Exception:
+            pass
+        if self.proc.poll() is None:
+            self.proc.kill()
+            try:
+                self.proc.wait(5)
+            except Exception:
+                pass
+
+
+def _decode_bridge(obj: dict):
+    if "$d" in obj:
+        return Decimal(obj["$d"])
+    if "$dt" in obj:
+        return dt.datetime.fromisoformat(obj["$dt"])
+    if "$t" in obj:
+        return dt.timedelta(microseconds=obj["$t"] // 10)
+    if "$b" in obj:
+        import base64
+
+        return base64.b64decode(obj["$b"])
+    return obj
+
+
+def _windows_dsns() -> list[str]:
+    """Sources ODBC déclarées (DSN système et utilisateur) lues dans le registre Windows."""
+    try:
+        import winreg
+    except ImportError:
+        return []
+    names = set()
+    for hive in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+        try:
+            with winreg.OpenKey(hive, r"SOFTWARE\ODBC\ODBC.INI\ODBC Data Sources") as key:
+                i = 0
+                while True:
+                    try:
+                        names.add(winreg.EnumValue(key, i)[0])
+                        i += 1
+                    except OSError:
+                        break
+        except OSError:
+            continue
+    return sorted(names)
+
+
+# Moteur ODBC : « dotnet » (défaut sous Windows : System.Data.Odbc via PowerShell) ou « pyodbc ».
+def engine() -> str:
+    return os.getenv("HFSQL_ENGINE", "dotnet" if os.name == "nt" else "pyodbc").lower()
+
+
 def _new_worker():
-    return _InlineWorker() if os.getenv("HFSQL_ISOLATION", "process") == "inline" else _ProcessWorker()
+    if os.getenv("HFSQL_ISOLATION", "process") == "inline":
+        return _InlineWorker()
+    return _DotnetWorker() if engine() == "dotnet" else _ProcessWorker()
 
 
 def _open_worker(conn, cs: str):
@@ -384,10 +553,14 @@ class Source:
             description = self._call("describe", META_TIMEOUT, sql=f"SELECT * FROM {self.quote(name)} WHERE 1=0")
         except HfsqlError as exc:
             raise HfsqlError(f"Table HFSQL « {name} » illisible : {exc}") from exc
-        pk = set(self.primary_key(name))
+        if description and len(description[0]) >= 5:  # pont .NET : type « kind » et clé fournis
+            pk = {d[0] for d in description if d[4]}
+        else:
+            pk = set(self.primary_key(name))
         columns = [
-            Column(col, map_type(python_type, precision, scale), primary_key=col in pk)
-            for col, python_type, precision, scale in description
+            Column(d[0], map_type(KIND_TYPES.get(d[1], d[1]) if isinstance(d[1], str) else d[1], d[2], d[3]),
+                   primary_key=d[0] in pk)
+            for d in description
         ]
         return Table(name, MetaData(), *columns)
 
@@ -421,6 +594,12 @@ class _RemoteCursor:
             self.source._call("close_cursor", 60)
         except HfsqlError:
             pass
+
+
+KIND_TYPES = {
+    "int": int, "float": float, "decimal": Decimal, "bool": bool, "datetime": dt.datetime,
+    "date": dt.date, "time": dt.time, "bytes": bytes, "str": str,
+}
 
 
 def map_type(python_type, precision, scale):
@@ -464,6 +643,12 @@ def clean(value: Any, target) -> Any:
             except (ValueError, TypeError):
                 return None
         return value
+    if isinstance(value, dt.timedelta):
+        if isinstance(target, Time) and 0 <= value.total_seconds() < 86400:
+            return (dt.datetime.min + value).time()
+        return str(value)
+    if isinstance(value, dt.datetime) and isinstance(target, Date) and not isinstance(target, DateTime):
+        return value.date()
     if isinstance(value, uuid.UUID):
         return str(value)
     if isinstance(value, bytearray):

@@ -8,7 +8,7 @@ import os
 from decimal import Decimal
 
 import pytest
-from sqlalchemy import BigInteger, Date, DateTime, Numeric, Text, create_engine, text
+from sqlalchemy import BigInteger, Date, DateTime, Numeric, Text, Time, create_engine, text
 from sqlalchemy.engine import make_url
 
 from app import hfsql
@@ -87,10 +87,19 @@ def _odbc_available():
         return False
 
 
-@pytest.fixture
-def odbc_job(monkeypatch):
+PWSH = os.getenv("HFSQL_POWERSHELL") or __import__("shutil").which("pwsh") or (
+    "/tmp/claude-0/pwsh/pwsh" if os.path.exists("/tmp/claude-0/pwsh/pwsh") else None)
+
+
+@pytest.fixture(params=["pyodbc", "dotnet"])
+def odbc_job(request, monkeypatch):
     if not POSTGRES_URL or not _odbc_available():
         pytest.skip("TEST_POSTGRES_URL ou pilote ODBC PostgreSQL absent")
+    monkeypatch.setenv("HFSQL_ENGINE", request.param)
+    if request.param == "dotnet":
+        if not PWSH:
+            pytest.skip("PowerShell absent : pont .NET non testable")
+        monkeypatch.setenv("HFSQL_POWERSHELL", PWSH)
     u = make_url(POSTGRES_URL)
     # La source « HFSQL » est simulée par PostgreSQL via ODBC.
     monkeypatch.setattr(hfsql, "connection_string", lambda conn: (
@@ -292,3 +301,15 @@ def test_driver_crash_does_not_kill_the_server():
     with pytest.raises(hfsql._RemoteError, match="non ouverte"):
         other.call("tables", 30)
     other.kill()
+
+
+def test_bridge_value_decoding():
+    import datetime as dt
+    import json
+
+    raw = '[{"$d":"12.50"},{"$dt":"2024-01-02T08:05:03.250000"},{"$t":306000000000},{"$b":"3q0="}]'
+    d, ts, t, b = json.loads(raw, object_hook=hfsql._decode_bridge)
+    assert d == Decimal("12.50") and ts == dt.datetime(2024, 1, 2, 8, 5, 3, 250000)
+    assert hfsql.clean(t, Time()) == dt.time(8, 30) and b == b"\xde\xad"
+    assert hfsql._DotnetWorker._param(dt.date(2024, 1, 2)) == "d:2024-01-02T00:00:00"
+    assert hfsql._DotnetWorker._param(Decimal("1.5")) == "n:1.5" and hfsql._DotnetWorker._param(3) == "i:3"

@@ -64,14 +64,15 @@ def main() -> int:
 
     say(f"Diagnostic HFSQL — connexion « {conn.name} » ({conn.host}:{conn.port}, base {conn.database})")
     say(f"Python {platform.python_version()} {struct.calcsize('P') * 8} bits — {platform.platform()}")
+    say(f"Moteur ODBC : {hfsql.engine()} "
+        f"({'System.Data.Odbc via PowerShell' if hfsql.engine() == 'dotnet' else 'pyodbc'})")
     try:
         pyodbc = hfsql._pyodbc()
+        say(f"Pilotes ODBC {struct.calcsize('P') * 8} bits installés :")
+        for d in pyodbc.drivers():
+            say(f"    {'->' if any(h in d.lower() for h in hfsql.DRIVER_HINTS) else '  '} {d}")
     except hfsql.HfsqlError as exc:
-        say(f"ERREUR : {exc}")
-        return 1
-    say(f"pyodbc {pyodbc.version} — pilotes ODBC {struct.calcsize('P') * 8} bits installés :")
-    for d in pyodbc.drivers():
-        say(f"    {'->' if any(h in d.lower() for h in hfsql.DRIVER_HINTS) else '  '} {d}")
+        say(f"(liste des pilotes indisponible : {exc})")
 
     try:
         cs = hfsql.connection_string(conn)
@@ -86,57 +87,23 @@ def main() -> int:
     if not ok:
         return finish(root)
 
-    say("\n    Si une fenêtre du pilote HFSQL s'ouvre maintenant, notez ce qu'elle demande :")
-    say("    c'est elle qui bloque l'application (qui tourne sans fenêtre, en tâche de fond).")
-    ok, cnx = step("Connexion ODBC", lambda: pyodbc.connect(cs, autocommit=True), 300)
+    say("\n    L'ouverture d'une connexion HFSQL peut prendre plusieurs minutes.")
+    ok, src = step("Connexion ODBC", lambda: hfsql.Source(conn, reuse=False), hfsql.CONNECT_TIMEOUT + 30)
     if not ok:
         return finish(root)
-    for code, label in ((hfsql.SQL_DBMS_NAME, "Serveur"), (hfsql.SQL_DBMS_VER, "Version")):
-        try:
-            say(f"    {label} : {cnx.getinfo(code)}")
-        except Exception:
-            pass
-
-    def list_tables():
-        cur = cnx.cursor()
-        try:
-            return [r.table_name for r in cur.tables(tableType="TABLE")]
-        finally:
-            cur.close()
-
-    ok, tables = step("Liste des tables", list_tables, 120)
+    say(f"    Serveur : {src.describe()}")
+    ok, tables = step("Liste des tables", src.tables, 300)
     if ok:
         say(f"    {len(tables)} table(s) : {', '.join(tables[:15])}{' …' if len(tables) > 15 else ''}")
         if tables:
-            quote = (cnx.getinfo(hfsql.SQL_IDENTIFIER_QUOTE_CHAR) or "").strip()
-            name = f"{quote}{tables[0]}{quote}"
-
-            def structure():
-                cur = cnx.cursor()
-                try:
-                    cur.execute(f"SELECT * FROM {name} WHERE 1=0")
-                    return [f"{d[0]} ({d[1].__name__})" for d in cur.description]
-                finally:
-                    cur.close()
-
-            def count():
-                cur = cnx.cursor()
-                try:
-                    cur.execute(f"SELECT COUNT(*) FROM {name}")
-                    return cur.fetchone()[0]
-                finally:
-                    cur.close()
-
-            ok, cols = step(f"Lecture de la structure de « {tables[0]} »", structure, 120)
+            ok, table = step(f"Lecture de la structure de « {tables[0]} »", lambda: src.build_table(tables[0]), 120)
             if ok:
-                say("    Colonnes : " + ", ".join(cols))
-            ok, n = step(f"Comptage des lignes de « {tables[0]} »", count, 300)
+                say("    Colonnes : " + ", ".join(
+                    f"{c.name} ({c.type}{', clé' if c.primary_key else ''})" for c in table.columns))
+            ok, n = step(f"Comptage des lignes de « {tables[0]} »", lambda: src.count(tables[0]), 300)
             if ok:
                 say(f"    {n} ligne(s)")
-    try:
-        cnx.close()
-    except Exception:
-        pass
+    src.close(discard=True)
     return finish(root)
 
 
