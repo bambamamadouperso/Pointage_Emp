@@ -49,12 +49,13 @@ def unschedule_job(job_id: int) -> None:
         scheduler.remove_job(_aps_id(job_id))
 
 
-def run_now(job_id: int) -> None:
-    """Lance immédiatement un job en arrière-plan."""
+def run_now(job_id: int, trigger: str = "manual", **options) -> None:
+    """Lance immédiatement un job en arrière-plan (options : mapping_id, reset, recreate)."""
     if scheduler.running:
-        scheduler.add_job(run_job, args=[job_id, "manual"], id=f"manual-{job_id}-{utcnow().timestamp()}")
+        scheduler.add_job(run_job, args=[job_id, trigger], kwargs=options,
+                          id=f"{trigger}-{job_id}-{utcnow().timestamp()}")
     else:  # planificateur désactivé (tests) : exécution synchrone
-        run_job(job_id, "manual")
+        run_job(job_id, trigger, **options)
 
 
 def next_run_time(job_id: int) -> Optional[datetime]:

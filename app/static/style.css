@@ -214,3 +214,7 @@ a.sort:hover, a.sort.active { color: var(--primary); }
 @media (max-width: 640px) {
   .filter-row { grid-template-columns: 1fr 1fr; }
 }
+.popover.wide { width: 340px; }
+.popover p { margin: 0; }
+/* Un panneau ouvert dans un tableau ne doit pas être coupé par le défilement horizontal. */
+.table-wrap:has(details[open]) { overflow: visible; }

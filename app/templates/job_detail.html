@@ -16,6 +16,17 @@
   <div class="actions">
     <form method="post" action="/jobs/{{ job.id }}/run"><button class="btn primary" {{ 'disabled' if running }}>▶ Lancer maintenant</button></form>
     <form method="post" action="/jobs/{{ job.id }}/toggle"><button class="btn">{{ 'Désactiver' if job.enabled else 'Activer' }}</button></form>
+    <details class="edit">
+      <summary class="btn">⟲ Tout réimporter</summary>
+      <form method="post" action="/jobs/{{ job.id }}/reload" class="form popover wide"
+            data-confirm="Vider TOUTES les tables actives de ce job dans PostgreSQL puis tout réimporter depuis la source ?">
+        <p class="small"><strong>Vide toutes les tables cibles actives</strong> du job, remet les curseurs à zéro et
+          recharge toutes les données depuis la source.</p>
+        <label class="check small"><input type="checkbox" name="recreate" value="true">
+          Recréer aussi la structure des tables (si des colonnes ou des types ont changé dans la source)</label>
+        <button class="btn small danger">Vider et tout réimporter</button>
+      </form>
+    </details>
     <a class="btn" href="/jobs/{{ job.id }}/edit">Modifier</a>
     <form method="post" action="/jobs/{{ job.id }}/delete" data-confirm="Supprimer le job « {{ job.name }} » et son historique ? Les tables PostgreSQL ne sont pas supprimées."><button class="btn danger">Supprimer</button></form>
   </div>
@@ -64,6 +75,17 @@
               <label>Colonne de suivi <input name="incremental_column" value="{{ m.incremental_column or '' }}"></label>
               <label>Colonnes clés <input name="key_columns" value="{{ m.key_columns or '' }}" placeholder="{{ 'vide = pas de clé' if job.source.is_gsheet else 'vide = clé primaire' }}"></label>
               <button class="btn small primary">Enregistrer</button>
+            </form>
+          </details>
+          <details class="edit">
+            <summary class="btn small ghost">⟲ Réimporter</summary>
+            <form method="post" action="/jobs/{{ job.id }}/reload" class="form popover"
+                  data-confirm="Vider la table {{ job.target_schema }}.{{ m.target_table }} puis tout réimporter depuis {{ m.source_table }} ?">
+              <input type="hidden" name="mapping_id" value="{{ m.id }}">
+              <p class="small">Vide <strong>{{ job.target_schema }}.{{ m.target_table }}</strong>, remet le curseur à zéro et
+                recharge toutes les lignes de <strong>{{ m.source_table }}</strong>.</p>
+              <label class="check small"><input type="checkbox" name="recreate" value="true"> Recréer aussi la structure</label>
+              <button class="btn small danger">Vider et réimporter</button>
             </form>
           </details>
           <form method="post" action="/jobs/{{ job.id }}/tables/{{ m.id }}/toggle"><button class="btn small ghost">{{ 'Désactiver' if m.enabled else 'Activer' }}</button></form>

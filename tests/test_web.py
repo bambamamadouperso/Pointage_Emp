@@ -139,3 +139,8 @@ def test_gsheet_connection_form(logged_client, monkeypatch):
     assert "Google Sheets" in c.get("/connections").text
     assert "gs-web" in c.get("/jobs/new").text
     c.post(f"/connections/{conn.id}/delete")
+
+
+def test_reload_route_validation(logged_client):
+    r = logged_client.post("/jobs/999999/reload", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/jobs"

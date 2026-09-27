@@ -182,3 +182,42 @@ def test_table_error_is_isolated(engines, job):
     with SessionLocal() as db:
         errors = db.query(LogEntry).filter_by(run_id=run.id, level="ERROR").all()
     assert [e.table_name for e in errors] == ["inexistante"]
+
+
+def test_reload_table_and_job(engines, job):
+    """« Vider et réimporter » : table vidée, curseur remis à zéro, tout est rechargé."""
+    from app.sync import run_job
+
+    src, dst = engines
+    assert _run(job).status == "success"
+    with dst.begin() as c:
+        # Ligne parasite côté cible et ligne supprimée côté source : le réimport doit les faire disparaître.
+        c.execute(text(f"INSERT INTO {SCHEMA}.pointages_copie (id, employe_id, jour) VALUES (999, 9, '2020-01-01')"))
+    with src.begin() as c:
+        c.execute(text("DELETE FROM pointages WHERE id = 1"))
+    with SessionLocal() as db:
+        mapping = db.query(TableMapping).filter_by(job_id=job, source_table="pointages").one()
+        mapping_id = mapping.id
+        assert mapping.last_value is not None
+
+    run_id = run_job(job, "reload", mapping_id=mapping_id, reset=True)
+    with SessionLocal() as db:
+        run = db.get(JobRun, run_id)
+        assert run.status == "success" and run.tables_ok == 1 and run.trigger == "reload"
+        assert db.get(TableMapping, mapping_id).last_value_display == "2"
+        assert any("vidée à la demande" in l.message for l in db.query(LogEntry).filter_by(run_id=run_id))
+    with dst.connect() as c:
+        assert c.execute(text(f"SELECT id FROM {SCHEMA}.pointages_copie ORDER BY id")).all() == [(2,)]
+        # Les autres tables ne sont pas touchées.
+        assert c.execute(text(f"SELECT count(*) FROM {SCHEMA}.employes")).scalar() == 2
+
+    # Recréation de la structure : un type modifié à la main côté cible est rétabli.
+    with dst.begin() as c:
+        c.execute(text(f"ALTER TABLE {SCHEMA}.employes ALTER COLUMN nom TYPE varchar(3) USING left(nom, 3)"))
+    run_id = run_job(job, "reload", reset=True, recreate=True)
+    with SessionLocal() as db:
+        run = db.get(JobRun, run_id)
+        assert run.status == "success" and run.tables_ok == 4
+    with dst.connect() as c:
+        assert c.execute(text(f"SELECT nom FROM {SCHEMA}.employes ORDER BY id")).scalars().all() == [
+            "Awa Diallo", "Moussa Ndiaye"]

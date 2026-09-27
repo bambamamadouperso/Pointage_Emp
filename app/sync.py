@@ -469,19 +469,52 @@ def _save_watermark(mapping_id: int, value: Any) -> None:
 # --------------------------------------------------------------------------- exécution d'un job
 
 
-def run_job(job_id: int, trigger: str = "schedule") -> Optional[int]:
-    """Exécute toutes les tables d'un job. Renvoie l'id de l'exécution (None si ignorée)."""
+def run_job(
+    job_id: int,
+    trigger: str = "schedule",
+    mapping_id: Optional[int] = None,
+    reset: bool = False,
+    recreate: bool = False,
+) -> Optional[int]:
+    """Exécute un job. Renvoie l'id de l'exécution (None si ignorée).
+
+    mapping_id : ne traite que cette table.
+    reset      : vide les tables cibles et remet les curseurs à zéro avant de tout réimporter.
+    recreate   : supprime les tables cibles (DROP) pour recréer aussi leur structure.
+    """
     lock = _lock_for(job_id)
     if not lock.acquire(blocking=False):
         write_log("WARNING", "Exécution ignorée : le job est déjà en cours.", job_id=job_id)
         return None
     try:
-        return _run_job_locked(job_id, trigger)
+        return _run_job_locked(job_id, trigger, mapping_id, reset, recreate)
     finally:
         lock.release()
 
 
-def _run_job_locked(job_id: int, trigger: str) -> Optional[int]:
+TRIGGER_LABELS = {"manual": "manuel", "schedule": "planifié", "reload": "réimport complet"}
+
+
+def reset_target(dst_engine: Engine, schema: str, mapping: TableMapping, recreate: bool, log: RunLogger) -> None:
+    """Vide (TRUNCATE) ou supprime (DROP) la table cible et remet le curseur incrémental à zéro."""
+    schema = schema or "public"
+    preparer = dst_engine.dialect.identifier_preparer
+    qualified = f"{preparer.quote_schema(schema)}.{preparer.quote(mapping.target_table)}"
+    if inspect(dst_engine).has_table(mapping.target_table, schema=schema):
+        with dst_engine.begin() as c:
+            c.execute(text(f"DROP TABLE {qualified}" if recreate else f"TRUNCATE TABLE {qualified}"))
+        log.warning(
+            f"Table {schema}.{mapping.target_table} "
+            f"{'supprimée (structure recréée à partir de la source)' if recreate else 'vidée'} à la demande.",
+            mapping.source_table,
+        )
+    mapping.last_value = None
+    _save_watermark(mapping.id, None)
+
+
+def _run_job_locked(
+    job_id: int, trigger: str, mapping_id: Optional[int] = None, reset: bool = False, recreate: bool = False
+) -> Optional[int]:
     db = SessionLocal()
     try:
         job = db.get(SyncJob, job_id)
@@ -492,7 +525,7 @@ def _run_job_locked(job_id: int, trigger: str) -> Optional[int]:
         db.commit()
         log = RunLogger(job.id, run.id)
         started = _time.monotonic()
-        log.info(f"Démarrage du job « {job.name} » ({'manuel' if trigger == 'manual' else 'planifié'}).")
+        log.info(f"Démarrage du job « {job.name} » ({TRIGGER_LABELS.get(trigger, trigger)}).")
 
         src_engine = dst_engine = None
         try:
@@ -511,7 +544,25 @@ def _run_job_locked(job_id: int, trigger: str) -> Optional[int]:
                         pass
                 except Exception as exc:
                     raise RuntimeError(f"connexion {label} impossible : {_short_error(exc)}") from exc
-            mappings = [m for m in job.tables if m.enabled]
+            if mapping_id is not None:
+                mappings = [m for m in job.tables if m.id == mapping_id]
+            else:
+                mappings = [m for m in job.tables if m.enabled]
+            if reset:
+                log.warning(
+                    f"Réimport complet demandé : {len(mappings)} table(s) "
+                    f"{'supprimée(s) et recréée(s)' if recreate else 'vidée(s)'} puis rechargée(s) depuis la source."
+                )
+                kept = []
+                for m in mappings:
+                    try:
+                        reset_target(dst_engine, job.target_schema, m, recreate, log)
+                        kept.append(m)
+                    except Exception as exc:
+                        run.tables_failed += 1
+                        log.error(f"Impossible de vider la table cible : {_short_error(exc)}", m.source_table)
+                db.commit()
+                mappings = kept
             sheets = None
             if is_sheet and mappings:
                 try:

@@ -29,6 +29,10 @@ avec historique et logs.
 - **Tableau de bord** : état des jobs, prochaines exécutions, succès/erreurs sur 24 h, lignes transférées.
 - **Logs** : journal de chaque exécution et de chaque table, filtres (job, niveau, table, texte),
   pagination, export CSV. Purge automatique après `LOG_RETENTION_DAYS` jours.
+- **Vider et réimporter** : depuis la page d'un job (« ⟲ Réimporter » sur une table, ou « ⟲ Tout réimporter »)
+  ou depuis la page d'une table dans *Données*. La table PostgreSQL est vidée, le curseur remis à zéro et
+  toutes les lignes sont rechargées depuis la source (option : recréer aussi la structure si des colonnes
+  ou des types ont changé). L'opération est journalisée (« réimport complet » dans l'historique).
 - Une table en erreur n'arrête pas les autres (état « Partiel ») ; un même job ne tourne jamais deux fois
   en parallèle.
 

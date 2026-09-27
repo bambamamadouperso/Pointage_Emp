@@ -173,6 +173,33 @@ def run_job_now(job_id: int, request: Request, db: Session = Depends(get_db)):
     return redirect(back_url(request, f"/jobs/{job_id}"))
 
 
+@router.post("/{job_id}/reload")
+def reload_job(
+    job_id: int,
+    request: Request,
+    mapping_id: int = Form(0),
+    recreate: bool = Form(False),
+    db: Session = Depends(get_db),
+):
+    """Vide la (ou les) table(s) cible(s), remet les curseurs à zéro et réimporte tout depuis la source."""
+    job = _get_job(db, job_id)
+    if job is None:
+        return redirect("/jobs")
+    mapping = _get_mapping(db, job_id, mapping_id) if mapping_id else None
+    if mapping_id and mapping is None:
+        flash(request, "Table introuvable.", "err")
+        return redirect(f"/jobs/{job_id}")
+    if is_running(job_id):
+        flash(request, f"Le job « {job.name} » est en cours : réessayez à la fin de l'exécution.", "warn")
+        return redirect(back_url(request, f"/jobs/{job_id}"))
+    what = f"la table « {mapping.target_table} »" if mapping else "toutes les tables actives"
+    write_log("WARNING", f"Réimport complet de {what} demandé par {request.session.get('user')}"
+                         f"{' (structure recréée)' if recreate else ''}.", job_id=job.id)
+    scheduler.run_now(job_id, "reload", mapping_id=mapping.id if mapping else None, reset=True, recreate=recreate)
+    flash(request, f"Réimport complet de {what} lancé : suivez l'avancement dans « Exécutions ».", "ok")
+    return redirect(back_url(request, f"/jobs/{job_id}"))
+
+
 @router.post("/{job_id}/toggle")
 def toggle_job(job_id: int, request: Request, db: Session = Depends(get_db)):
     job = _get_job(db, job_id)

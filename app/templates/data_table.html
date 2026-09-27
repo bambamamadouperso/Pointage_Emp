@@ -10,7 +10,16 @@
         (synchro : {{ m.last_sync_at | dt }}){% endfor %}
     </p>
   </div>
-  <a href="/data{% if conn %}?conn_id={{ conn.id }}{% endif %}" class="muted">← Toutes les tables</a>
+  <div class="actions">
+    {% for m in mappings %}
+    <form method="post" action="/jobs/{{ m.job_id }}/reload"
+          data-confirm="Vider {{ schema }}.{{ table }} puis tout réimporter depuis {{ m.source_table }} (job {{ m.job.name }}) ?">
+      <input type="hidden" name="mapping_id" value="{{ m.id }}">
+      <button class="btn small danger">⟲ Vider et réimporter{% if mappings|length > 1 %} ({{ m.job.name }}){% endif %}</button>
+    </form>
+    {% endfor %}
+    <a href="/data{% if conn %}?conn_id={{ conn.id }}{% endif %}" class="btn small ghost">← Toutes les tables</a>
+  </div>
 </div>
 
 {% if conn and columns %}

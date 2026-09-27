@@ -5,7 +5,7 @@
 <div class="page-head">
   <div>
     <h1>Exécution #{{ run.id }} {{ status_badge(run.status) }}</h1>
-    <p class="muted">Job {% if run.job %}<a href="/jobs/{{ run.job_id }}">{{ run.job.name }}</a>{% endif %} · {{ 'manuel' if run.trigger == 'manual' else 'planifié' }}</p>
+    <p class="muted">Job {% if run.job %}<a href="/jobs/{{ run.job_id }}">{{ run.job.name }}</a>{% endif %} · {{ {'manual': 'manuel', 'schedule': 'planifié', 'reload': 'réimport complet'}.get(run.trigger, run.trigger) }}</p>
   </div>
   <a href="/runs" class="muted">← Exécutions</a>
 </div>
