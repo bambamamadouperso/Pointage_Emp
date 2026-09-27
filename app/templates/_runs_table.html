@@ -1,0 +1,22 @@
+{% set runs_list = recent_runs if recent_runs is defined else runs %}
+{% if not runs_list %}
+  <p class="empty">Aucune exécution pour le moment.</p>
+{% else %}
+<div class="table-wrap"><table>
+  <thead><tr><th>#</th>{% if not hide_job %}<th>Job</th>{% endif %}<th>Début</th><th>Durée</th><th>État</th><th>Tables</th><th>Lignes</th><th>Déclencheur</th></tr></thead>
+  <tbody>
+  {% for run in runs_list %}
+    <tr>
+      <td><a href="/runs/{{ run.id }}">{{ run.id }}</a></td>
+      {% if not hide_job %}<td>{% if run.job %}<a href="/jobs/{{ run.job_id }}">{{ run.job.name }}</a>{% endif %}</td>{% endif %}
+      <td>{{ run.started_at | dt }}</td>
+      <td>{{ run.duration }}</td>
+      <td>{{ status_badge(run.status) }}</td>
+      <td>{{ run.tables_ok }}{% if run.tables_failed %} <span class="err-text">/ {{ run.tables_failed }} ✗</span>{% endif %}</td>
+      <td>{{ run.rows_written | num }}</td>
+      <td class="muted">{{ 'manuel' if run.trigger == 'manual' else 'planifié' }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table></div>
+{% endif %}

@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Tableau de bord{% endblock %}
+{% block head %}<meta http-equiv="refresh" content="30">{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Tableau de bord</h1>
+  <span class="muted">Actualisation automatique toutes les 30 s ·
+    Planificateur : {% if scheduler_running %}<span class="badge ok">actif</span>{% else %}<span class="badge err">arrêté</span>{% endif %}</span>
+</div>
+
+<section class="stats">
+  <div class="stat"><span class="label">Jobs actifs</span><span class="value">{{ stats.jobs_enabled }}<small> / {{ stats.jobs }}</small></span></div>
+  <div class="stat"><span class="label">En cours</span><span class="value">{{ stats.running }}</span></div>
+  <div class="stat"><span class="label">Succès (24 h)</span><span class="value ok">{{ stats.runs_ok }}</span></div>
+  <div class="stat"><span class="label">Partiels (24 h)</span><span class="value warn">{{ stats.runs_partial }}</span></div>
+  <div class="stat"><span class="label">Erreurs (24 h)</span><span class="value err">{{ stats.runs_err }}</span></div>
+  <div class="stat"><span class="label">Lignes écrites (24 h)</span><span class="value">{{ stats.rows_24h | num }}</span></div>
+</section>
+
+<section class="card">
+  <div class="card-head">
+    <h2>Jobs</h2>
+    <a class="btn small" href="/jobs/new">+ Nouveau job</a>
+  </div>
+  {% if not jobs %}
+    <p class="empty">Aucun job. Commencez par <a href="/connections">créer vos connexions</a> puis <a href="/jobs/new">un job</a>.</p>
+  {% else %}
+  <div class="table-wrap"><table>
+    <thead><tr><th>Job</th><th>Source → Cible</th><th>Intervalle</th><th>Dernier état</th><th>Dernière exécution</th><th>Prochaine</th><th></th></tr></thead>
+    <tbody>
+    {% for job in jobs %}
+      <tr>
+        <td><a href="/jobs/{{ job.id }}">{{ job.name }}</a>{% if not job.enabled %} <span class="badge">inactif</span>{% endif %}</td>
+        <td class="muted">{{ job.source.name }} → {{ job.target.name }}.{{ job.target_schema }}</td>
+        <td>{{ job.interval_label }}</td>
+        <td>{% if running[job.id] %}{{ status_badge('running') }}{% else %}{{ status_badge(job.last_status) }}{% endif %}</td>
+        <td>{{ job.last_run_at | dt }}</td>
+        <td>{{ next_runs[job.id] | dt if job.enabled else '—' }}</td>
+        <td class="actions">
+          <form method="post" action="/jobs/{{ job.id }}/run"><button class="btn small" {{ 'disabled' if running[job.id] }}>▶ Lancer</button></form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {% endif %}
+</section>
+
+<div class="grid-2">
+  <section class="card">
+    <div class="card-head"><h2>Dernières exécutions</h2><a href="/runs" class="small">Tout voir →</a></div>
+    {% include "_runs_table.html" with context %}
+  </section>
+  <section class="card">
+    <div class="card-head"><h2>Dernières erreurs</h2><a href="/logs?level=ERROR" class="small">Tout voir →</a></div>
+    {% if not recent_errors %}<p class="empty">Aucune erreur 🎉</p>{% endif %}
+    <ul class="log-list">
+      {% for log in recent_errors %}
+      <li>
+        <span class="muted small">{{ log.created_at | dt }}{% if log.job %} · {{ log.job.name }}{% endif %}{% if log.table_name %} · {{ log.table_name }}{% endif %}</span>
+        <div>{% if log.run_id %}<a href="/runs/{{ log.run_id }}">{{ log.message }}</a>{% else %}{{ log.message }}{% endif %}</div>
+      </li>
+      {% endfor %}
+    </ul>
+  </section>
+</div>
+{% endblock %}

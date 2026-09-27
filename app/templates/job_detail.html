@@ -1,0 +1,144 @@
+{% extends "base.html" %}
+{% block title %}{{ job.name }}{% endblock %}
+{% block head %}{% if running %}<meta http-equiv="refresh" content="5">{% endif %}{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>{{ job.name }}
+      {% if job.enabled %}<span class="badge ok">actif</span>{% else %}<span class="badge">inactif</span>{% endif %}
+      {% if running %}{{ status_badge('running') }}{% endif %}
+    </h1>
+    <p class="muted">
+      {{ job.source.name }} <code>{{ job.source.host }}/{{ job.source.database }}</code> →
+      {{ job.target.name }} <code>{{ job.target.host }}/{{ job.target.database }}.{{ job.target_schema }}</code>
+    </p>
+  </div>
+  <div class="actions">
+    <form method="post" action="/jobs/{{ job.id }}/run"><button class="btn primary" {{ 'disabled' if running }}>▶ Lancer maintenant</button></form>
+    <form method="post" action="/jobs/{{ job.id }}/toggle"><button class="btn">{{ 'Désactiver' if job.enabled else 'Activer' }}</button></form>
+    <a class="btn" href="/jobs/{{ job.id }}/edit">Modifier</a>
+    <form method="post" action="/jobs/{{ job.id }}/delete" data-confirm="Supprimer le job « {{ job.name }} » et son historique ? Les tables PostgreSQL ne sont pas supprimées."><button class="btn danger">Supprimer</button></form>
+  </div>
+</div>
+
+<section class="stats">
+  <div class="stat"><span class="label">Intervalle</span><span class="value">{{ job.interval_label }}</span></div>
+  <div class="stat"><span class="label">Dernier état</span><span class="value">{{ status_badge(job.last_status) }}</span></div>
+  <div class="stat"><span class="label">Dernière exécution</span><span class="value small">{{ job.last_run_at | dt }}</span></div>
+  <div class="stat"><span class="label">Prochaine exécution</span><span class="value small">{{ next_run | dt if job.enabled else '—' }}</span></div>
+</section>
+
+<section class="card">
+  <div class="card-head">
+    <h2>Tables synchronisées</h2>
+    {% if unmapped %}
+    <form method="post" action="/jobs/{{ job.id }}/tables/add-all" data-confirm="Ajouter les {{ unmapped|length }} table(s) restantes en mode complet ?">
+      <button class="btn small">+ Ajouter toutes les tables ({{ unmapped|length }})</button>
+    </form>
+    {% endif %}
+  </div>
+  {% if source_error %}<div class="flash err">Source injoignable : {{ source_error }}</div>{% endif %}
+  {% if not job.tables %}
+    <p class="empty">Aucune table configurée. Ajoutez-en ci-dessous.</p>
+  {% else %}
+  <div class="table-wrap"><table>
+    <thead><tr><th>Source</th><th>Cible</th><th>Mode</th><th>Colonne de suivi</th><th>Clé (upsert)</th><th>Curseur</th><th>Dernière synchro</th><th></th></tr></thead>
+    <tbody>
+    {% for m in job.tables %}
+      <tr class="{{ 'disabled' if not m.enabled }}">
+        <td><strong>{{ m.source_table }}</strong>{% if not m.enabled %} <span class="badge">inactive</span>{% endif %}</td>
+        <td>{{ job.target_schema }}.{{ m.target_table }}</td>
+        <td>{{ 'Incrémental' if m.mode == 'incremental' else 'Complet' }}</td>
+        <td>{{ m.incremental_column or '—' }}</td>
+        <td>{{ m.key_columns or 'clé primaire' }}</td>
+        <td class="mono">{{ m.last_value_display or '—' }}</td>
+        <td>{{ m.last_sync_at | dt }}{% if m.last_rows is not none %}<br><span class="muted small">{{ m.last_rows | num }} ligne(s)</span>{% endif %}</td>
+        <td class="actions">
+          <details class="edit">
+            <summary class="btn small ghost">Modifier</summary>
+            <form method="post" action="/jobs/{{ job.id }}/tables/{{ m.id }}/update" class="form popover">
+              <label>Table cible <input name="target_table" value="{{ m.target_table }}" required></label>
+              <label>Mode
+                <select name="mode">{% for k, l in modes.items() %}<option value="{{ k }}" {{ 'selected' if m.mode == k }}>{{ l }}</option>{% endfor %}</select>
+              </label>
+              <label>Colonne de suivi <input name="incremental_column" value="{{ m.incremental_column or '' }}"></label>
+              <label>Colonnes clés <input name="key_columns" value="{{ m.key_columns or '' }}" placeholder="vide = clé primaire"></label>
+              <button class="btn small primary">Enregistrer</button>
+            </form>
+          </details>
+          <form method="post" action="/jobs/{{ job.id }}/tables/{{ m.id }}/toggle"><button class="btn small ghost">{{ 'Désactiver' if m.enabled else 'Activer' }}</button></form>
+          {% if m.mode == 'incremental' and m.last_value %}
+          <form method="post" action="/jobs/{{ job.id }}/tables/{{ m.id }}/reset" data-confirm="Réinitialiser le curseur ? Toute la table sera relue au prochain passage."><button class="btn small ghost">Réinit. curseur</button></form>
+          {% endif %}
+          <form method="post" action="/jobs/{{ job.id }}/tables/{{ m.id }}/delete" data-confirm="Retirer « {{ m.source_table }} » du job ?"><button class="btn small danger">Retirer</button></form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {% endif %}
+
+  <h3>Ajouter une table</h3>
+  <form method="post" action="/jobs/{{ job.id }}/tables" class="form add-table">
+    <div class="row">
+      <label>Table source
+        <input name="source_table" id="source_table" list="source_tables" required autocomplete="off" placeholder="nom de la table">
+        <datalist id="source_tables">{% for t in unmapped %}<option value="{{ t }}">{% endfor %}</datalist>
+      </label>
+      <label>Table cible <input name="target_table" id="target_table" placeholder="identique à la source"></label>
+      <label>Mode
+        <select name="mode" id="mode">{% for k, l in modes.items() %}<option value="{{ k }}">{{ l }}</option>{% endfor %}</select>
+      </label>
+    </div>
+    <div class="row">
+      <label>Colonne de suivi (mode incrémental)
+        <input name="incremental_column" id="incremental_column" list="columns" autocomplete="off" placeholder="ex. id ou updated_at">
+      </label>
+      <label>Colonnes clés pour l'upsert
+        <input name="key_columns" id="key_columns" autocomplete="off" placeholder="vide = clé primaire de la source">
+      </label>
+      <datalist id="columns"></datalist>
+    </div>
+    <p class="muted small" id="columns_info"></p>
+    <div class="form-actions"><button class="btn primary">Ajouter</button></div>
+  </form>
+  <div class="help muted small">
+    <p><strong>Complet</strong> : la table cible est vidée puis rechargée entièrement à chaque passage (dans une transaction : la cible n'est jamais vue vide).</p>
+    <p><strong>Incrémental</strong> : seules les lignes dont la colonne de suivi (un id auto-incrémenté ou une date <code>updated_at</code>) a progressé sont copiées.
+      Avec une clé primaire, les lignes existantes sont mises à jour (upsert). Les suppressions côté source ne sont pas répercutées dans ce mode.</p>
+  </div>
+</section>
+
+<section class="card">
+  <div class="card-head"><h2>Historique</h2><span class="links"><a class="small" href="/runs?job_id={{ job.id }}">Toutes les exécutions →</a><a class="small" href="/logs?job_id={{ job.id }}">Logs du job →</a></span></div>
+  {% set hide_job = True %}
+  {% include "_runs_table.html" with context %}
+</section>
+{% endblock %}
+{% block scripts %}
+<script>
+  const input = document.getElementById('source_table');
+  const info = document.getElementById('columns_info');
+  input.addEventListener('change', async () => {
+    const table = input.value.trim();
+    if (!table) return;
+    info.textContent = 'Chargement des colonnes…';
+    try {
+      const res = await fetch(`/jobs/{{ job.id }}/columns?table=${encodeURIComponent(table)}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      const list = document.getElementById('columns');
+      list.replaceChildren(...data.columns.map(c => Object.assign(document.createElement('option'), {value: c.name})));
+      const pk = data.columns.filter(c => c.pk).map(c => c.name);
+      info.textContent = `${data.columns.length} colonne(s) : ` + data.columns.map(c => `${c.name}${c.pk ? ' 🔑' : ''} (${c.type})`).join(', ')
+        + (pk.length ? '' : ' — ⚠ pas de clé primaire : précisez des colonnes clés pour éviter les doublons en mode incrémental.');
+      const guess = data.columns.find(c => /^(updated_at|modified_at|date_modif|last_update)$/i.test(c.name))
+        || data.columns.find(c => c.pk && /int/i.test(c.type));
+      const inc = document.getElementById('incremental_column');
+      if (guess && !inc.value) inc.placeholder = `suggestion : ${guess.name}`;
+    } catch (e) {
+      info.textContent = 'Colonnes indisponibles : ' + e.message;
+    }
+  });
+</script>
+{% endblock %}

@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Connexions{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Connexions</h1>
+  <div>
+    <a class="btn" href="/connections/new?kind=mariadb">+ Source MariaDB</a>
+    <a class="btn" href="/connections/new?kind=postgresql">+ Cible PostgreSQL</a>
+  </div>
+</div>
+<section class="card">
+  {% if not connections %}
+    <p class="empty">Aucune connexion. Ajoutez une base source MariaDB et une base cible PostgreSQL.</p>
+  {% else %}
+  <div class="table-wrap"><table>
+    <thead><tr><th>Nom</th><th>Type</th><th>Hôte</th><th>Base</th><th>Utilisateur</th><th></th></tr></thead>
+    <tbody>
+    {% for c in connections %}
+      <tr>
+        <td><a href="/connections/{{ c.id }}/edit">{{ c.name }}</a></td>
+        <td><span class="badge {{ 'src' if c.kind == 'mariadb' else 'dst' }}">{{ 'Source' if c.kind == 'mariadb' else 'Cible' }}</span> {{ c.kind_label }}</td>
+        <td>{{ c.host }}:{{ c.port }}</td>
+        <td>{{ c.database }}</td>
+        <td>{{ c.username }}</td>
+        <td class="actions">
+          <form method="post" action="/connections/{{ c.id }}/test"><button class="btn small">Tester</button></form>
+          <a class="btn small ghost" href="/connections/{{ c.id }}/edit">Modifier</a>
+          <form method="post" action="/connections/{{ c.id }}/delete" data-confirm="Supprimer la connexion « {{ c.name }} » ?"><button class="btn small danger">Supprimer</button></form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {% endif %}
+</section>
+{% endblock %}

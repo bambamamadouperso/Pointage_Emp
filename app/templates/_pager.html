@@ -1,0 +1,7 @@
+{% if pages > 1 %}
+<nav class="pager">
+  {% if page > 1 %}<a class="btn small ghost" href="{{ page_url(request, page - 1) }}">← Précédent</a>{% endif %}
+  <span class="muted">Page {{ page }} / {{ pages }}</span>
+  {% if page < pages %}<a class="btn small ghost" href="{{ page_url(request, page + 1) }}">Suivant →</a>{% endif %}
+</nav>
+{% endif %}

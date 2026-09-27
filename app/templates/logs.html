@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Logs{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Logs</h1>
+  <div>
+    <span class="muted">{{ total | num }} entrée(s)</span>
+    <a class="btn small" href="/logs/export.csv?{{ request.query_params }}">Exporter CSV</a>
+  </div>
+</div>
+<form method="get" class="card filters">
+  <label>Job
+    <select name="job_id"><option value="">Tous</option>
+      {% for j in jobs %}<option value="{{ j.id }}" {{ 'selected' if filters.job_id == j.id }}>{{ j.name }}</option>{% endfor %}
+    </select>
+  </label>
+  <label>Niveau minimum
+    <select name="level"><option value="">Tous</option>
+      {% for l in levels %}<option value="{{ l }}" {{ 'selected' if filters.level == l }}>{{ l }}</option>{% endfor %}
+    </select>
+  </label>
+  <label>Table <input name="table" value="{{ filters.table }}"></label>
+  <label class="grow">Recherche <input name="q" value="{{ filters.q }}" placeholder="texte du message"></label>
+  <button class="btn">Filtrer</button>
+  <a class="btn ghost" href="/logs">Réinitialiser</a>
+</form>
+<section class="card">
+  {% set show_job = True %}
+  {% include "_logs_table.html" with context %}
+  {% include "_pager.html" with context %}
+</section>
+{% endblock %}

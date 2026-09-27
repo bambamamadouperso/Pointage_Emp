@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Synchro{% endblock %} · MariaDB → PostgreSQL</title>
+  <link rel="stylesheet" href="/static/style.css">
+  {% block head %}{% endblock %}
+</head>
+<body>
+{% if user %}
+<header class="topbar">
+  <a class="brand" href="/">⇄ Synchro <span>MariaDB → PostgreSQL</span></a>
+  <nav>
+    {% set path = request.url.path %}
+    <a href="/" class="{{ 'active' if path == '/' }}">Tableau de bord</a>
+    <a href="/jobs" class="{{ 'active' if path.startswith('/jobs') }}">Jobs</a>
+    <a href="/connections" class="{{ 'active' if path.startswith('/connections') }}">Connexions</a>
+    <a href="/runs" class="{{ 'active' if path.startswith('/runs') }}">Exécutions</a>
+    <a href="/logs" class="{{ 'active' if path.startswith('/logs') }}">Logs</a>
+  </nav>
+  <form method="post" action="/logout" class="logout">
+    <span class="muted">{{ user }}</span>
+    <button class="btn small ghost">Déconnexion</button>
+  </form>
+</header>
+{% endif %}
+<main class="{% block main_class %}container{% endblock %}">
+  {% for category, message in pop_flashes(request) %}
+    <div class="flash {{ category }}">{{ message }}</div>
+  {% endfor %}
+  {% block content %}{% endblock %}
+</main>
+<footer class="footer muted">Heures affichées en {{ tz_name }}</footer>
+<script>
+  document.addEventListener('submit', e => {
+    const msg = e.target.dataset.confirm;
+    if (msg && !confirm(msg)) e.preventDefault();
+  });
+</script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

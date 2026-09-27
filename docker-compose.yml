@@ -1,0 +1,42 @@
+# Lance l'application + une base MariaDB et une base PostgreSQL de démonstration.
+# En production, ne gardez que le service "app" et déclarez vos vraies bases dans le tableau de bord.
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      APP_DB_URL: sqlite:////app/data/app.db
+    volumes:
+      - app-data:/app/data
+    depends_on:
+      - mariadb
+      - postgres
+    restart: unless-stopped
+
+  mariadb:
+    image: mariadb:11
+    environment:
+      MARIADB_ROOT_PASSWORD: rootpw
+      MARIADB_DATABASE: pointage
+      MARIADB_USER: sync
+      MARIADB_PASSWORD: syncpw
+    volumes:
+      - ./docker/mariadb-init:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "3306:3306"
+
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: dwh
+      POSTGRES_USER: sync
+      POSTGRES_PASSWORD: syncpw
+    ports:
+      - "5432:5432"
+
+volumes:
+  app-data:

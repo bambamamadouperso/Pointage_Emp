@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Exécution #{{ run.id }}{% endblock %}
+{% block head %}{% if run.status == 'running' %}<meta http-equiv="refresh" content="3">{% endif %}{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Exécution #{{ run.id }} {{ status_badge(run.status) }}</h1>
+    <p class="muted">Job {% if run.job %}<a href="/jobs/{{ run.job_id }}">{{ run.job.name }}</a>{% endif %} · {{ 'manuel' if run.trigger == 'manual' else 'planifié' }}</p>
+  </div>
+  <a href="/runs" class="muted">← Exécutions</a>
+</div>
+<section class="stats">
+  <div class="stat"><span class="label">Début</span><span class="value small">{{ run.started_at | dt }}</span></div>
+  <div class="stat"><span class="label">Durée</span><span class="value small">{{ run.duration }}</span></div>
+  <div class="stat"><span class="label">Tables OK / échec</span><span class="value">{{ run.tables_ok }} <small>/ {{ run.tables_failed }}</small></span></div>
+  <div class="stat"><span class="label">Lignes écrites</span><span class="value">{{ run.rows_written | num }}</span></div>
+</section>
+{% if run.message %}<div class="flash {{ 'ok' if run.status == 'success' else 'warn' if run.status == 'partial' else 'err' if run.status == 'error' else 'info' }}">{{ run.message }}</div>{% endif %}
+<section class="card">
+  <h2>Journal</h2>
+  {% include "_logs_table.html" with context %}
+</section>
+{% endblock %}

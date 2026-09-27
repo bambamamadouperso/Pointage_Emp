@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Exécutions{% endblock %}
+{% block content %}
+<div class="page-head"><h1>Exécutions</h1><span class="muted">{{ total | num }} résultat(s)</span></div>
+<form method="get" class="card filters">
+  <label>Job
+    <select name="job_id"><option value="">Tous</option>
+      {% for j in jobs %}<option value="{{ j.id }}" {{ 'selected' if filters.job_id == j.id }}>{{ j.name }}</option>{% endfor %}
+    </select>
+  </label>
+  <label>État
+    <select name="status"><option value="">Tous</option>
+      {% for k, l in [('success','Succès'),('partial','Partiel'),('error','Erreur'),('running','En cours')] %}
+        <option value="{{ k }}" {{ 'selected' if filters.status == k }}>{{ l }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <button class="btn">Filtrer</button>
+</form>
+<section class="card">
+  {% include "_runs_table.html" with context %}
+  {% include "_pager.html" with context %}
+</section>
+{% endblock %}

@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Job{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>{{ 'Modifier le job' if job.id else 'Nouveau job' }}</h1>
+  <a href="{{ '/jobs/%d' % job.id if job.id else '/jobs' }}" class="muted">← Retour</a>
+</div>
+{% if not sources or not targets %}
+  <div class="flash warn">
+    Il faut au moins une connexion source MariaDB et une connexion cible PostgreSQL.
+    <a href="/connections">Gérer les connexions →</a>
+  </div>
+{% endif %}
+<form method="post" action="/jobs/save" class="card form">
+  <input type="hidden" name="job_id" value="{{ job.id or 0 }}">
+  <label>Nom du job <input name="name" value="{{ job.name or '' }}" required placeholder="ex. pointage-vers-dwh"></label>
+  <div class="row">
+    <label>Base source (MariaDB)
+      <select name="source_id" required>
+        {% for c in sources %}<option value="{{ c.id }}" {{ 'selected' if job.source_id == c.id }}>{{ c.name }} — {{ c.host }}/{{ c.database }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>Base cible (PostgreSQL)
+      <select name="target_id" required>
+        {% for c in targets %}<option value="{{ c.id }}" {{ 'selected' if job.target_id == c.id }}>{{ c.name }} — {{ c.host }}/{{ c.database }}</option>{% endfor %}
+      </select>
+    </label>
+  </div>
+  <div class="row">
+    <label>Schéma cible <input name="target_schema" value="{{ job.target_schema or 'public' }}" required></label>
+    <label>Exécuter toutes les
+      <span class="inline">
+        <input name="interval_value" type="number" min="1" value="{{ interval_value }}" required class="narrow">
+        <select name="interval_unit">
+          {% for key, label in [('seconds','secondes'),('minutes','minutes'),('hours','heures'),('days','jours')] %}
+            <option value="{{ key }}" {{ 'selected' if interval_unit == key }}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </span>
+    </label>
+  </div>
+  <label class="check"><input type="checkbox" name="enabled" value="true" {{ 'checked' if job.enabled }}> Job actif (exécuté automatiquement)</label>
+  <p class="muted small">Le schéma et les tables cibles sont créés automatiquement s'ils n'existent pas. Les tables à copier se configurent après l'enregistrement.</p>
+  <div class="form-actions">
+    <button class="btn primary">Enregistrer</button>
+  </div>
+</form>
+{% endblock %}

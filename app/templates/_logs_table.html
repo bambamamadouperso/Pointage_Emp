@@ -1,0 +1,21 @@
+{% if not logs %}
+  <p class="empty">Aucun log.</p>
+{% else %}
+<div class="table-wrap"><table class="logs">
+  <thead><tr><th>Date</th><th>Niveau</th>{% if show_job %}<th>Job</th><th>Exéc.</th>{% endif %}<th>Table</th><th>Message</th></tr></thead>
+  <tbody>
+  {% for log in logs %}
+    <tr class="lvl-{{ log.level | lower }}">
+      <td class="nowrap">{{ log.created_at | dt }}</td>
+      <td><span class="lvl {{ log.level | lower }}">{{ log.level }}</span></td>
+      {% if show_job %}
+      <td>{% if log.job %}<a href="/jobs/{{ log.job_id }}">{{ log.job.name }}</a>{% endif %}</td>
+      <td>{% if log.run_id %}<a href="/runs/{{ log.run_id }}">#{{ log.run_id }}</a>{% endif %}</td>
+      {% endif %}
+      <td>{{ log.table_name or '' }}</td>
+      <td class="msg">{{ log.message }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table></div>
+{% endif %}

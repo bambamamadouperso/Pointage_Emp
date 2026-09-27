@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Jobs{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Jobs de synchronisation</h1>
+  <a class="btn primary" href="/jobs/new">+ Nouveau job</a>
+</div>
+<section class="card">
+  {% if not jobs %}
+    <p class="empty">Aucun job. Un job copie des tables d'une source MariaDB vers une cible PostgreSQL à intervalle régulier.</p>
+  {% else %}
+  <div class="table-wrap"><table>
+    <thead><tr><th>Nom</th><th>Source</th><th>Cible</th><th>Tables</th><th>Intervalle</th><th>État</th><th>Dernière exécution</th><th>Prochaine</th><th></th></tr></thead>
+    <tbody>
+    {% for job in jobs %}
+      <tr>
+        <td><a href="/jobs/{{ job.id }}">{{ job.name }}</a></td>
+        <td>{{ job.source.name }}</td>
+        <td>{{ job.target.name }} <span class="muted">({{ job.target_schema }})</span></td>
+        <td>{{ job.tables | selectattr('enabled') | list | length }} / {{ job.tables | length }}</td>
+        <td>{{ job.interval_label }}</td>
+        <td>
+          {% if job.enabled %}<span class="badge ok">actif</span>{% else %}<span class="badge">inactif</span>{% endif %}
+          {% if running[job.id] %}{{ status_badge('running') }}{% else %}{{ status_badge(job.last_status) }}{% endif %}
+        </td>
+        <td>{{ job.last_run_at | dt }}</td>
+        <td>{{ next_runs[job.id] | dt if job.enabled else '—' }}</td>
+        <td class="actions">
+          <form method="post" action="/jobs/{{ job.id }}/run"><button class="btn small" {{ 'disabled' if running[job.id] }}>▶ Lancer</button></form>
+          <form method="post" action="/jobs/{{ job.id }}/toggle"><button class="btn small ghost">{{ 'Désactiver' if job.enabled else 'Activer' }}</button></form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {% endif %}
+</section>
+{% endblock %}

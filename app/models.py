@@ -1,0 +1,174 @@
+"""Modèles de la base interne : connexions, jobs, tables, exécutions et logs."""
+from datetime import datetime, timezone
+from typing import Optional
+
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy.engine import URL
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from .crypto import decrypt
+from .database import Base
+
+SOURCE_KINDS = {"mariadb": "MariaDB / MySQL"}
+TARGET_KINDS = {"postgresql": "PostgreSQL"}
+KIND_LABELS = {**SOURCE_KINDS, **TARGET_KINDS}
+DEFAULT_PORTS = {"mariadb": 3306, "postgresql": 5432}
+
+MODE_FULL = "full"
+MODE_INCREMENTAL = "incremental"
+MODE_LABELS = {
+    MODE_FULL: "Complet (vidage + rechargement)",
+    MODE_INCREMENTAL: "Incrémental (colonne de suivi)",
+}
+
+
+def utcnow() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+class Connection(Base):
+    __tablename__ = "connections"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(100), unique=True)
+    kind: Mapped[str] = mapped_column(String(20))
+    host: Mapped[str] = mapped_column(String(255))
+    port: Mapped[int] = mapped_column(Integer)
+    database: Mapped[str] = mapped_column(String(255))
+    username: Mapped[str] = mapped_column(String(255))
+    password_enc: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    @property
+    def kind_label(self) -> str:
+        return KIND_LABELS.get(self.kind, self.kind)
+
+    def sqlalchemy_url(self) -> URL:
+        if self.kind == "mariadb":
+            return URL.create(
+                "mysql+pymysql",
+                username=self.username,
+                password=decrypt(self.password_enc),
+                host=self.host,
+                port=self.port,
+                database=self.database,
+                query={"charset": "utf8mb4"},
+            )
+        if self.kind == "postgresql":
+            return URL.create(
+                "postgresql+psycopg",
+                username=self.username,
+                password=decrypt(self.password_enc),
+                host=self.host,
+                port=self.port,
+                database=self.database,
+            )
+        raise ValueError(f"Type de base inconnu : {self.kind}")
+
+
+class SyncJob(Base):
+    __tablename__ = "sync_jobs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(100), unique=True)
+    source_id: Mapped[int] = mapped_column(ForeignKey("connections.id"))
+    target_id: Mapped[int] = mapped_column(ForeignKey("connections.id"))
+    target_schema: Mapped[str] = mapped_column(String(100), default="public")
+    interval_seconds: Mapped[int] = mapped_column(Integer, default=3600)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    last_run_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    last_status: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+
+    source: Mapped[Connection] = relationship(foreign_keys=[source_id])
+    target: Mapped[Connection] = relationship(foreign_keys=[target_id])
+    tables: Mapped[list["TableMapping"]] = relationship(
+        back_populates="job", cascade="all, delete-orphan", order_by="TableMapping.id"
+    )
+
+    @property
+    def interval_label(self) -> str:
+        s = self.interval_seconds
+        if s % 86400 == 0:
+            return f"{s // 86400} j"
+        if s % 3600 == 0:
+            return f"{s // 3600} h"
+        if s % 60 == 0:
+            return f"{s // 60} min"
+        return f"{s} s"
+
+
+class TableMapping(Base):
+    __tablename__ = "table_mappings"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    job_id: Mapped[int] = mapped_column(ForeignKey("sync_jobs.id", ondelete="CASCADE"))
+    source_table: Mapped[str] = mapped_column(String(255))
+    target_table: Mapped[str] = mapped_column(String(255))
+    mode: Mapped[str] = mapped_column(String(20), default=MODE_FULL)
+    incremental_column: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    # Colonnes clés pour l'upsert (séparées par des virgules). Vide = clé primaire source.
+    key_columns: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True)
+    # Dernière valeur transférée de la colonne incrémentale (encodée en JSON).
+    last_value: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    last_sync_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    last_rows: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+    job: Mapped[SyncJob] = relationship(back_populates="tables")
+
+    @property
+    def mode_label(self) -> str:
+        return MODE_LABELS.get(self.mode, self.mode)
+
+    @property
+    def last_value_display(self) -> str:
+        from .watermark import decode
+
+        value = decode(self.last_value)
+        return "" if value is None else str(value)
+
+
+class JobRun(Base):
+    __tablename__ = "job_runs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    job_id: Mapped[int] = mapped_column(ForeignKey("sync_jobs.id", ondelete="CASCADE"), index=True)
+    trigger: Mapped[str] = mapped_column(String(20), default="schedule")
+    status: Mapped[str] = mapped_column(String(20), default="running")
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    rows_read: Mapped[int] = mapped_column(Integer, default=0)
+    rows_written: Mapped[int] = mapped_column(Integer, default=0)
+    tables_ok: Mapped[int] = mapped_column(Integer, default=0)
+    tables_failed: Mapped[int] = mapped_column(Integer, default=0)
+    message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    job: Mapped[SyncJob] = relationship()
+
+    @property
+    def duration(self) -> str:
+        if not self.finished_at:
+            return "—"
+        seconds = (self.finished_at - self.started_at).total_seconds()
+        if seconds < 60:
+            return f"{seconds:.1f} s"
+        return f"{int(seconds // 60)} min {int(seconds % 60)} s"
+
+
+class LogEntry(Base):
+    __tablename__ = "logs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+    level: Mapped[str] = mapped_column(String(10), index=True)
+    job_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("sync_jobs.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    run_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("job_runs.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    table_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    message: Mapped[str] = mapped_column(Text)
+
+    job: Mapped[Optional[SyncJob]] = relationship()

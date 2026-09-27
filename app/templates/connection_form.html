@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Connexion{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>{{ 'Modifier' if conn.id else 'Nouvelle' }} connexion</h1>
+  <a href="/connections" class="muted">← Retour</a>
+</div>
+<form method="post" action="/connections/save" class="card form">
+  <input type="hidden" name="conn_id" value="{{ conn.id or 0 }}">
+  <div class="row">
+    <label>Nom <input name="name" value="{{ conn.name or '' }}" required placeholder="ex. pointage-prod"></label>
+    <label>Type
+      <select name="kind" id="kind">
+        {% for key, label in kinds.items() %}
+          <option value="{{ key }}" {{ 'selected' if conn.kind == key }}>{{ label }} — {{ 'source' if key == 'mariadb' else 'cible' }}</option>
+        {% endfor %}
+      </select>
+    </label>
+  </div>
+  <div class="row">
+    <label class="grow">Hôte <input name="host" value="{{ conn.host or '' }}" required placeholder="192.168.1.10"></label>
+    <label class="narrow">Port <input name="port" id="port" type="number" value="{{ conn.port }}" required></label>
+  </div>
+  <label>Base de données <input name="database" value="{{ conn.database or '' }}" required></label>
+  <div class="row">
+    <label>Utilisateur <input name="username" value="{{ conn.username or '' }}" required autocomplete="off"></label>
+    <label>Mot de passe
+      <input name="password" type="password" value="{{ keep_password or '' }}" autocomplete="new-password"
+             placeholder="{{ 'laisser vide pour conserver' if conn.id else '' }}">
+    </label>
+  </div>
+  <p class="muted small">Le mot de passe est chiffré dans la base interne. Pour une source, un utilisateur en lecture seule suffit.</p>
+  <div class="form-actions">
+    <button class="btn primary" name="action" value="save">Enregistrer</button>
+    <button class="btn" name="action" value="test" formnovalidate>Tester la connexion</button>
+  </div>
+</form>
+{% endblock %}
+{% block scripts %}
+<script>
+  const defaults = {mariadb: 3306, postgresql: 5432};
+  document.getElementById('kind').addEventListener('change', e => {
+    const port = document.getElementById('port');
+    if (Object.values(defaults).includes(Number(port.value))) port.value = defaults[e.target.value];
+  });
+</script>
+{% endblock %}
