@@ -1,0 +1,20 @@
+# Installation sur un serveur qui possède déjà ses bases MariaDB / PostgreSQL.
+# Lance uniquement l'application (pas de bases de démonstration).
+#   docker compose -f compose.serveur.yml up -d --build
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file: .env
+    environment:
+      APP_DB_URL: sqlite:////app/data/app.db
+    volumes:
+      - app-data:/app/data
+    extra_hosts:
+      # Permet d'atteindre les bases installées sur le serveur lui-même via "host.docker.internal".
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+volumes:
+  app-data:
