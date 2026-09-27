@@ -54,6 +54,7 @@ templates.env.filters["dt"] = fmt_dt
 templates.env.filters["num"] = fmt_int
 templates.env.globals["status_badge"] = status_badge
 templates.env.globals["tz_name"] = settings.timezone
+templates.env.globals["app_version"] = __import__("app").__version__
 
 
 def flash(request: Request, message: str, category: str = "info") -> None:

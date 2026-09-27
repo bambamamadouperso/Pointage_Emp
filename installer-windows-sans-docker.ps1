@@ -53,6 +53,7 @@ try {
 } catch { }
 
 $Root = $PSScriptRoot
+$InstallStartedUtc = (Get-Date).ToUniversalTime().AddSeconds(-5)
 Set-Location $Root
 $EnvFile = Join-Path $Root ".env"
 $VenvDir = Join-Path $Root ".venv"
@@ -159,15 +160,41 @@ function Write-EnvFile([string[]]$Lines) {
 
 # --------------------------------------------------------------------------- service
 
+function Get-PortOwners([int]$LocalPort) {
+    return @(Get-NetTCPConnection -LocalPort $LocalPort -State Listen -ErrorAction SilentlyContinue |
+        Select-Object -ExpandProperty OwningProcess -Unique | Where-Object { $_ -gt 0 })
+}
+
 function Stop-App {
     if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
         Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
     }
-    # Arrête aussi un éventuel processus encore lancé depuis ce dossier.
-    Get-CimInstance Win32_Process -Filter "Name = 'python.exe'" -ErrorAction SilentlyContinue |
-        Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($VenvDir, [StringComparison]::OrdinalIgnoreCase) } |
+    # Sous Windows, .venv\Scripts\python.exe n'est qu'un lanceur : le serveur tourne dans un processus
+    # Python enfant (celui de Program Files). On arrête donc tout processus uvicorn de l'application,
+    # quel que soit son exécutable, puis ce qui écoute encore sur le port.
+    Get-CimInstance Win32_Process -Filter "Name = 'python.exe' OR Name = 'pythonw.exe'" -ErrorAction SilentlyContinue |
+        Where-Object {
+            ($_.ExecutablePath -and $_.ExecutablePath.StartsWith($VenvDir, [StringComparison]::OrdinalIgnoreCase)) -or
+            ($_.CommandLine -and $_.CommandLine -like "*uvicorn*app.main:app*")
+        } |
         ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
-    Start-Sleep -Seconds 2
+
+    $deadline = (Get-Date).AddSeconds(20)
+    while ((Get-PortOwners $Port).Count -gt 0 -and (Get-Date) -lt $deadline) {
+        foreach ($processId in Get-PortOwners $Port) {
+            $process = Get-Process -Id $processId -ErrorAction SilentlyContinue
+            if ($process -and $process.ProcessName -like "python*") {
+                Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue
+            }
+        }
+        Start-Sleep -Seconds 1
+    }
+    $owners = Get-PortOwners $Port
+    if ($owners.Count -gt 0) {
+        $names = ($owners | ForEach-Object { (Get-Process -Id $_ -ErrorAction SilentlyContinue).ProcessName }) -join ", "
+        Stop-Install ("Le port $Port est occupé par un autre programme ($names). Arrêtez-le ou relancez " +
+                      "l'installation avec un autre port : .\installer-windows-sans-docker.ps1 -Port 8080")
+    }
 }
 
 function Register-App {
@@ -258,7 +285,13 @@ $healthy = $false
 for ($i = 0; $i -lt 45; $i++) {
     try {
         $response = Invoke-WebRequest -UseBasicParsing -Uri "$url/health" -TimeoutSec 5
-        if ($response.StatusCode -eq 200) { $healthy = $true; break }
+        $health = $response.Content | ConvertFrom-Json
+        # On s'assure que c'est bien la nouvelle instance qui répond (démarrée après ce script).
+        if ($response.StatusCode -eq 200 -and $health.started_at -and
+            [datetime]::Parse($health.started_at).ToUniversalTime() -ge $InstallStartedUtc) {
+            $healthy = $true
+            break
+        }
     } catch { }
     Write-Host "." -NoNewline
     Start-Sleep -Seconds 2
@@ -269,7 +302,7 @@ if (-not $healthy) {
     if (Test-Path $appLog) { Get-Content $appLog -Tail 20 | ForEach-Object { Write-Host "    $_" } }
     Stop-Install "L'application ne répond pas. Voir logs\application.log"
 }
-Write-Ok "Application démarrée (tâche planifiée « $TaskName »)."
+Write-Ok "Application démarrée (version $($health.version), tâche planifiée « $TaskName »)."
 
 # ---- 5. Pare-feu
 if (-not $NoFirewall) {

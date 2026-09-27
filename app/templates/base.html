@@ -32,7 +32,7 @@
   {% endfor %}
   {% block content %}{% endblock %}
 </main>
-<footer class="footer muted">Heures affichées en {{ tz_name }}</footer>
+<footer class="footer muted">Version {{ app_version }} · heures affichées en {{ tz_name }}</footer>
 <script>
   document.addEventListener('submit', e => {
     const msg = e.target.dataset.confirm;

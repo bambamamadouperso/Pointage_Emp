@@ -1,5 +1,6 @@
 """Point d'entrée : application web d'administration de la synchronisation MariaDB -> PostgreSQL."""
 import logging
+from datetime import datetime, timezone
 import os
 from contextlib import asynccontextmanager
 
@@ -7,7 +8,7 @@ from fastapi import FastAPI, Form, Request
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import scheduler
+from . import __version__, scheduler
 from .config import settings
 from .database import init_db
 from .joblog import write_log
@@ -60,9 +61,17 @@ def logout(request: Request):
     return redirect("/login")
 
 
+STARTED_AT = datetime.now(timezone.utc)
+
+
 @app.get("/health")
 def health():
-    return {"status": "ok", "scheduler": scheduler.scheduler.running}
+    return {
+        "status": "ok",
+        "version": __version__,
+        "started_at": STARTED_AT.isoformat(),
+        "scheduler": scheduler.scheduler.running,
+    }
 
 
 app.include_router(monitoring.router)
