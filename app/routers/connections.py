@@ -61,6 +61,7 @@ def save_connection(
     sheet_link: str = Form(""),
     sheet_auth: str = Form(gsheet.AUTH_PUBLIC),
     sa_json: str = Form(""),
+    options: str = Form(""),
     action: str = Form("save"),
     db: Session = Depends(get_db),
 ):
@@ -98,6 +99,7 @@ def save_connection(
     values = dict(
         name=name.strip(), kind=kind, host=host.strip(), port=port,
         database=database.strip(), username=username.strip(),
+        options=(options.strip() or None) if kind == "hfsql" else None,
     )
     if kind == "gsheet" and username == gsheet.AUTH_PUBLIC:
         password_enc = ""

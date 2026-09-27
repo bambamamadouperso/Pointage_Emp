@@ -1,12 +1,12 @@
-# Synchro MariaDB / Google Sheets → PostgreSQL
+# Synchro MariaDB / HFSQL / Google Sheets → PostgreSQL
 
-Application qui copie des tables de bases **MariaDB/MySQL** et des onglets de classeurs **Google Sheets**
+Application qui copie des tables de bases **MariaDB/MySQL**, **HFSQL Client/Serveur** (PC SOFT) et des onglets de classeurs **Google Sheets**
 vers des bases **PostgreSQL** à intervalle régulier, administrée depuis un **tableau de bord web**
 avec historique et logs.
 
 ## Fonctionnalités
 
-- **Connexions** : déclarez vos sources (MariaDB, Google Sheets) et cibles (PostgreSQL), testez-les en un clic.
+- **Connexions** : déclarez vos sources (MariaDB, HFSQL, Google Sheets) et cibles (PostgreSQL), testez-les en un clic.
   Pour une base, **« Lister les bases du serveur »** propose les bases existantes (un clic pour choisir) et,
   pour PostgreSQL, **« Créer une nouvelle base »** la crée directement (l'utilisateur doit avoir le droit
   `CREATEDB` : `ALTER ROLE mon_user CREATEDB;`).
@@ -38,6 +38,21 @@ avec historique et logs.
 
 > Le mode incrémental ne répercute pas les suppressions faites dans la source. Pour une table où des
 > lignes sont supprimées, utilisez le mode complet.
+
+## Source HFSQL Client/Serveur
+
+La lecture passe par le **pilote ODBC HFSQL** de PC SOFT, à installer (gratuit) sur le serveur qui exécute
+l'application, en **64 bits** (même architecture que Python). Dans **Connexions → + Source HFSQL** :
+hôte du serveur HFSQL, port (**4900** par défaut), base, utilisateur (souvent `admin`) et mot de passe.
+
+- Le pilote est détecté automatiquement (nom contenant « HFSQL » ou « HyperFile »). Le champ
+  **Options ODBC** permet d'en imposer un (`DRIVER=HyperFileSQL`) et d'ajouter des paramètres, par
+  exemple `Password=…` si les fichiers HFSQL sont protégés par mot de passe.
+- Les tables et leurs types sont lus par ODBC ; la clé primaire est utilisée pour l'upsert si le pilote
+  l'expose, sinon indiquez des colonnes clés. Les modes Complet / Incrémental et le réimport complet
+  fonctionnent comme pour MariaDB. Les dates vides HFSQL deviennent `NULL`.
+- Sous Docker, il faut aussi le pilote ODBC HFSQL pour Linux dans l'image ; l'installation Windows
+  sans Docker est la plus simple pour HFSQL.
 
 ## Source Google Sheets
 

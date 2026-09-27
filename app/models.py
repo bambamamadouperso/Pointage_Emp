@@ -9,10 +9,10 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .crypto import decrypt
 from .database import Base
 
-SOURCE_KINDS = {"mariadb": "MariaDB / MySQL", "gsheet": "Google Sheets"}
+SOURCE_KINDS = {"mariadb": "MariaDB / MySQL", "hfsql": "HFSQL Client/Serveur", "gsheet": "Google Sheets"}
 TARGET_KINDS = {"postgresql": "PostgreSQL"}
 KIND_LABELS = {**SOURCE_KINDS, **TARGET_KINDS}
-DEFAULT_PORTS = {"mariadb": 3306, "postgresql": 5432, "gsheet": 443}
+DEFAULT_PORTS = {"mariadb": 3306, "hfsql": 4900, "postgresql": 5432, "gsheet": 443}
 
 MODE_FULL = "full"
 MODE_INCREMENTAL = "incremental"
@@ -37,6 +37,8 @@ class Connection(Base):
     database: Mapped[str] = mapped_column(String(255))
     username: Mapped[str] = mapped_column(String(255))
     password_enc: Mapped[str] = mapped_column(Text, default="")
+    # Paramètres supplémentaires (HFSQL : nom du pilote ODBC, options de chaîne de connexion).
+    options: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     @property
@@ -45,6 +47,10 @@ class Connection(Base):
 
     # Pour Google Sheets : database = identifiant du classeur, username = mode d'accès,
     # password_enc = clé JSON du compte de service (chiffrée).
+    @property
+    def is_odbc(self) -> bool:
+        return self.kind == "hfsql"
+
     @property
     def is_gsheet(self) -> bool:
         return self.kind == "gsheet"

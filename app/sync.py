@@ -33,7 +33,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.schema import CreateSchema
 from sqlalchemy.types import JSON, TypeEngine
 
-from . import gsheet, watermark
+from . import gsheet, hfsql, watermark
 from .config import settings
 from .database import SessionLocal
 from .errors import friendly
@@ -70,6 +70,9 @@ def test_connection(conn: Connection) -> str:
     """Teste la connexion et renvoie la version du serveur (ou un résumé du classeur)."""
     if conn.kind == "gsheet":
         return gsheet.describe(conn)
+    if conn.kind == "hfsql":
+        with hfsql.Source(conn) as src:
+            return f"{src.describe()} — {len(src.tables())} table(s)"
     engine = make_engine(conn)
     try:
         with engine.connect() as c:
@@ -81,6 +84,9 @@ def test_connection(conn: Connection) -> str:
 def list_tables(conn: Connection) -> list[str]:
     if conn.kind == "gsheet":
         return list(gsheet.load_sheets(conn))
+    if conn.kind == "hfsql":
+        with hfsql.Source(conn) as src:
+            return src.tables()
     engine = make_engine(conn)
     try:
         return sorted(inspect(engine).get_table_names())
@@ -99,6 +105,10 @@ def list_columns(conn: Connection, table: str) -> list[dict]:
             {"name": c.name, "type": f"{c.type.__class__.__name__} ← « {h} »", "pk": False}
             for c, h in zip(sheet_table.columns, data.headers)
         ]
+    if conn.kind == "hfsql":
+        with hfsql.Source(conn) as src:
+            table_ = src.build_table(table)
+        return [{"name": c.name, "type": str(c.type), "pk": c.primary_key} for c in table_.columns]
     engine = make_engine(conn)
     try:
         insp = inspect(engine)
@@ -455,6 +465,82 @@ def sync_sheet(
     return rows_read, len(rows)
 
 
+def sync_odbc_table(
+    src: "hfsql.Source",
+    dst_engine: Engine,
+    mapping: TableMapping,
+    schema: str,
+    log: RunLogger,
+    batch_size: Optional[int] = None,
+) -> tuple[int, int]:
+    """Synchronise une table HFSQL (ODBC). Renvoie (lignes lues, lignes écrites)."""
+    batch_size = batch_size or settings.batch_size
+    name = mapping.source_table
+    src_table = src.build_table(name)
+
+    keys = _split(mapping.key_columns) or [c.name for c in src_table.primary_key.columns]
+    unknown = [k for k in keys if k not in src_table.columns]
+    if unknown:
+        raise ValueError(f"Colonnes clés introuvables dans la source : {', '.join(unknown)}")
+    dst_table = ensure_target_table(dst_engine, src_table, mapping.target_table, schema, keys, log)
+    columns = [c.name for c in src_table.columns if c.name in dst_table.columns]
+    targets = [dst_table.columns[c].type for c in columns]
+    write = _make_writer(dst_table, keys, columns)
+
+    def clean(rows) -> list[dict]:
+        return [{c: hfsql.clean(v, t) for c, v, t in zip(columns, row, targets)} for row in rows]
+
+    rows_read = rows_written = 0
+    if mapping.mode == MODE_INCREMENTAL:
+        inc = mapping.incremental_column
+        if not inc or inc not in columns:
+            raise ValueError(f"Colonne incrémentale « {inc} » introuvable dans la table source.")
+        last = watermark.decode(mapping.last_value)
+        strict = _strict_cursor(keys, inc)
+        if not keys:
+            log.warning("Aucune clé définie : les lignes sont ajoutées sans dédoublonnage (mode ajout).", name)
+        if last is None:
+            log.info(f"Première lecture incrémentale sur « {inc} » : lecture complète.", name)
+        else:
+            log.info(f"Lecture incrémentale : {inc} {'>' if strict else '>='} {last}.", name)
+        inc_index = columns.index(inc)
+        cur = src.select(name, columns, inc, last, strict)
+        try:
+            while True:
+                part = cur.fetchmany(batch_size)
+                if not part:
+                    break
+                rows = clean(part)
+                rows_read += len(rows)
+                with dst_engine.begin() as dst:
+                    write(dst, rows)
+                rows_written += len(rows)
+                new_last = part[-1][inc_index]
+                _save_watermark(mapping.id, new_last)
+                mapping.last_value = watermark.encode(new_last)
+                log.debug(f"Lot de {len(rows)} lignes écrit (curseur = {new_last}).", name)
+        finally:
+            cur.close()
+    else:
+        preparer = dst_engine.dialect.identifier_preparer
+        cur = src.select(name, columns)
+        try:
+            with dst_engine.begin() as dst:
+                dst.execute(text(f"DELETE FROM {preparer.format_table(dst_table)}"))
+                while True:
+                    part = cur.fetchmany(batch_size)
+                    if not part:
+                        break
+                    rows = clean(part)
+                    rows_read += len(rows)
+                    write(dst, rows)
+                    rows_written += len(rows)
+                    log.debug(f"Lot de {len(rows)} lignes écrit.", name)
+        finally:
+            cur.close()
+    return rows_read, rows_written
+
+
 def _save_watermark(mapping_id: int, value: Any) -> None:
     db = SessionLocal()
     try:
@@ -527,14 +613,20 @@ def _run_job_locked(
         started = _time.monotonic()
         log.info(f"Démarrage du job « {job.name} » ({TRIGGER_LABELS.get(trigger, trigger)}).")
 
-        src_engine = dst_engine = None
+        src_engine = dst_engine = odbc_src = None
         try:
             if job.source.kind not in SOURCE_KINDS or job.target.kind != "postgresql":
-                raise ValueError("La source doit être MariaDB ou Google Sheets et la cible PostgreSQL.")
+                raise ValueError("La source doit être MariaDB, HFSQL ou Google Sheets et la cible PostgreSQL.")
             is_sheet = job.source.kind == "gsheet"
+            is_odbc = job.source.kind == "hfsql"
             dst_engine = make_engine(job.target)
             checks = [("cible", dst_engine)]
-            if not is_sheet:
+            if is_odbc:
+                try:
+                    odbc_src = hfsql.Source(job.source)
+                except Exception as exc:
+                    raise RuntimeError(f"connexion source impossible : {_short_error(exc)}") from exc
+            elif not is_sheet:
                 src_engine = make_engine(job.source)
                 checks.insert(0, ("source", src_engine))
             # Vérifie les connexions avant de traiter les tables.
@@ -577,6 +669,8 @@ def _run_job_locked(
                 try:
                     if is_sheet:
                         read, written = sync_sheet(sheets, dst_engine, mapping, job.target_schema, log)
+                    elif is_odbc:
+                        read, written = sync_odbc_table(odbc_src, dst_engine, mapping, job.target_schema, log)
                     else:
                         read, written = sync_table(src_engine, dst_engine, mapping, job.target_schema, log)
                     run.rows_read += read
@@ -610,6 +704,8 @@ def _run_job_locked(
             for eng in (src_engine, dst_engine):
                 if eng is not None:
                     eng.dispose()
+            if odbc_src is not None:
+                odbc_src.close()
 
         run.finished_at = utcnow()
         job.last_run_at = run.finished_at

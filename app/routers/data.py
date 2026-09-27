@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse, Response
 from sqlalchemy import MetaData, Table, func, select, text
 from sqlalchemy.orm import Session
 
-from .. import explorer, gsheet
+from .. import explorer, gsheet, hfsql
 from ..database import get_db
 from ..errors import friendly
 from ..models import Connection, SyncJob, TableMapping
@@ -80,7 +80,14 @@ def source_counts(job_id: int, db: Session = Depends(get_db)):
         return JSONResponse({"error": "Job introuvable"}, status_code=404)
     counts: dict[int, dict] = {}
     try:
-        if job.source.is_gsheet:
+        if job.source.is_odbc:
+            with hfsql.Source(job.source) as src:
+                for m in job.tables:
+                    try:
+                        counts[m.id] = {"rows": src.count(m.source_table)}
+                    except Exception as exc:
+                        counts[m.id] = {"error": friendly(exc)[:200]}
+        elif job.source.is_gsheet:
             sheets = gsheet.load_sheets(job.source)
             for m in job.tables:
                 data = sheets.get(m.source_table)

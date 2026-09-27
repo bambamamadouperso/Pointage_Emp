@@ -93,7 +93,7 @@ def save_job(
         return redirect("/jobs")
     source, target = db.get(Connection, source_id), db.get(Connection, target_id)
     if source is None or source.kind not in SOURCE_KINDS or target is None or target.kind != "postgresql":
-        flash(request, "Choisissez une source (MariaDB ou Google Sheets) et une cible PostgreSQL.", "err")
+        flash(request, "Choisissez une source (MariaDB, HFSQL ou Google Sheets) et une cible PostgreSQL.", "err")
         return redirect(f"/jobs/{job_id}/edit" if job_id else "/jobs/new")
     seconds = max(interval_value, 1) * UNITS.get(interval_unit, 60)
     if seconds < 10:

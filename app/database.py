@@ -38,6 +38,21 @@ def init_db() -> None:
     from . import models  # noqa: F401  (enregistre les modèles)
 
     Base.metadata.create_all(engine)
+    _add_missing_columns()
+
+
+def _add_missing_columns() -> None:
+    """Migration légère : ajoute les colonnes apparues dans les modèles depuis la création de la base."""
+    from sqlalchemy import inspect, text
+
+    insp = inspect(engine)
+    with engine.begin() as conn:
+        for table in Base.metadata.sorted_tables:
+            existing = {c["name"] for c in insp.get_columns(table.name)}
+            for column in table.columns:
+                if column.name not in existing:
+                    col_type = column.type.compile(dialect=engine.dialect)
+                    conn.execute(text(f'ALTER TABLE "{table.name}" ADD COLUMN "{column.name}" {col_type}'))
 
 
 def get_db():

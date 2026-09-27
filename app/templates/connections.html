@@ -5,13 +5,14 @@
   <h1>Connexions</h1>
   <div>
     <a class="btn" href="/connections/new?kind=mariadb">+ Source MariaDB</a>
+    <a class="btn" href="/connections/new?kind=hfsql">+ Source HFSQL</a>
     <a class="btn" href="/connections/new?kind=gsheet">+ Source Google Sheets</a>
     <a class="btn" href="/connections/new?kind=postgresql">+ Cible PostgreSQL</a>
   </div>
 </div>
 <section class="card">
   {% if not connections %}
-    <p class="empty">Aucune connexion. Ajoutez une source (MariaDB ou Google Sheets) et une base cible PostgreSQL.</p>
+    <p class="empty">Aucune connexion. Ajoutez une source (MariaDB, HFSQL ou Google Sheets) et une base cible PostgreSQL.</p>
   {% else %}
   <div class="table-wrap"><table>
     <thead><tr><th>Nom</th><th>Type</th><th>Hôte</th><th>Base</th><th>Utilisateur</th><th></th></tr></thead>

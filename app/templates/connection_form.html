@@ -30,6 +30,15 @@
                placeholder="{{ 'laisser vide pour conserver' if conn.id else '' }}">
       </label>
     </div>
+    <label data-only-kind="hfsql">Options ODBC (facultatif)
+      <input name="options" value="{{ conn.options or '' }}" autocomplete="off"
+             placeholder="ex. DRIVER=HyperFileSQL;Password=motdepasse_des_fichiers">
+    </label>
+    <div class="help muted small" data-only-kind="hfsql">
+      <p>Nécessite le <strong>pilote ODBC HFSQL 64 bits</strong> (PC SOFT) installé sur le serveur de l'application.
+        Port HFSQL par défaut : 4900. Le pilote est détecté automatiquement ; « DRIVER=… » permet d'en imposer un
+        autre (anciennes versions : « HyperFileSQL »). Ajoutez « Password=… » si les fichiers HFSQL sont protégés par mot de passe.</p>
+    </div>
     <div class="db-picker">
       <label>Base de données
         <input name="database" id="database" value="{{ conn.database or '' }}" required autocomplete="off"
@@ -93,7 +102,7 @@
 {% endblock %}
 {% block scripts %}
 <script>
-  const defaults = {mariadb: 3306, postgresql: 5432};
+  const defaults = {mariadb: 3306, postgresql: 5432, hfsql: 4900};
   const kind = document.getElementById('kind');
   const auth = document.getElementById('sheet_auth');
   function refresh() {
@@ -171,7 +180,13 @@
       say(`${result.message} Elle est sélectionnée : pensez à enregistrer la connexion.`, 'ok-text');
     } catch (e) { say(e.message, 'err-text'); }
   });
-  function refreshDbTools() { createToggle.hidden = kind.value !== 'postgresql'; if (createToggle.hidden) createBox.hidden = true; }
+  function refreshDbTools() {
+    createToggle.hidden = kind.value !== 'postgresql';
+    if (createToggle.hidden) createBox.hidden = true;
+    // HFSQL : pas de liste des bases (non exposée par le pilote ODBC), mais des options ODBC.
+    document.getElementById('list_databases').hidden = kind.value === 'hfsql';
+    document.querySelectorAll('[data-only-kind]').forEach(el => { el.hidden = el.dataset.onlyKind !== kind.value; });
+  }
   kind.addEventListener('change', () => { refreshDbTools(); chips.hidden = true; say(''); });
   refreshDbTools();
 </script>
