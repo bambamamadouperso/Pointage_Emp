@@ -116,6 +116,10 @@ def save_connection(
         # Test avec les valeurs saisies, sans rien enregistrer.
         probe = Connection(id=conn_id or None, password_enc=password_enc, **values)
         try:
+            if probe.is_odbc:
+                from ..hfsql import reset_pool
+
+                reset_pool()  # paramètres peut-être modifiés : on teste une connexion neuve
             version = test_connection(probe)
             flash(request, f"Connexion réussie : {version}", "ok")
         except Exception as exc:

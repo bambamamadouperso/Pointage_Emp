@@ -88,7 +88,7 @@ def main() -> int:
 
     say("\n    Si une fenêtre du pilote HFSQL s'ouvre maintenant, notez ce qu'elle demande :")
     say("    c'est elle qui bloque l'application (qui tourne sans fenêtre, en tâche de fond).")
-    ok, cnx = step("Connexion ODBC", lambda: pyodbc.connect(cs, timeout=30, autocommit=True), 90)
+    ok, cnx = step("Connexion ODBC", lambda: pyodbc.connect(cs, timeout=30, autocommit=True), 300)
     if not ok:
         return finish(root)
     for code, label in ((hfsql.SQL_DBMS_NAME, "Serveur"), (hfsql.SQL_DBMS_VER, "Version")):

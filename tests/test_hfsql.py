@@ -118,6 +118,7 @@ def odbc_job(monkeypatch):
         db.commit()
         job_id, src_id = job.id, src.id
     yield job_id, src_id, engine
+    hfsql.reset_pool()
     with engine.begin() as c:
         c.execute(text("DROP TABLE IF EXISTS hf_pointage, hf_service"))
         c.execute(text(f"DROP SCHEMA IF EXISTS {SCHEMA} CASCADE"))
@@ -225,3 +226,45 @@ def test_missing_dsn_lists_visible_sources(monkeypatch):
     monkeypatch.setattr(hfsql, "check_port", lambda host, port: None)
     with pytest.raises(hfsql.HfsqlError, match="DSN système.*Sources visibles par l'application : Autre, HRsmart32"):
         hfsql.connect(_conn(options="DSN=HRsmart"))
+
+
+def test_connection_is_reused_between_runs(monkeypatch):
+    """L'ouverture HFSQL peut prendre > 1 min : la connexion est gardée d'une exécution à l'autre."""
+    opened = []
+
+    class FakeCnx:
+        closed = False
+
+        def getinfo(self, code):
+            return '"'
+
+        def close(self):
+            self.closed = True
+
+    class PoolPyodbc(FakePyodbc):
+        Error = Exception
+
+        def connect(self, *a, **kw):
+            opened.append(FakeCnx())
+            return opened[-1]
+
+    hfsql.reset_pool()
+    monkeypatch.setattr(hfsql, "_pyodbc", lambda: PoolPyodbc(["HFSQL"]))
+    monkeypatch.setattr(hfsql, "check_port", lambda host, port: None)
+    conn = _conn()
+    with hfsql.Source(conn):
+        pass
+    with hfsql.Source(conn) as second:
+        # Utilisation simultanée : une seconde connexion indépendante est ouverte.
+        with hfsql.Source(conn):
+            pass
+    assert len(opened) == 2 and not opened[0].closed
+    # Après une erreur, la connexion gardée est fermée et la suivante est neuve.
+    with pytest.raises(RuntimeError):
+        with hfsql.Source(conn):
+            raise RuntimeError("échec pendant le job")
+    assert opened[0].closed
+    with hfsql.Source(conn):
+        pass
+    assert len(opened) == 3
+    hfsql.reset_pool()

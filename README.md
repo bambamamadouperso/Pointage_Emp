@@ -50,6 +50,9 @@ hôte du serveur HFSQL, port (**4900** par défaut), base, utilisateur (souvent 
   exemple `Password=…` si les fichiers HFSQL sont protégés par mot de passe.
 - Alternative : déclarez une **source ODBC système** (odbcad32 64 bits → DSN système) et indiquez
   `DSN=nom_de_la_source` dans Options ODBC ; le pilote y lit serveur, port et base.
+- L'ouverture d'une connexion HFSQL peut être lente (plus d'une minute sur certains serveurs) : le délai
+  est de 4 minutes (`HFSQL_CONNECT_TIMEOUT` dans `.env`, en secondes) et la connexion est **gardée ouverte**
+  entre deux exécutions, pour ne payer ce délai qu'une fois.
 - En cas de blocage, lancez **`diagnostic-hfsql.bat`** dans une session Windows ouverte : il teste chaque
   étape (port, connexion ODBC, tables) avec sa durée, affiche une éventuelle fenêtre du pilote et écrit
   un rapport dans `logs\diagnostic-hfsql.txt`.

@@ -75,10 +75,10 @@ def test_connection(conn: Connection) -> str:
         with hfsql.Source(conn) as src:
             summary = src.describe()
             try:
-                count = call_with_timeout(lambda: len(src.tables()), 30, "liste des tables trop longue")
+                count = call_with_timeout(lambda: len(src.tables()), 120, "liste des tables trop longue")
                 return f"{summary} — {count} table(s)"
             except NetError:
-                return f"{summary} — connexion réussie (la liste des tables met plus de 30 s à répondre)"
+                return f"{summary} — connexion réussie (la liste des tables met plus de 2 min à répondre)"
     check_port(conn.host, conn.port)
     engine = make_engine(conn)
     try:
@@ -712,7 +712,8 @@ def _run_job_locked(
                 if eng is not None:
                     eng.dispose()
             if odbc_src is not None:
-                odbc_src.close()
+                # En cas d'erreur, la connexion n'est pas gardée : la prochaine exécution en ouvre une neuve.
+                odbc_src.close(discard=run.tables_failed > 0 or run.status == "error")
 
         run.finished_at = utcnow()
         job.last_run_at = run.finished_at

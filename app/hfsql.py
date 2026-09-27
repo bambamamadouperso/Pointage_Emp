@@ -9,6 +9,9 @@ Le champ « options » de la connexion permet de choisir un autre nom de pilote 
 pour les anciennes versions) et d'ajouter des paramètres : « DRIVER=HyperFileSQL;Password=secret ».
 """
 import datetime as dt
+import os
+import threading
+import time
 import uuid
 from decimal import Decimal
 from typing import Any, Optional
@@ -110,7 +113,8 @@ def masked(connection: str) -> str:
     return re.sub(r"((?:PWD|Password)=)(\{[^}]*\}|[^;]*)", r"\1*****", connection, flags=re.IGNORECASE)
 
 
-CONNECT_TIMEOUT = 30
+# Certains serveurs HFSQL mettent plus d'une minute à ouvrir une connexion ODBC : délai large, configurable.
+CONNECT_TIMEOUT = int(os.getenv("HFSQL_CONNECT_TIMEOUT", "240"))
 
 
 def connect(conn, timeout: int = 15):
@@ -156,28 +160,101 @@ def odbc_message(exc: Exception) -> str:
     return str(args[1] if len(args) > 1 else exc).strip()
 
 
-class Source:
-    """Connexion ODBC ouverte pour la durée d'un job."""
+# Connexions ODBC gardées ouvertes entre deux exécutions (l'ouverture peut prendre plus d'une minute).
+_pool: dict[str, dict] = {}
+_pool_guard = threading.Lock()
+IDLE_CHECK_AFTER = 300  # s : au-delà, on vérifie que la connexion gardée répond encore
 
-    def __init__(self, conn):
-        self.cnx = connect(conn)
+
+def _alive(cnx) -> bool:
+    def probe():
+        cur = cnx.cursor()
+        try:
+            cur.tables(tableType="TABLE").fetchone()
+        finally:
+            cur.close()
+
+    try:
+        call_with_timeout(probe, 30, "sans réponse")
+        return True
+    except Exception:
+        return False
+
+
+def reset_pool() -> None:
+    with _pool_guard:
+        entries = list(_pool.values())
+        _pool.clear()
+    for entry in entries:
+        try:
+            entry["cnx"].close()
+        except Exception:
+            pass
+
+
+class Source:
+    """Connexion ODBC HFSQL, réutilisée d'une exécution à l'autre quand c'est possible."""
+
+    def __init__(self, conn, reuse: bool = True):
+        self.key = connection_string(conn)
+        self.pooled = False
+        self.cnx = None
+        if reuse:
+            with _pool_guard:
+                entry = _pool.get(self.key)
+                if entry and entry["lock"].acquire(blocking=False):
+                    self.cnx, self.entry, self.pooled = entry["cnx"], entry, True
+            if self.pooled and time.monotonic() - self.entry["used"] > IDLE_CHECK_AFTER and not _alive(self.cnx):
+                self._discard()
+        if self.cnx is None:
+            self.cnx = connect(conn)
+            if reuse:
+                with _pool_guard:
+                    if self.key not in _pool:
+                        self.entry = {"cnx": self.cnx, "lock": threading.Lock(), "used": time.monotonic()}
+                        self.entry["lock"].acquire()
+                        _pool[self.key] = self.entry
+                        self.pooled = True
         try:
             quote = self.cnx.getinfo(SQL_IDENTIFIER_QUOTE_CHAR)
         except Exception:
             quote = '"'
         self.quote_char = (quote or "").strip()
 
-    def close(self) -> None:
+    def _discard(self) -> None:
+        with _pool_guard:
+            if _pool.get(self.key) is self.entry:
+                del _pool[self.key]
         try:
             self.cnx.close()
         except Exception:
             pass
+        self.cnx, self.pooled = None, False
+
+    def close(self, discard: bool = False) -> None:
+        """Rend la connexion au pool (ou la ferme si elle a posé problème)."""
+        if self.cnx is None:
+            return
+        if self.pooled and not discard:
+            self.entry["used"] = time.monotonic()
+            self.entry["lock"].release()
+            self.cnx = None
+            return
+        if self.pooled:
+            self.entry["lock"].release()
+            self._discard()
+            return
+        try:
+            self.cnx.close()
+        except Exception:
+            pass
+        self.cnx = None
 
     def __enter__(self):
         return self
 
-    def __exit__(self, *exc):
-        self.close()
+    def __exit__(self, exc_type, *exc):
+        self.close(discard=exc_type is not None)
 
     def quote(self, name: str) -> str:
         if not self.quote_char:
