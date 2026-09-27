@@ -5,6 +5,8 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine import URL, Engine
 from sqlalchemy.exc import DBAPIError
 
+from .errors import friendly
+
 DB_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,62}$")
 
 # Bases système masquées dans la liste.
@@ -52,10 +54,12 @@ def _connect(kind: str, host: str, port: int, username: str, password: str, pref
             last_error = exc
             text_ = _message(exc).lower()
             # Erreur d'authentification ou serveur injoignable : inutile d'essayer une autre base.
-            if "password" in text_ or "authentication" in text_ or "access denied" in text_ \
-                    or "connection refused" in text_ or "timeout" in text_ or "could not translate" in text_:
+            # (pg_hba.conf, mot de passe, réseau...) : seule une base inexistante justifie un autre essai.
+            if "pg_hba.conf" in text_ or "password" in text_ or "authentication" in text_ \
+                    or "access denied" in text_ or "connection refused" in text_ or "timeout" in text_ \
+                    or "could not translate" in text_ or "mot de passe" in text_:
                 break
-    raise DbAdminError(f"Connexion au serveur impossible : {_message(last_error)}")
+    raise DbAdminError(f"Connexion au serveur impossible : {friendly(last_error)}")
 
 
 def list_databases(kind: str, host: str, port: int, username: str, password: str, preferred: str = "") -> list[str]:

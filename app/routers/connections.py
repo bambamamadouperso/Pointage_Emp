@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from .. import dbadmin, gsheet
 from ..crypto import decrypt, encrypt
 from ..database import get_db
+from ..errors import friendly
 from ..joblog import write_log
 from ..models import DEFAULT_PORTS, KIND_LABELS, Connection, SyncJob
 from ..sync import list_tables, test_connection
@@ -114,7 +115,7 @@ def save_connection(
             version = test_connection(probe)
             flash(request, f"Connexion réussie : {version}", "ok")
         except Exception as exc:
-            flash(request, f"Échec de connexion : {exc}", "err")
+            flash(request, f"Échec de connexion : {friendly(exc)}", "err")
         return _form(request, probe, keep_password=password)
 
     conn = existing or Connection()
@@ -204,7 +205,7 @@ def test_saved_connection(conn_id: int, request: Request, db: Session = Depends(
                 count = len(list_tables(conn))
                 flash(request, f"« {conn.name} » : connexion réussie ({version}) — {count} table(s).", "ok")
         except Exception as exc:
-            flash(request, f"« {conn.name} » : échec de connexion : {exc}", "err")
+            flash(request, f"« {conn.name} » : échec de connexion : {friendly(exc)}", "err")
     return redirect("/connections")
 
 

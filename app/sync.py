@@ -36,6 +36,7 @@ from sqlalchemy.types import JSON, TypeEngine
 from . import gsheet, watermark
 from .config import settings
 from .database import SessionLocal
+from .errors import friendly
 from .joblog import RunLogger, write_log
 from .models import MODE_FULL, MODE_INCREMENTAL, SOURCE_KINDS, Connection, JobRun, SyncJob, TableMapping, utcnow
 
@@ -560,6 +561,4 @@ def _run_job_locked(job_id: int, trigger: str) -> Optional[int]:
 
 
 def _short_error(exc: Exception) -> str:
-    msg = str(getattr(exc, "orig", None) or exc).strip()
-    first = msg.splitlines()[0] if msg else exc.__class__.__name__
-    return first[:1000]
+    return friendly(exc)
