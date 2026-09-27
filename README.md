@@ -56,6 +56,9 @@ hôte du serveur HFSQL, port (**4900** par défaut), base, utilisateur (souvent 
 - Le pilote ODBC HFSQL s'exécute dans un **processus séparé** : s'il plante ou bloque, seul ce processus
   est arrêté, le site reste disponible et l'erreur est affichée (délai des requêtes : `HFSQL_QUERY_TIMEOUT`,
   1800 s par défaut).
+- Si le pilote ne fonctionne qu'avec un vrai compte Windows (il plante sous le compte SYSTEM), relancez
+  l'installation avec `.\installer-windows-sans-docker.ps1 -ServiceAccount "DOMAINE\utilisateur"` : l'application
+  tournera sous ce compte (mot de passe demandé, démarrage avec Windows sans session ouverte).
 - En cas de blocage, lancez **`diagnostic-hfsql.bat`** dans une session Windows ouverte : il teste chaque
   étape (port, connexion ODBC, tables) avec sa durée, affiche une éventuelle fenêtre du pilote et écrit
   un rapport dans `logs\diagnostic-hfsql.txt`.

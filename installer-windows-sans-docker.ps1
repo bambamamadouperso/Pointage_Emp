@@ -18,7 +18,11 @@
 param(
     [int]$Port = 8000,
     [string]$TimeZone = "Africa/Dakar",
-    [switch]$NoFirewall
+    [switch]$NoFirewall,
+    # Compte Windows sous lequel tourne l'application (par défaut : SYSTEM). Utile quand un pilote ODBC
+    # (ex. HFSQL) ne fonctionne qu'avec un vrai compte utilisateur. Ex. : -ServiceAccount "DOMAINE\utilisateur"
+    # « SYSTEM » pour revenir au compte système. Le choix est mémorisé dans .env (TASK_ACCOUNT).
+    [string]$ServiceAccount = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -34,6 +38,7 @@ if (-not $isAdmin) {
     $argList = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$PSCommandPath`"",
                  "-Port", $Port, "-TimeZone", $TimeZone)
     if ($NoFirewall) { $argList += "-NoFirewall" }
+    if ($ServiceAccount) { $argList += @("-ServiceAccount", "`"$ServiceAccount`"") }
     Start-Process powershell.exe -Verb RunAs -ArgumentList $argList
     exit
 }
@@ -197,6 +202,19 @@ function Stop-App {
     }
 }
 
+function Get-EnvValue([string]$Name) {
+    if (-not (Test-Path $EnvFile)) { return "" }
+    $line = Get-Content $EnvFile | Where-Object { $_ -match "^\s*$Name\s*=" } | Select-Object -First 1
+    if ($line) { return ($line -split "=", 2)[1].Trim().Trim("'") }
+    return ""
+}
+
+function Set-EnvValue([string]$Name, [string]$Value) {
+    $lines = @()
+    if (Test-Path $EnvFile) { $lines = @(Get-Content $EnvFile | Where-Object { $_ -notmatch "^\s*$Name\s*=" }) }
+    Write-EnvFile ($lines + "$Name=$Value")
+}
+
 function Register-App {
     New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
     $appLog = Join-Path $LogDir "application.log"
@@ -204,13 +222,30 @@ function Register-App {
                "--workers 1 --no-access-log --env-file `"$EnvFile`" >> `"$appLog`" 2>&1`""
     $action = New-ScheduledTaskAction -Execute "cmd.exe" -Argument $command -WorkingDirectory $Root
     $trigger = New-ScheduledTaskTrigger -AtStartup
-    $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
     $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
         -StartWhenAvailable -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew `
         -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1)
-    Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Principal $principal `
-        -Settings $settings -Description "Synchronisation MariaDB -> PostgreSQL (tableau de bord port $Port)" `
-        -Force | Out-Null
+    $description = "Synchronisation vers PostgreSQL (tableau de bord port $Port)"
+
+    $account = $ServiceAccount
+    if (-not $account) { $account = Get-EnvValue "TASK_ACCOUNT" }
+    if (-not $account -or $account -eq "SYSTEM") {
+        $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
+        Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Principal $principal `
+            -Settings $settings -Description $description -Force | Out-Null
+        Set-EnvValue "TASK_ACCOUNT" "SYSTEM"
+        Write-Ok "L'application tourne sous le compte SYSTEM."
+        return
+    }
+    # Compte utilisateur : la tâche démarre avec Windows, même sans session ouverte (mot de passe requis).
+    Write-Host "    L'application tournera sous le compte « $account »."
+    $credential = Get-Credential -UserName $account -Message "Mot de passe Windows du compte $account (pour lancer l'application au démarrage)"
+    if (-not $credential) { Stop-Install "Mot de passe non saisi." }
+    Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings `
+        -User $credential.UserName -Password $credential.GetNetworkCredential().Password -RunLevel Highest `
+        -Description $description -Force | Out-Null
+    Set-EnvValue "TASK_ACCOUNT" $credential.UserName
+    Write-Ok "L'application tourne sous le compte « $($credential.UserName) »."
 }
 
 # =========================================================================== installation

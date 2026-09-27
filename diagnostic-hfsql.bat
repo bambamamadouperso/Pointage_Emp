@@ -4,4 +4,5 @@ rem Usage : diagnostic-hfsql.bat "Nom de la connexion"   (sans nom : premiere co
 cd /d "%~dp0"
 ".venv\Scripts\python.exe" -m app.diag_hfsql %*
 echo.
+echo Code de sortie : %errorlevel%   (0 = termine normalement ; autre valeur = arret brutal du pilote)
 pause

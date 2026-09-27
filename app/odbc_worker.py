@@ -27,7 +27,9 @@ def handle(state: dict, msg: dict, pyodbc) -> Any:
     op = msg["op"]
     if op == "connect":
         try:
-            state["cnx"] = pyodbc.connect(msg["cs"], timeout=msg.get("login_timeout", 30), autocommit=True)
+            # Pas de « timeout » pyodbc (SQL_ATTR_LOGIN_TIMEOUT) : certains pilotes plantent sur ce réglage.
+            # Le serveur web impose déjà un délai maximal au processus isolé.
+            state["cnx"] = pyodbc.connect(msg["cs"], autocommit=True)
         except pyodbc.Error as exc:
             text = f"{getattr(exc, 'args', ('',))[0]} {_message(exc)}"
             visible = None
