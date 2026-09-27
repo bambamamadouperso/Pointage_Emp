@@ -5,6 +5,8 @@ import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Form, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -13,7 +15,7 @@ from .config import settings
 from .database import init_db
 from .joblog import write_log
 from .routers import connections, data, jobs, monitoring
-from .web import LoginRequired, check_credentials, flash, redirect, render
+from .web import LoginRequired, back_url, check_credentials, flash, redirect, render
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("app")
@@ -33,6 +35,17 @@ async def lifespan(_: FastAPI):
 app = FastAPI(title="Synchronisation MariaDB → PostgreSQL", lifespan=lifespan, docs_url=None, redoc_url=None)
 app.add_middleware(SessionMiddleware, secret_key=settings.secret_key, same_site="lax", max_age=12 * 3600)
 app.mount("/static", StaticFiles(directory=os.path.join(os.path.dirname(__file__), "static")), name="static")
+
+
+@app.exception_handler(RequestValidationError)
+async def _invalid_form(request: Request, exc: RequestValidationError):
+    """Formulaire incomplet : message lisible au lieu d'une erreur JSON brute."""
+    fields = ", ".join(sorted({str(e["loc"][-1]) for e in exc.errors() if e.get("loc")}))
+    message = f"Formulaire incomplet ou invalide ({fields or 'champ inconnu'}) : vérifiez les champs et réessayez."
+    if "text/html" not in request.headers.get("accept", ""):
+        return JSONResponse({"error": message}, status_code=422)
+    flash(request, message, "err")
+    return redirect(back_url(request, "/"))
 
 
 @app.exception_handler(LoginRequired)

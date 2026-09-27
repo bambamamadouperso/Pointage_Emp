@@ -51,7 +51,7 @@ def edit_connection(conn_id: int, request: Request, db: Session = Depends(get_db
 def save_connection(
     request: Request,
     conn_id: int = Form(0),
-    name: str = Form(...),
+    name: str = Form(""),
     kind: str = Form(...),
     host: str = Form(""),
     port: int = Form(0),
@@ -96,6 +96,8 @@ def save_connection(
     elif not (host.strip() and port and database.strip() and username.strip()):
         error = "Hôte, port, base de données et utilisateur sont obligatoires."
 
+    if action != "test" and not name.strip():
+        error = "Donnez un nom à la connexion (ex. pointeuse-hfsql)."
     values = dict(
         name=name.strip(), kind=kind, host=host.strip(), port=port,
         database=database.strip(), username=username.strip(),

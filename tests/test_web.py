@@ -144,3 +144,27 @@ def test_gsheet_connection_form(logged_client, monkeypatch):
 def test_reload_route_validation(logged_client):
     r = logged_client.post("/jobs/999999/reload", follow_redirects=False)
     assert r.status_code == 303 and r.headers["location"] == "/jobs"
+
+
+def test_connection_test_without_name(logged_client, monkeypatch):
+    """« Tester » sans nom : pas d'erreur 422, le test s'exécute ; « Enregistrer » demande un nom."""
+    import app.routers.connections as routes
+
+    monkeypatch.setattr(routes, "test_connection", lambda conn: "HFSQL 28 — 12 table(s)")
+    data = {"name": "", "kind": "hfsql", "host": "h", "port": "4900", "database": "d",
+            "username": "admin", "password": "", "action": "test"}
+    r = logged_client.post("/connections/save", data=data)
+    assert r.status_code == 200 and "Connexion réussie : HFSQL 28" in r.text
+    r = logged_client.post("/connections/save", data={**data, "action": "save"})
+    assert r.status_code == 200 and "Donnez un nom à la connexion" in r.text
+
+
+def test_invalid_form_is_readable(logged_client):
+    # Navigateur : message lisible et retour à la page précédente.
+    r = logged_client.post("/jobs/save", data={"name": "x"}, headers={"accept": "text/html", "referer": "/jobs/new"},
+                           follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/jobs/new"
+    assert "Formulaire incomplet" in logged_client.get("/jobs/new").text
+    # Appel JavaScript : réponse JSON avec un message.
+    r = logged_client.post("/jobs/save", data={"name": "x"}, headers={"accept": "*/*"})
+    assert r.status_code == 422 and "Formulaire incomplet" in r.json()["error"]
