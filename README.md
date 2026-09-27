@@ -7,6 +7,9 @@ avec historique et logs.
 ## Fonctionnalités
 
 - **Connexions** : déclarez vos sources (MariaDB, Google Sheets) et cibles (PostgreSQL), testez-les en un clic.
+  Pour une base, **« Lister les bases du serveur »** propose les bases existantes (un clic pour choisir) et,
+  pour PostgreSQL, **« Créer une nouvelle base »** la crée directement (l'utilisateur doit avoir le droit
+  `CREATEDB` : `ALTER ROLE mon_user CREATEDB;`).
   Les mots de passe sont chiffrés dans la base interne.
 - **Jobs** : un job relie une source à une cible (et un schéma PostgreSQL) et s'exécute toutes les
   *N* secondes / minutes / heures / jours. Activation, désactivation et lancement manuel depuis l'interface.

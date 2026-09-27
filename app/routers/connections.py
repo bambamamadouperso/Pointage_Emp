@@ -2,12 +2,13 @@
 import json
 
 from fastapi import APIRouter, Depends, Form, Request
+from fastapi.responses import JSONResponse
 from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from .. import gsheet
-from ..crypto import encrypt
+from .. import dbadmin, gsheet
+from ..crypto import decrypt, encrypt
 from ..database import get_db
 from ..joblog import write_log
 from ..models import DEFAULT_PORTS, KIND_LABELS, Connection, SyncJob
@@ -131,6 +132,62 @@ def save_connection(
     write_log("INFO", f"Connexion « {conn.name} » {'modifiée' if conn_id else 'créée'}.")
     flash(request, f"Connexion « {conn.name} » enregistrée.", "ok")
     return redirect("/connections")
+
+
+def _server_password(db: Session, conn_id: int, kind: str, password: str) -> str:
+    """Mot de passe saisi, ou à défaut celui déjà enregistré pour cette connexion."""
+    if password or not conn_id:
+        return password
+    existing = db.get(Connection, conn_id)
+    return decrypt(existing.password_enc) if existing is not None and existing.kind == kind else ""
+
+
+@router.post("/databases")
+def server_databases(
+    conn_id: int = Form(0),
+    kind: str = Form(...),
+    host: str = Form(""),
+    port: int = Form(0),
+    database: str = Form(""),
+    username: str = Form(""),
+    password: str = Form(""),
+    db: Session = Depends(get_db),
+):
+    """Liste les bases du serveur saisi dans le formulaire (JSON)."""
+    if kind not in ("postgresql", "mariadb") or not host.strip() or not username.strip():
+        return JSONResponse({"error": "Renseignez d'abord l'hôte, le port, l'utilisateur et le mot de passe."},
+                            status_code=400)
+    try:
+        names = dbadmin.list_databases(kind, host.strip(), port or DEFAULT_PORTS[kind], username.strip(),
+                                       _server_password(db, conn_id, kind, password), database.strip())
+    except dbadmin.DbAdminError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    return {"databases": names}
+
+
+@router.post("/create-database")
+def server_create_database(
+    request: Request,
+    conn_id: int = Form(0),
+    host: str = Form(""),
+    port: int = Form(0),
+    username: str = Form(""),
+    password: str = Form(""),
+    new_database: str = Form(""),
+    db: Session = Depends(get_db),
+):
+    """Crée une base PostgreSQL sur le serveur saisi dans le formulaire (JSON)."""
+    if not host.strip() or not username.strip():
+        return JSONResponse({"error": "Renseignez d'abord l'hôte, le port, l'utilisateur et le mot de passe."},
+                            status_code=400)
+    name = new_database.strip()
+    try:
+        dbadmin.create_database(host.strip(), port or 5432, username.strip(),
+                                _server_password(db, conn_id, "postgresql", password), name)
+    except dbadmin.DbAdminError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    write_log("INFO", f"Base PostgreSQL « {name} » créée sur {host.strip()} par {request.session.get('user')}.")
+    return {"ok": True, "database": name, "message": f"Base « {name} » créée."}
 
 
 @router.post("/{conn_id}/test")

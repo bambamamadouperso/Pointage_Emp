@@ -40,6 +40,7 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 body {
   margin: 0;
   font: 14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
@@ -181,3 +182,14 @@ details.edit summary::-webkit-details-marker { display: none; }
   .grid-2 { grid-template-columns: 1fr; }
   .stat .value { font-size: 1.3rem; }
 }
+
+.db-picker { display: flex; flex-direction: column; gap: .5rem; }
+.db-chips { display: flex; flex-wrap: wrap; gap: .35rem; }
+.chip { font: inherit; font-size: .82rem; padding: .2rem .65rem; border-radius: 999px; cursor: pointer;
+        border: 1px solid var(--border); background: var(--bg); color: var(--text); }
+.chip:hover { border-color: var(--primary); }
+.chip.selected { background: var(--primary); border-color: var(--primary); color: var(--primary-text); }
+.create-db { padding: .75rem; border: 1px dashed var(--border); border-radius: var(--radius); }
+.create-db p { margin: .4rem 0 0; }
+.ok-text { color: var(--ok); }
+.db-picker p:empty { display: none; }

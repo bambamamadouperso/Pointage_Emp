@@ -23,13 +23,33 @@
       <label class="grow">Hôte <input name="host" value="{{ conn.host or '' }}" required placeholder="192.168.1.10"></label>
       <label class="narrow">Port <input name="port" id="port" type="number" value="{{ conn.port }}" required></label>
     </div>
-    <label>Base de données <input name="database" value="{{ conn.database or '' }}" required></label>
     <div class="row">
       <label>Utilisateur <input name="username" value="{{ conn.username or '' }}" required autocomplete="off"></label>
       <label>Mot de passe
         <input name="password" type="password" value="{{ keep_password or '' }}" autocomplete="new-password"
                placeholder="{{ 'laisser vide pour conserver' if conn.id else '' }}">
       </label>
+    </div>
+    <div class="db-picker">
+      <label>Base de données
+        <input name="database" id="database" value="{{ conn.database or '' }}" required autocomplete="off"
+               list="server_databases" placeholder="choisissez ou saisissez un nom">
+        <datalist id="server_databases"></datalist>
+      </label>
+      <div class="form-actions">
+        <button type="button" class="btn small" id="list_databases">↻ Lister les bases du serveur</button>
+        <button type="button" class="btn small" id="toggle_create" data-only="postgresql">+ Créer une nouvelle base</button>
+      </div>
+      <div class="db-chips" id="db_chips" hidden></div>
+      <div class="create-db" id="create_db" hidden>
+        <div class="inline">
+          <input id="new_database" placeholder="nom_de_la_base (lettres, chiffres, _)" autocomplete="off">
+          <button type="button" class="btn small primary" id="create_database">Créer</button>
+        </div>
+        <p class="muted small">La base est créée avec l'utilisateur ci-dessus comme propriétaire (droit CREATEDB nécessaire).
+          Les tables y seront créées automatiquement par les jobs.</p>
+      </div>
+      <p class="small" id="db_message" role="status"></p>
     </div>
     <p class="muted small">Le mot de passe est chiffré dans la base interne. Pour une source, un utilisateur en lecture seule suffit.</p>
   </fieldset>
@@ -92,5 +112,67 @@
   });
   auth.addEventListener('change', refresh);
   refresh();
+
+  // ---- Choix / création de la base sur le serveur
+  const form = document.querySelector('form.form');
+  const dbInput = document.getElementById('database');
+  const chips = document.getElementById('db_chips');
+  const message = document.getElementById('db_message');
+  const createBox = document.getElementById('create_db');
+  const createToggle = document.getElementById('toggle_create');
+
+  function say(text, kind) { message.textContent = text; message.className = 'small ' + (kind || 'muted'); }
+  function serverFields() {
+    const data = new FormData();
+    for (const name of ['conn_id', 'kind', 'host', 'port', 'database', 'username', 'password']) {
+      data.append(name, form.elements[name] ? form.elements[name].value : '');
+    }
+    return data;
+  }
+  function showDatabases(names) {
+    document.getElementById('server_databases').replaceChildren(
+      ...names.map(n => Object.assign(document.createElement('option'), {value: n})));
+    chips.replaceChildren(...names.map(n => {
+      const b = Object.assign(document.createElement('button'), {type: 'button', textContent: n,
+        className: 'chip' + (n === dbInput.value ? ' selected' : '')});
+      b.addEventListener('click', () => { dbInput.value = n; showDatabases(names); say(`Base « ${n} » sélectionnée.`, 'ok-text'); });
+      return b;
+    }));
+    chips.hidden = names.length === 0;
+  }
+  async function post(url, data) {
+    const res = await fetch(url, {method: 'POST', body: data});
+    const json = await res.json().catch(() => ({error: `Erreur ${res.status}`}));
+    if (!res.ok) throw new Error(json.error || `Erreur ${res.status}`);
+    return json;
+  }
+  async function listDatabases() {
+    say('Connexion au serveur…');
+    try {
+      const {databases} = await post('/connections/databases', serverFields());
+      showDatabases(databases);
+      say(databases.length ? `${databases.length} base(s) trouvée(s) : cliquez pour en choisir une.` : 'Aucune base accessible sur ce serveur.', 'muted');
+    } catch (e) { chips.hidden = true; say(e.message, 'err-text'); }
+  }
+  document.getElementById('list_databases').addEventListener('click', listDatabases);
+  createToggle.addEventListener('click', () => {
+    createBox.hidden = !createBox.hidden;
+    if (!createBox.hidden) document.getElementById('new_database').focus();
+  });
+  document.getElementById('create_database').addEventListener('click', async () => {
+    const data = serverFields();
+    data.append('new_database', document.getElementById('new_database').value);
+    say('Création de la base…');
+    try {
+      const result = await post('/connections/create-database', data);
+      dbInput.value = result.database;
+      createBox.hidden = true;
+      await listDatabases();
+      say(`${result.message} Elle est sélectionnée : pensez à enregistrer la connexion.`, 'ok-text');
+    } catch (e) { say(e.message, 'err-text'); }
+  });
+  function refreshDbTools() { createToggle.hidden = kind.value !== 'postgresql'; if (createToggle.hidden) createBox.hidden = true; }
+  kind.addEventListener('change', () => { refreshDbTools(); chips.hidden = true; say(''); });
+  refreshDbTools();
 </script>
 {% endblock %}
