@@ -1,4 +1,4 @@
-# Pont ODBC .NET pour HFSQL (utilisé par l'application, ne pas lancer à la main).
+﻿# Pont ODBC .NET pour HFSQL (utilisé par l'application, ne pas lancer à la main).
 #
 # Le pilote ODBC HFSQL plante avec pyodbc mais fonctionne avec System.Data.Odbc (.NET) : ce script lit
 # des commandes sur l'entrée standard (une par ligne : op<TAB>arg1_base64<TAB>arg2_base64...) et répond
@@ -265,19 +265,29 @@ public static class OdbcBridge
 }
 '@
 
-# Références : System.Data (Windows PowerShell 5.1) ou System.Data.Odbc + System.Data.Common (PowerShell 7).
-$refs = @(
-    [System.Data.Odbc.OdbcConnection].Assembly.Location,
-    [System.Data.Common.DbConnection].Assembly.Location,
-    [System.Data.DataTable].Assembly.Location,
-    [System.ComponentModel.Component].Assembly.Location
-) | Where-Object { $_ } | Select-Object -Unique
-if ($PSVersionTable.PSVersion.Major -ge 6) {
-    # PowerShell 7 : les assemblies par défaut ne sont plus ajoutées quand on en précise.
+# Références. Windows PowerShell 5.1 (.NET Framework, compilateur C# 5) : par nom, System.Xml est requis
+# par DataTable. PowerShell 7 (.NET) : les assemblies par défaut ne sont plus ajoutées quand on en précise.
+if ($PSVersionTable.PSVersion.Major -lt 6) {
+    $refs = @("System.Data", "System.Xml")
+} else {
+    $refs = @(
+        [System.Data.Odbc.OdbcConnection].Assembly.Location,
+        [System.Data.Common.DbConnection].Assembly.Location,
+        [System.Data.DataTable].Assembly.Location,
+        [System.ComponentModel.Component].Assembly.Location
+    ) | Where-Object { $_ } | Select-Object -Unique
     $refs += @("System.Runtime", "System.Collections", "System.Console", "System.Data.Common",
                "System.ComponentModel.Primitives", "System.ComponentModel.TypeConverter", "System.Xml.ReaderWriter",
                "System.Text.Encoding.Extensions", "System.Runtime.Extensions", "System.IO", "System.Linq",
                "System.Private.Xml", "netstandard")
 }
-Add-Type -TypeDefinition $source -ReferencedAssemblies $refs -Language CSharp -WarningAction SilentlyContinue | Out-Null
+try {
+    Add-Type -TypeDefinition $source -ReferencedAssemblies $refs -Language CSharp -IgnoreWarnings `
+        -WarningAction SilentlyContinue -ErrorAction Stop | Out-Null
+} catch {
+    # Première ligne de stderr = message lisible, repris par l'application.
+    $msg = "Compilation du pont .NET impossible (PowerShell $($PSVersionTable.PSVersion)) : $($_.Exception.Message)"
+    [Console]::Error.WriteLine(($msg -replace "\s+", " "))
+    exit 3
+}
 [OdbcBridge]::Run()

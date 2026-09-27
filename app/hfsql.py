@@ -264,6 +264,7 @@ class _DotnetWorker:
         )
         self.lines: "queue.Queue" = queue.Queue()
         self.errors: list[str] = []
+        self._head: list[str] = []
         threading.Thread(target=self._pump, args=(self.proc.stdout, self.lines), daemon=True).start()
         threading.Thread(target=self._drain, daemon=True).start()
 
@@ -275,7 +276,10 @@ class _DotnetWorker:
 
     def _drain(self):
         for raw in iter(self.proc.stderr.readline, b""):
-            self.errors.append(raw.decode("utf-8", "replace").strip())
+            text = raw.decode("utf-8", "replace").strip()
+            if len(self._head) < 10:
+                self._head.append(text)  # le début de stderr contient le vrai message
+            self.errors.append(text)
             del self.errors[:-20]
 
     @staticmethod
@@ -334,7 +338,10 @@ class _DotnetWorker:
         if reply is None:
             self.proc.wait(10)
             code = self.proc.returncode
-            detail = " ".join(self.errors[-3:])[:500]
+            head = [e for e in self._head if e]
+            tail = [e for e in self.errors[-2:] if e and e not in head]
+            first = [e for e in head if e.startswith("Compilation du pont")]
+            detail = (first[0] if first else " ".join(head[:4] + (["…"] + tail if tail else [])))[:700]
             code_txt = f"0x{code & 0xFFFFFFFF:08X}" if isinstance(code, int) and (code < 0 or code > 255) else code
             raise HfsqlError(
                 f"Le pont .NET du pilote HFSQL s'est arrêté (code {code_txt}) pendant « {op} »."
