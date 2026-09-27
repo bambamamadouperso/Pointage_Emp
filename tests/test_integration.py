@@ -164,6 +164,10 @@ def test_full_cycle(engines, job):
     with SessionLocal() as db:
         m = db.query(TableMapping).filter_by(job_id=job, source_table="pointages").one()
         assert m.last_value_display == "3"
+        # id est la clé : rien de nouveau -> 0 ligne (pas de relecture de la dernière ligne).
+        assert m.last_rows == 0
+        # updated_at n'est pas la clé : la dernière valeur est relue par sécurité (upsert sans doublon).
+        assert db.query(TableMapping).filter_by(job_id=job, source_table="employes").one().last_rows == 2
         messages = [l.message for l in db.query(LogEntry).filter_by(job_id=job)]
     assert any("Colonnes ajoutées dans la cible : depart" in msg for msg in messages)
 

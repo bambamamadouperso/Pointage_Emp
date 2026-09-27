@@ -251,6 +251,17 @@ def _split(value: Optional[str]) -> list[str]:
     return [v.strip() for v in (value or "").split(",") if v.strip()]
 
 
+def _strict_cursor(keys: list[str], inc: str) -> bool:
+    """Lecture strictement après le curseur (>) ou en relisant la dernière valeur (>=).
+
+    Si la colonne de suivi est elle-même la clé unique (ex. id), aucune autre ligne ne peut avoir la
+    même valeur : on lit strictement après, et « 0 ligne » signifie qu'il n'y a rien de nouveau.
+    Si elle ne l'est pas (ex. updated_at), plusieurs lignes peuvent partager la dernière valeur : avec
+    une clé, on la relit (>=), l'upsert évitant les doublons. Sans clé, relire créerait des doublons (>).
+    """
+    return not keys or keys == [inc]
+
+
 def _make_writer(dst_table: Table, keys: list[str], columns: list[str]) -> Callable:
     """Écriture d'un lot : upsert si des colonnes clés existent, insertion simple sinon."""
     update_cols = [c for c in columns if c not in keys]
@@ -315,10 +326,9 @@ def sync_table(
             raise ValueError(f"Colonne incrémentale « {inc} » introuvable dans la table source.")
         inc_col = src_table.columns[inc]
         last = watermark.decode(mapping.last_value)
+        strict = _strict_cursor(keys, inc)
         if last is not None:
-            # Avec une clé, on relit la dernière valeur (>=) : l'upsert rend l'opération idempotente
-            # et on ne perd pas les lignes insérées avec la même valeur après la dernière exécution.
-            stmt = stmt.where(inc_col >= last if keys else inc_col > last)
+            stmt = stmt.where(inc_col > last if strict else inc_col >= last)
         stmt = stmt.where(inc_col.is_not(None)).order_by(inc_col)
         if not keys:
             log.warning(
@@ -327,7 +337,7 @@ def sync_table(
         if last is None:
             log.info(f"Première lecture incrémentale sur « {inc} » : lecture complète.", name)
         else:
-            log.info(f"Lecture incrémentale : {inc} {'>=' if keys else '>'} {last}.", name)
+            log.info(f"Lecture incrémentale : {inc} {'>' if strict else '>='} {last}.", name)
 
         with src_engine.connect() as src:
             result = src.execution_options(stream_results=True, yield_per=batch_size).execute(stmt)
@@ -424,8 +434,9 @@ def sync_sheet(
         last = watermark.decode(mapping.last_value)
         rows = [r for r in rows if r[inc] is not None]
         if last is not None:
-            rows = [r for r in rows if (r[inc] >= last if keys else r[inc] > last)]
-            log.info(f"Lecture incrémentale : {inc} {'>=' if keys else '>'} {last}.", name)
+            strict = _strict_cursor(keys, inc)
+            rows = [r for r in rows if (r[inc] > last if strict else r[inc] >= last)]
+            log.info(f"Lecture incrémentale : {inc} {'>' if strict else '>='} {last}.", name)
         else:
             log.info(f"Première lecture incrémentale sur « {inc} » : lecture complète.", name)
         rows.sort(key=lambda r: r[inc])
