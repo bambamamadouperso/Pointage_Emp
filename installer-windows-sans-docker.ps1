@@ -171,6 +171,10 @@ function Get-PortOwners([int]$LocalPort) {
 }
 
 function Stop-App {
+    # Le lanceur (app-service.cmd) relance le serveur s'il s'arrête : ce fichier lui demande de s'arrêter.
+    $stopFlag = Join-Path $Root "data\arret.flag"
+    New-Item -ItemType Directory -Force -Path (Split-Path $stopFlag) | Out-Null
+    Set-Content -Path $stopFlag -Value "arret demande par l'installateur" -Encoding ASCII
     if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
         Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
     }
@@ -218,8 +222,9 @@ function Set-EnvValue([string]$Name, [string]$Value) {
 function Register-App {
     New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
     $appLog = Join-Path $LogDir "application.log"
-    $command = "/c `"`"$VenvPython`" -m uvicorn app.main:app --host 0.0.0.0 --port $Port " +
-               "--workers 1 --no-access-log --env-file `"$EnvFile`" >> `"$appLog`" 2>&1`""
+    # Lanceur qui relance automatiquement le serveur s'il s'arrête (fenêtre fermée, Ctrl+C, plantage).
+    $launcher = Join-Path $Root "app-service.cmd"
+    $command = "/c `"`"$launcher`" $Port`""
     $action = New-ScheduledTaskAction -Execute "cmd.exe" -Argument $command -WorkingDirectory $Root
     $trigger = New-ScheduledTaskTrigger -AtStartup
     $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
@@ -312,6 +317,7 @@ if (Test-Path $EnvFile) {
 # ---- 4. Démarrage
 Write-Step "4" "Démarrage de l'application (tâche Windows au démarrage du serveur)"
 Register-App
+Remove-Item -Path (Join-Path $Root "data\arret.flag") -Force -ErrorAction SilentlyContinue
 Start-ScheduledTask -TaskName $TaskName
 
 $url = "http://localhost:$Port"
