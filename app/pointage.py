@@ -24,6 +24,7 @@ PARAMS = [
     ("seuil_retard", "Seuil de retard (retard si arrivée ≥)", "time", "07:45"),
     ("duree_pause_deduite", "Durée de pause déduite", "duration", "01:30"),
     ("jours_ouvres", "Jours ouvrés", "days", "1,2,3,4,5"),
+    ("duree_conge", "Durée attribuée par jour de congé", "duration", "08:00"),
 ]
 PARAM_LABELS = {k: label for k, label, _, _ in PARAMS}
 PARAM_TYPES = {k: kind for k, _, kind, _ in PARAMS}
@@ -37,9 +38,12 @@ STATUTS = {
     "ABSENT": ("Absent", "st-abs"),
     "INCOMPLET": ("Pointage incomplet", "st-inc"),
     "NON_OUVRE": ("Jour non ouvré", "st-off"),
+    "CONGE_ANNUEL": ("Congé Annuel", "st-leave"),
+    "CONGE_EXCEP": ("Congé exceptionnel", "st-leave"),
 }
+CONGES = ("CONGE_ANNUEL", "CONGE_EXCEP")
 # Version des objets PostgreSQL : si elle change, ils sont réinstallés automatiquement.
-SQL_VERSION = 6
+SQL_VERSION = 7
 # Limites des requêtes lancées depuis les pages web : une attente de verrou ou une requête lente ne doit jamais
 # bloquer le site (au pire, la page affiche une erreur au bout de 2 minutes).
 WEB_LIMITS = {"lock_timeout_s": 15, "statement_timeout_s": 120}
@@ -120,6 +124,24 @@ class Mapping:
     # Liste de référence des personnes attendues chaque jour : table des employés (« emp ») ou table des noms
     # (« person », ex. Personnel : tout le personnel est attendu, même sans fiche dans la table des employés).
     reference: str = "emp"
+    # Facultatif : demandes de congé. Un jour « Absent » couvert par un congé approuvé devient « Congé Annuel »
+    # ou « Congé exceptionnel » (durées validée et effective = paramètre « durée attribuée par jour de congé »).
+    leave_table: str = ""
+    leave_emp_col: str = ""           # l'employé concerné
+    leave_ref: str = "key"            # cette colonne contient la clé employé, le matricule ou l'id de la table des noms
+    leave_start_col: str = ""         # ex. datedebut
+    leave_end_col: str = ""           # ex. Datefin
+    leave_state_col: str = ""         # ex. etat (vide = toutes les demandes)
+    leave_state_values: str = "Approuvée"
+    leave_type_col: str = ""          # ex. Document (vide = tout est congé annuel)
+    leave_annual_values: str = "CONGE"
+    leave_excep_values: str = "CONGE EXCEP"
+
+    def __post_init__(self) -> None:
+        # Configuration enregistrée avant l'ajout des congés (ou champ laissé vide) : valeurs par défaut.
+        for name in ("leave_state_values", "leave_annual_values", "leave_excep_values", "leave_ref"):
+            if not getattr(self, name):
+                setattr(self, name, type(self).__dataclass_fields__[name].default)
 
     @classmethod
     def from_json(cls, raw: Optional[str]) -> "Mapping":
@@ -152,6 +174,10 @@ class Mapping:
             out.append("colonnes de la table des services")
         if self.hier_table and not (self.hier_emp_col and self.hier_manager_col):
             out.append("colonnes employé et responsable de la hiérarchie")
+        if self.leave_table and not (self.leave_emp_col and self.leave_start_col and self.leave_end_col):
+            out.append("colonnes employé, date de début et date de fin des congés")
+        if self.leave_table and self.leave_ref == "person" and not self.person_table:
+            out.append("table des noms (les congés désignent les personnes)")
         return out
 
 
@@ -208,6 +234,12 @@ _GUESSES = {
     "person_nom_col": [r"^nom$", r"^nom_", r"^lastname", r"^name$", r"nom"],
     "person_prenom_col": [r"pr[ée]nom", r"firstname"],
     "hier_emp_col": [r"^id_?employ", r"employ", r"^id_?agent", r"collab", r"^id_?person", r"matric"],
+    "leave_table": [r"demande_?cong", r"cong[ée]", r"absence", r"leave"],
+    "leave_emp_col": [r"^id_?employ", r"employ", r"matric", r"^id_?person", r"person", r"^id_?agent", r"agent"],
+    "leave_start_col": [r"^date_?d[ée]but", r"d[ée]but", r"start"],
+    "leave_end_col": [r"^date_?fin", r"fin", r"end"],
+    "leave_state_col": [r"^[ée]tat", r"statut", r"state", r"valid"],
+    "leave_type_col": [r"^document", r"nature", r"^type", r"motif"],
     "hier_manager_col": [r"respons", r"manager", r"sup[ée]rieur", r"^id_?chef", r"chef", r"n\+?1", r"valideur",
                          r"hi[ée]rarch"],
 }
@@ -227,6 +259,23 @@ _TEXT = ("text", "character varying", "character", "varchar", "char")
 _NUM = ("integer", "bigint", "smallint", "numeric", "double precision", "real")
 
 
+_ACCENTS = ("àâäéèêëîïôöùûüç", "aaaeeeeiioouuuc")
+
+
+def norm(value: str) -> str:
+    """Valeur comparée sans casse, accents ni espaces superflus (« Approuvée » = « APPROUVEE »)."""
+    table = str.maketrans(*_ACCENTS)
+    return re.sub(r"\s+", " ", (value or "").strip().lower().translate(table))
+
+
+def _norm_sql(expr: str) -> str:
+    return f"regexp_replace(translate(lower(btrim({expr}::text)), {lit(_ACCENTS[0])}, {lit(_ACCENTS[1])}), '\\s+', ' ', 'g')"
+
+
+def _values(raw: str) -> list[str]:
+    return [norm(v) for v in (raw or "").split(",") if v.strip()]
+
+
 def _as_text(expr: str, dtype: str) -> str:
     return f"btrim({expr}::text)" if dtype in _TEXT or dtype in _NUM else f"{expr}::text"
 
@@ -234,7 +283,7 @@ def _as_text(expr: str, dtype: str) -> str:
 def _date_expr(expr: str, dtype: str) -> str:
     if dtype in _TEXT or dtype in _NUM:
         t = f"btrim({expr}::text)"
-        return f"(CASE WHEN {t} ~ '^\\d{{8}}' THEN to_date(substr({t}, 1, 8), 'YYYYMMDD') ELSE {t}::date END)"
+        return f"(CASE WHEN {t} ~ '^\\d{{8}}' THEN to_date(substr({t}, 1, 8), 'YYYYMMDD') ELSE nullif({t}, '')::date END)"
     return f"{expr}::date"
 
 
@@ -270,7 +319,37 @@ def _raw_day_col(m: Mapping, types: dict[str, str]) -> Optional[str]:
     return None
 
 
-def build_sql(m: Mapping, punch_types: dict[str, str], emp_types: dict[str, str]) -> dict[str, str]:
+def _leave_cte(m: Mapping, leave_types: dict[str, str]) -> str:
+    """Jours de congé approuvés de chaque employé sur la période (un jour peut être couvert par une seule demande)."""
+    if not m.leave_table:
+        return "SELECT NULL::text AS emp_key, NULL::date AS jour, NULL::text AS statut WHERE false"
+    col = lambda name: f"l.{qi(name)}"  # noqa: E731
+    start = _date_expr(col(m.leave_start_col), leave_types.get(m.leave_start_col, ""))
+    end = f"COALESCE({_date_expr(col(m.leave_end_col), leave_types.get(m.leave_end_col, ''))}, {start})"
+    ref = {"matricule": "matricule", "person": "person_ref"}.get(m.leave_ref, "emp_key")
+    who = f"btrim({col(m.leave_emp_col)}::text)"
+    conds = [f"{start} <= p_au", f"{end} >= p_du"]
+    if m.leave_state_col and _values(m.leave_state_values):
+        conds.append(f"{_norm_sql(col(m.leave_state_col))} IN ({', '.join(lit(v) for v in _values(m.leave_state_values))})")
+    if m.leave_type_col:
+        typ = _norm_sql(col(m.leave_type_col))
+        excep = _values(m.leave_excep_values) or ["__aucun__"]
+        annual = _values(m.leave_annual_values)
+        conds.append(f"{typ} IN ({', '.join(lit(v) for v in annual + excep)})")
+        kind = f"CASE WHEN {typ} IN ({', '.join(lit(v) for v in excep)}) THEN 'CONGE_EXCEP' ELSE 'CONGE_ANNUEL' END"
+    else:
+        kind = "'CONGE_ANNUEL'"
+    return f"""SELECT DISTINCT ON (e.emp_key, d::date) e.emp_key, d::date AS jour, {kind} AS statut
+    FROM {qt(m.schema, m.leave_table)} l
+    JOIN emp e ON e.{ref} = {who}
+    CROSS JOIN LATERAL generate_series(GREATEST({start}, p_du)::timestamp, LEAST({end}, p_au)::timestamp,
+                                       interval '1 day') AS d
+    WHERE {' AND '.join(conds)}
+    ORDER BY e.emp_key, d::date, 3"""
+
+
+def build_sql(m: Mapping, punch_types: dict[str, str], emp_types: dict[str, str],
+              leave_types: Optional[dict[str, str]] = None) -> dict[str, str]:
     """SQL des objets PostgreSQL du module (tables de paramètres, vue des employés, fonctions, vues)."""
     S = qi(m.objs)
     punch = qt(m.schema, m.punch_table)
@@ -349,7 +428,7 @@ WITH base AS (
     WHERE {base_where}
     ORDER BY 1, 6 DESC  -- plusieurs fiches pour une même personne : la fiche active l'emporte
 ){hier_cte}
-SELECT b.emp_key, b.matricule, b.nom, b.prenom, b.service, b.actif, {hier_select}, b.actif_valeur
+SELECT b.emp_key, b.matricule, b.nom, b.prenom, b.service, b.actif, {hier_select}, b.actif_valeur, b.person_ref
 FROM base b
 {hier_join}"""
     team_function = f"""
@@ -409,8 +488,12 @@ par AS (
         {param('seuil_retard', '::time')} AS seuil_retard,
         {param('duree_pause_deduite', '::interval')} AS duree_pause,
         {param('jours_ouvres', '')} AS jours_ouvres,
+        {param('duree_conge', '::interval')} AS duree_conge,
         EXISTS (SELECT 1 FROM {S}.pointage_jours_feries f WHERE f.jour = d::date) AS ferie
     FROM generate_series(p_du::timestamp, LEAST(p_au, current_date)::timestamp, interval '1 day') AS d
+),
+conge AS (
+    {_leave_cte(m, leave_types or {})}
 ),
 base AS (
     SELECT e.emp_key, p.jour FROM emp e CROSS JOIN par p WHERE e.actif
@@ -421,16 +504,18 @@ g AS (
     SELECT b.emp_key, b.jour, e.matricule, e.nom, e.prenom, e.service, e.responsable_key, e.responsable,
            a.p1, a.p2, a.n, (e.emp_key IS NULL) AS hors_liste,
            p.debut_journee, p.debut_pause, p.fin_pause, p.fin_journee, p.seuil_retard, p.duree_pause,
+           p.duree_conge, k.statut AS conge,
            (NOT p.ferie AND extract(isodow FROM b.jour)::int = ANY (
                string_to_array(regexp_replace(p.jours_ouvres, '[^0-9,]', '', 'g'), ',')::int[])) AS jour_ouvre
     FROM base b
     JOIN par p ON p.jour = b.jour
     LEFT JOIN emp e ON e.emp_key = b.emp_key
     LEFT JOIN agg a ON a.emp_key = b.emp_key AND a.jour = b.jour
+    LEFT JOIN conge k ON k.emp_key = b.emp_key AND k.jour = b.jour
 ),
 c AS (
     SELECT g.*,
-        CASE WHEN g.n IS NULL THEN CASE WHEN g.jour_ouvre THEN 'ABSENT' ELSE 'NON_OUVRE' END
+        CASE WHEN g.n IS NULL THEN CASE WHEN g.jour_ouvre THEN COALESCE(g.conge, 'ABSENT') ELSE 'NON_OUVRE' END
              WHEN g.n < 2 THEN 'INCOMPLET'
              WHEN g.p1::time >= g.seuil_retard THEN 'RETARD'
              ELSE 'A_L_HEURE' END AS statut,
@@ -450,8 +535,10 @@ SELECT c.emp_key, COALESCE(c.matricule, c.emp_key), COALESCE(c.nom, 'Hors liste'
        c.hors_liste
 FROM c
 CROSS JOIN LATERAL (
-    SELECT CASE WHEN c.n >= 2 THEN GREATEST((c.fin_validee - c.debut_valide) - c.pause, interval '0') END AS hv,
-           CASE WHEN c.n >= 2 THEN GREATEST((c.p2 - c.p1) - c.pause, interval '0') END AS de
+    SELECT CASE WHEN c.statut IN ('CONGE_ANNUEL', 'CONGE_EXCEP') THEN c.duree_conge
+                WHEN c.n >= 2 THEN GREATEST((c.fin_validee - c.debut_valide) - c.pause, interval '0') END AS hv,
+           CASE WHEN c.statut IN ('CONGE_ANNUEL', 'CONGE_EXCEP') THEN c.duree_conge
+                WHEN c.n >= 2 THEN GREATEST((c.p2 - c.p1) - c.pause, interval '0') END AS de
 ) v
 WHERE c.statut IS NOT NULL
 $fn$"""
@@ -512,7 +599,9 @@ def install(engine: Engine, m: Mapping, author: str) -> None:
     for table, cols in ((m.person_table, (m.person_key_col, m.person_nom_col, m.person_prenom_col,
                                           m.emp_active_col if by_person else None)),
                         (m.service_table, (m.service_key_col, m.service_label_col)),
-                        (m.hier_table, (m.hier_emp_col, m.hier_manager_col))):
+                        (m.hier_table, (m.hier_emp_col, m.hier_manager_col)),
+                        (m.leave_table, (m.leave_emp_col, m.leave_start_col, m.leave_end_col, m.leave_state_col,
+                                         m.leave_type_col))):
         if not table:
             continue
         types = column_types(engine, m.schema, table)
@@ -523,7 +612,7 @@ def install(engine: Engine, m: Mapping, author: str) -> None:
                 raise PointageError(f"Colonne « {col} » absente de {table}.")
     if m.hier_ref == "person" and not m.person_table:
         raise PointageError("La hiérarchie désigne les personnes : choisissez aussi la table des noms.")
-    sql = build_sql(m, punch_types, emp_types)
+    sql = build_sql(m, punch_types, emp_types, column_types(engine, m.schema, m.leave_table))
     S = qi(m.objs)
     with engine.begin() as c:
         raw = _raw_day_col(m, punch_types)
@@ -774,8 +863,10 @@ def daily(engine: Engine, m: Mapping, f: Filters, page: int = 1, size: int = 100
         count(*) FILTER (WHERE statut = 'ABSENT') AS absents,
         count(*) FILTER (WHERE statut = 'INCOMPLET') AS incomplets,
         count(*) FILTER (WHERE statut = 'NON_OUVRE') AS non_ouvres,
+        count(*) FILTER (WHERE statut IN ('CONGE_ANNUEL', 'CONGE_EXCEP')) AS conges,
         count(DISTINCT emp_key) FILTER (WHERE hors_liste) AS hors_liste,
-        avg(duree_validee) AS moy_validee, avg(duree_effective) AS moy_effective,
+        avg(duree_validee) FILTER (WHERE statut NOT IN ('CONGE_ANNUEL', 'CONGE_EXCEP')) AS moy_validee,
+        avg(duree_effective) FILTER (WHERE statut NOT IN ('CONGE_ANNUEL', 'CONGE_EXCEP')) AS moy_effective,
         count(DISTINCT emp_key) AS employes
         FROM {source}{where}""").bindparams(*binds)
     rows_sql = text(f"SELECT * FROM {source}{where}{_order(f)} LIMIT :lim OFFSET :off").bindparams(*binds)

@@ -150,6 +150,47 @@
     {% else %}<input type="hidden" name="hier_ref" value="key">{% endif %}
   </fieldset>
 
+  <fieldset class="limits"><legend>Congés <span class="muted small">(un jour « Absent » couvert par un congé approuvé devient « Congé »)</span></legend>
+    <div class="row">
+      <label>Table des demandes de congé
+        {{ tableselect('leave_table', m.leave_table, True) }}
+        {% if leave_guess %}<span class="muted small">Suggestion : <code>{{ leave_guess }}</code></span>{% endif %}</label>
+      {% if m.leave_table %}
+      <label>La colonne de l'employé contient
+        <select name="leave_ref">
+          <option value="key" {{ 'selected' if m.leave_ref in ('key', '') }}>la clé employé ({{ m.emp_key_col or 'colonne de correspondance' }})</option>
+          <option value="matricule" {{ 'selected' if m.leave_ref == 'matricule' }}>le matricule</option>
+          <option value="person" {{ 'selected' if m.leave_ref == 'person' }}>l'identifiant de la table des noms</option>
+        </select></label>
+      {% endif %}
+    </div>
+    {% if m.leave_table %}
+    <div class="row">
+      <label>Colonne de l'employé {{ colselect('leave_emp_col', leave_cols, m.leave_emp_col) }}</label>
+      <label>Date de début {{ colselect('leave_start_col', leave_cols, m.leave_start_col) }}</label>
+      <label>Date de fin {{ colselect('leave_end_col', leave_cols, m.leave_end_col) }}</label>
+    </div>
+    <div class="row">
+      <label>Colonne de l'état <span class="muted small">(facultatif)</span> {{ colselect('leave_state_col', leave_cols, m.leave_state_col, True) }}</label>
+      <label>Valeur(s) « approuvé » <input name="leave_state_values" value="{{ m.leave_state_values }}" placeholder="Approuvée"></label>
+    </div>
+    <div class="row">
+      <label>Colonne de la nature <span class="muted small">(facultatif)</span> {{ colselect('leave_type_col', leave_cols, m.leave_type_col, True) }}</label>
+      <label>Valeur(s) « Congé Annuel » <input name="leave_annual_values" value="{{ m.leave_annual_values }}" placeholder="CONGE"></label>
+      <label>Valeur(s) « Congé exceptionnel » <input name="leave_excep_values" value="{{ m.leave_excep_values }}" placeholder="CONGE EXCEP"></label>
+    </div>
+    <p class="muted small">Plusieurs valeurs : séparez-les par des virgules. La comparaison ignore majuscules, accents et espaces
+      (« Approuvée » = « APPROUVEE »). Seules les demandes dont la nature est l'une de ces valeurs sont prises en compte.
+      Chaque jour ouvré de congé reçoit la « Durée attribuée par jour de congé » (8h par défaut, voir Paramètres horaires)
+      en durée validée et en durée effective. Un jour où la personne a badgé garde le statut calculé d'après ses pointages.</p>
+    {% else %}
+    <input type="hidden" name="leave_ref" value="{{ m.leave_ref or 'key' }}">
+    <input type="hidden" name="leave_state_values" value="{{ m.leave_state_values or 'Approuvée' }}">
+    <input type="hidden" name="leave_annual_values" value="{{ m.leave_annual_values or 'CONGE' }}">
+    <input type="hidden" name="leave_excep_values" value="{{ m.leave_excep_values or 'CONGE EXCEP' }}">
+    {% endif %}
+  </fieldset>
+
   <p class="muted small">Enregistrer crée ou met à jour dans PostgreSQL : <code>pointage_parametres</code> (paramètres historisés),
     <code>pointage_jours_feries</code>, les fonctions <code>f_pointage_journalier(du, au)</code> et
     <code>f_pointage_equipe(responsable)</code>, et les vues <code>v_pointage_journalier</code>,

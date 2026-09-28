@@ -375,6 +375,61 @@ def test_filter_bar_and_contradictory_filters(configured, logged_client):
     assert "Aucune ligne" in page and "n'ont ni service ni responsable" in page
 
 
+def test_approved_leave_replaces_absence(configured, pg, logged_client):
+    """Jour « Absent » couvert par un congé approuvé : « Congé Annuel » / « Congé exceptionnel », 8h validées et effectives."""
+    import dataclasses
+
+    with pg.begin() as c:
+        c.execute(text(f"DROP TABLE IF EXISTS {SCHEMA}.demandeconge"))
+        c.execute(text(f"""CREATE TABLE {SCHEMA}.demandeconge (matricule text, datedebut timestamp, "Datefin" text,
+                          etat text, "Document" text)"""))
+        c.execute(text(f"""INSERT INTO {SCHEMA}.demandeconge VALUES
+            ('E005', '2026-09-21 00:00', '20260923000000', 'Approuvée', 'CONGE'),        -- lun. → mer. (mer. férié)
+            ('E004', '2026-09-21 00:00', '2026-09-21', 'Approuvée', 'CONGE EXCEP'),       -- a badgé : reste incomplet
+            ('E007', '2026-09-22 00:00', '2026-09-22', ' APPROUVEE ', 'conge  excep'),    -- casse et espaces ignorés
+            ('E003', '2026-09-22 00:00', '2026-09-22', 'En attente', 'CONGE'),            -- non approuvé
+            ('E001', '2026-09-22 00:00', '2026-09-22', 'Approuvée', 'MALADIE')            -- autre nature"""))
+    with SessionLocal() as db:
+        m = pointage.Mapping.from_json(db.query(PointageConfig).one().data)
+    m = dataclasses.replace(
+        m, objects_schema="pt_test_conge", leave_table="demandeconge", leave_emp_col="matricule", leave_ref="matricule",
+        leave_start_col="datedebut", leave_end_col="Datefin", leave_state_col="etat", leave_type_col="Document")
+    assert (m.leave_state_values, m.leave_annual_values, m.leave_excep_values) == ("Approuvée", "CONGE", "CONGE EXCEP")
+    with pg.begin() as c:
+        c.execute(text("DROP SCHEMA IF EXISTS pt_test_conge CASCADE"))
+    pointage.install(pg, m, "test")
+    with pg.begin() as c:
+        c.execute(text("INSERT INTO pt_test_conge.pointage_jours_feries (jour, libelle) VALUES (:d, 'Fête')"), {"d": WED})
+    with pg.connect() as c:
+        r = {(x.matricule, x.jour): x for x in c.execute(text(
+            "SELECT * FROM pt_test_conge.f_pointage_journalier(:du, :au)"), {"du": MON, "au": WED}).mappings()}
+    khady = r[("E005", MON)]
+    assert (khady.statut, khady.statut_libelle) == ("CONGE_ANNUEL", "Congé Annuel")
+    assert hm(khady.duree_validee) == "8h00" and hm(khady.duree_effective) == "8h00"
+    assert r[("E005", TUE)].statut == "CONGE_ANNUEL" and r[("E005", WED)].statut == "NON_OUVRE"
+    assert r[("E004", MON)].statut == "INCOMPLET"
+    aminata = r[("E007", TUE)]
+    assert (aminata.statut, aminata.statut_libelle) == ("CONGE_EXCEP", "Congé exceptionnel")
+    assert r[("E003", TUE)].statut == "ABSENT" and r[("E001", TUE)].statut == "ABSENT"
+
+    # Écran : carte « En congé », badge vert clair, moyennes hors congés.
+    from app.routers import suivi
+
+    monkey_cfg = suivi.load_config
+    cfg, _ = monkey_cfg(SessionLocal())
+    suivi.load_config = lambda db: (cfg, m)
+    try:
+        page = logged_client.get(f"/suivi?date={TUE.isoformat()}").text
+    finally:
+        suivi.load_config = monkey_cfg
+    assert "En congé" in page and 'badge st-leave">Congé Annuel' in page and "Congé exceptionnel" in page
+
+    # Administration : la section Congés propose les colonnes de la table choisie.
+    admin = logged_client.get(f"/admin/pointage?conn_id={configured}&schema={SCHEMA}&punch_table=punchlog"
+                              f"&emp_table=Employes&leave_table=demandeconge&leave_state_values=Approuvée").text
+    assert "Table des demandes de congé" in admin and "Datefin (text)" in admin and "Congé exceptionnel" in admin
+
+
 def test_reference_whole_personnel(configured, pg, logged_client):
     """Liste de référence = table Personnel, sans colonne « actif » : tout le personnel est attendu."""
     with SessionLocal() as db:
