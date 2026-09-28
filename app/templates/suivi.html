@@ -90,6 +90,12 @@
 {% if stale %}<div class="flash warn">Dernier pointage reçu le <strong>{{ last_punch.strftime('%d/%m/%Y à %H:%M') }}</strong> :
   les jours suivants apparaissent en « Absent » pour tout le monde. Si des personnes ont badgé depuis, vérifiez la
   synchronisation de la table des pointages{% if can(role, 'manager') %} (<a href="/jobs">Jobs</a>){% endif %}.</div>{% endif %}
+{% if population and population.suspect %}<div class="flash warn">Seulement <strong>{{ population.actifs | num }}</strong>
+  personne(s) sur <strong>{{ population.total | num }}</strong> de la liste des employés sont considérées comme actives :
+  les autres n'apparaissent <strong>jamais absentes</strong> (seulement les jours où elles badgent).
+  Valeurs trouvées dans la colonne « actif » :
+  {% for valeur, active, n in population.valeurs %}<code>{{ valeur }}</code> ({{ n | num }}, {{ 'active' if active else 'inactive' }}){{ ', ' if not loop.last }}{% endfor %}.
+  {% if can(role, 'admin') %}Corrigez « Valeurs considérées actives » dans <a href="/admin/pointage">Administration → Source des pointages</a>.{% else %}Signalez-le à un administrateur.{% endif %}</div>{% endif %}
 {% if warning %}<div class="flash warn">{{ warning }}</div>{% endif %}
 {% if error %}<div class="flash err">{{ error }}</div>{% endif %}
 

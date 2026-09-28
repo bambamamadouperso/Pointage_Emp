@@ -338,6 +338,29 @@ def test_last_punch_with_timestamp_column(configured, pg):
     assert pointage.last_punch(pg, m, use_cache=False) == datetime(2026, 9, 28, 16, 5)
 
 
+def test_population_warns_when_most_are_inactive(configured, pg, logged_client, monkeypatch):
+    """Colonne « actif » mal réglée (presque personne d'actif) : bandeau d'alerte sur l'écran de suivi."""
+    import dataclasses
+
+    with SessionLocal() as db:
+        m = pointage.Mapping.from_json(db.query(PointageConfig).one().data)
+    ok = pointage.population(pg, m)
+    assert (ok["total"], ok["actifs"], ok["suspect"]) == (7, 6, False) and ok["valeurs"]
+    assert "jamais absentes" not in logged_client.get("/suivi?date=2026-09-25").text
+
+    wrong = dataclasses.replace(m, objects_schema="pt_test_actif", emp_active_values="zzz")
+    with pg.begin() as c:
+        c.execute(text("DROP SCHEMA IF EXISTS pt_test_actif CASCADE"))
+    pointage.install(pg, wrong, "test")
+    bad = pointage.population(pg, wrong)
+    assert (bad["actifs"], bad["suspect"]) == (0, True)
+    assert all(not active for _, active, _ in bad["valeurs"])
+
+    monkeypatch.setattr(pointage, "population", lambda engine, mapping: bad)
+    page = logged_client.get("/suivi?date=2026-09-25").text
+    assert "jamais absentes" in page and "Valeurs considérées actives" in page
+
+
 def test_reference_whole_personnel(configured, pg, logged_client):
     """Liste de référence = table Personnel, sans colonne « actif » : tout le personnel est attendu."""
     with SessionLocal() as db:

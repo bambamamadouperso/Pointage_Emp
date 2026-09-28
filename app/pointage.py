@@ -582,6 +582,21 @@ def diagnostics(engine: Engine, m: Mapping, days: int = 31) -> dict:
     return d
 
 
+def population(engine: Engine, m: Mapping) -> dict:
+    """Combien de personnes de la liste sont attendues (actives), et valeurs trouvées dans la colonne « actif »."""
+    S = qi(m.objs)
+    with engine.connect() as c:
+        d = dict(c.execute(text(
+            f"SELECT count(*) AS total, count(*) FILTER (WHERE actif) AS actifs FROM {S}.v_pointage_employes"
+        )).mappings().one())
+        d["valeurs"] = c.execute(text(
+            f"SELECT COALESCE(actif_valeur, '(vide)') AS valeur, bool_or(actif) AS active, count(*) AS n "
+            f"FROM {S}.v_pointage_employes GROUP BY 1 ORDER BY 3 DESC LIMIT 8")).all() if m.emp_active_col else []
+    # Moins de la moitié de la liste attendue : la colonne « actif » ou ses valeurs sont probablement mal réglées.
+    d["suspect"] = bool(m.emp_active_col) and d["total"] > 0 and d["actifs"] * 2 < d["total"]
+    return d
+
+
 def inspect_employee(engine: Engine, m: Mapping, query: str, du: date, au: date) -> list[dict]:
     """« Pourquoi cet employé n'apparaît pas absent ? » : fiche, statut actif, pointages et calcul jour par jour."""
     S = qi(m.objs)
