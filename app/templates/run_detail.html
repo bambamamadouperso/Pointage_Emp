@@ -7,7 +7,12 @@
     <h1>Exécution #{{ run.id }} {{ status_badge(run.status) }}</h1>
     <p class="muted">Job {% if run.job %}<a href="/jobs/{{ run.job_id }}">{{ run.job.name }}</a>{% endif %} · {{ {'manual': 'manuel', 'schedule': 'planifié', 'reload': 'réimport complet'}.get(run.trigger, run.trigger) }}</p>
   </div>
-  <a href="/runs" class="muted">← Exécutions</a>
+  <div class="actions">
+    {% if run.status == 'running' %}
+    <form method="post" action="/jobs/{{ run.job_id }}/stop" data-confirm="Arrêter cette exécution ?"><button class="btn danger">■ Arrêter</button></form>
+    {% endif %}
+    <a href="/runs" class="muted">← Exécutions</a>
+  </div>
 </div>
 <section class="stats">
   <div class="stat"><span class="label">Début</span><span class="value small">{{ run.started_at | dt }}</span></div>
@@ -15,7 +20,7 @@
   <div class="stat"><span class="label">Tables OK / échec</span><span class="value">{{ run.tables_ok }} <small>/ {{ run.tables_failed }}</small></span></div>
   <div class="stat"><span class="label">Lignes écrites</span><span class="value">{{ run.rows_written | num }}</span></div>
 </section>
-{% if run.message %}<div class="flash {{ 'ok' if run.status == 'success' else 'warn' if run.status == 'partial' else 'err' if run.status == 'error' else 'info' }}">{{ run.message }}</div>{% endif %}
+{% if run.message %}<div class="flash {{ 'ok' if run.status == 'success' else 'warn' if run.status in ('partial', 'cancelled') else 'err' if run.status == 'error' else 'info' }}">{{ run.message }}</div>{% endif %}
 <section class="card">
   <h2>Journal</h2>
   {% include "_logs_table.html" with context %}

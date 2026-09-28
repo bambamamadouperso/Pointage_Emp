@@ -221,3 +221,40 @@ def test_reload_table_and_job(engines, job):
     with dst.connect() as c:
         assert c.execute(text(f"SELECT nom FROM {SCHEMA}.employes ORDER BY id")).scalars().all() == [
             "Awa Diallo", "Moussa Ndiaye"]
+
+
+def test_stop_job_blocked_on_postgres_lock(job, engines):
+    """Le bouton « Arrêter » débloque une exécution qui attend un verrou PostgreSQL."""
+    import threading
+    import time
+
+    from app.sync import cancel_job, is_running
+
+    src, dst = engines
+    assert _run(job).status == "success"
+    # Un autre client verrouille la table cible : le DELETE du mode complet reste bloqué.
+    blocker = dst.connect()
+    tx = blocker.begin()
+    blocker.execute(text(f"LOCK TABLE {SCHEMA}.types_divers IN ACCESS EXCLUSIVE MODE"))
+    result = {}
+    worker = threading.Thread(target=lambda: result.setdefault("id", run_job(job, "manual")))
+    worker.start()
+    try:
+        for _ in range(100):
+            if is_running(job):
+                break
+            time.sleep(0.1)
+        time.sleep(2)
+        assert is_running(job)
+        assert cancel_job(job, "Arrêté par le test.") == "stopped"
+        worker.join(15)
+        assert not worker.is_alive() and not is_running(job)
+    finally:
+        tx.rollback()
+        blocker.close()
+    with SessionLocal() as db:
+        run = db.get(JobRun, result["id"])
+        assert run.status == "cancelled" and "Arrêté par le test." in run.message
+        assert db.get(SyncJob, job).last_status == "cancelled"
+    # Le job peut être relancé normalement.
+    assert _run(job).status == "success"

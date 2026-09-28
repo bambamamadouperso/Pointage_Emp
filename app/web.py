@@ -38,6 +38,7 @@ STATUS_LABELS = {
     "partial": ("Partiel", "warn"),
     "error": ("Erreur", "err"),
     "running": ("En cours", "run"),
+    "cancelled": ("Arrêté", "warn"),
 }
 
 

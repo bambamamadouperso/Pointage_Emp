@@ -10,7 +10,7 @@
   </label>
   <label>État
     <select name="status"><option value="">Tous</option>
-      {% for k, l in [('success','Succès'),('partial','Partiel'),('error','Erreur'),('running','En cours')] %}
+      {% for k, l in [('success','Succès'),('partial','Partiel'),('error','Erreur'),('running','En cours'),('cancelled','Arrêté')] %}
         <option value="{{ k }}" {{ 'selected' if filters.status == k }}>{{ l }}</option>
       {% endfor %}
     </select>

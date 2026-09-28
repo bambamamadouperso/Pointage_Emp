@@ -419,13 +419,15 @@ def _new_worker():
     return _DotnetWorker() if engine() == "dotnet" else _ProcessWorker()
 
 
-def _open_worker(conn, cs: str):
+def _open_worker(conn, cs: str, on_worker=None):
     """Démarre un processus pilote et y ouvre la connexion ODBC."""
     try:
         check_port(conn.host, conn.port or 4900)
     except NetError as exc:
         raise HfsqlError(str(exc)) from exc
     worker = _new_worker()
+    if on_worker is not None:
+        on_worker(worker)  # permet d'arrêter le processus pendant l'ouverture (bouton « Arrêter »)
     try:
         worker.call("connect", CONNECT_TIMEOUT, cs=cs, login_timeout=min(CONNECT_TIMEOUT, 600))
     except _RemoteError as exc:
@@ -461,7 +463,7 @@ def reset_pool() -> None:
 class Source:
     """Connexion HFSQL (via le processus pilote), réutilisée d'une exécution à l'autre si possible."""
 
-    def __init__(self, conn, reuse: bool = True):
+    def __init__(self, conn, reuse: bool = True, on_worker=None):
         self.key = connection_string(conn)
         self.pooled = False
         self.worker = None
@@ -470,10 +472,12 @@ class Source:
                 entry = _pool.get(self.key)
                 if entry and entry["lock"].acquire(blocking=False):
                     self.worker, self.entry, self.pooled = entry["worker"], entry, True
+            if self.pooled and on_worker is not None:
+                on_worker(self.worker)
             if self.pooled and not self._healthy():
                 self._discard()
         if self.worker is None:
-            self.worker = _open_worker(conn, self.key)
+            self.worker = _open_worker(conn, self.key, on_worker)
             if reuse:
                 with _pool_guard:
                     if self.key not in _pool:

@@ -168,3 +168,45 @@ def test_invalid_form_is_readable(logged_client):
     # Appel JavaScript : réponse JSON avec un message.
     r = logged_client.post("/jobs/save", data={"name": "x"}, headers={"accept": "*/*"})
     assert r.status_code == 422 and "Formulaire incomplet" in r.json()["error"]
+
+
+def test_stop_forced_and_orphan_runs(logged_client):
+    """Exécution bloquée qui ne répond pas (arrêt forcé) et exécution restée « En cours » sans tâche."""
+    from app import sync
+    from app.database import SessionLocal
+    from app.models import Connection, JobRun, SyncJob
+
+    with SessionLocal() as db:
+        s = Connection(name="stop-src", kind="mariadb", host="h", port=3306, database="d", username="u")
+        d = Connection(name="stop-dst", kind="postgresql", host="h", port=5432, database="d", username="u")
+        db.add_all([s, d])
+        db.flush()
+        job = SyncJob(name="stop-job", source_id=s.id, target_id=d.id, interval_seconds=60)
+        db.add(job)
+        db.flush()
+        run = JobRun(job_id=job.id, trigger="schedule", status="running")
+        db.add(run)
+        db.commit()
+        job_id, run_id = job.id, run.id
+
+    # Tâche active qui ne rend jamais la main.
+    control = sync.RunControl(job_id)
+    control.run_id = run_id
+    sync._active[job_id] = control
+    assert sync.is_running(job_id)
+    assert sync.cancel_job(job_id, "test", wait=0.5) == "forced"
+    assert not sync.is_running(job_id) and control.stop.is_set()
+    with SessionLocal() as db:
+        assert db.get(JobRun, run_id).status == "cancelled"
+
+    # Exécution orpheline (tâche disparue) : clôturée par le bouton de la page du job.
+    with SessionLocal() as db:
+        db.add(JobRun(job_id=job_id, trigger="schedule", status="running"))
+        db.commit()
+    page = logged_client.get(f"/jobs/{job_id}")
+    assert "■ Arrêter" in page.text
+    r = logged_client.post(f"/jobs/{job_id}/stop", follow_redirects=True)
+    assert "clôturée" in r.text
+    with SessionLocal() as db:
+        assert not db.query(JobRun).filter_by(job_id=job_id, status="running").count()
+    assert "Arrêté" in logged_client.get("/runs").text

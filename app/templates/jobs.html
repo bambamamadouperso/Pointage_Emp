@@ -26,7 +26,7 @@
         <td>{{ job.last_run_at | dt }}</td>
         <td>{{ next_runs[job.id] | dt if job.enabled else '—' }}</td>
         <td class="actions">
-          <form method="post" action="/jobs/{{ job.id }}/run"><button class="btn small" {{ 'disabled' if running[job.id] }}>▶ Lancer</button></form>
+          {% if running[job.id] %}<form method="post" action="/jobs/{{ job.id }}/stop" data-confirm="Arrêter l'exécution en cours de « {{ job.name }} » ?"><button class="btn small danger">■ Arrêter</button></form>{% else %}<form method="post" action="/jobs/{{ job.id }}/run"><button class="btn small">▶ Lancer</button></form>{% endif %}
           <form method="post" action="/jobs/{{ job.id }}/toggle"><button class="btn small ghost">{{ 'Désactiver' if job.enabled else 'Activer' }}</button></form>
         </td>
       </tr>

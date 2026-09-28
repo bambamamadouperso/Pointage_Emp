@@ -12,12 +12,13 @@ from .config import settings
 from .database import SessionLocal
 from .joblog import write_log
 from .models import JobRun, LogEntry, SyncJob, utcnow
-from .sync import run_job
+from .sync import cancel_overdue, run_job
 
 logger = logging.getLogger("scheduler")
 
 scheduler = BackgroundScheduler(
-    executors={"default": ThreadPoolExecutor(settings.max_workers)},
+    # Le chien de garde a son propre fil : il doit tourner même si tous les autres sont bloqués.
+    executors={"default": ThreadPoolExecutor(settings.max_workers), "watchdog": ThreadPoolExecutor(1)},
     job_defaults={"coalesce": True, "max_instances": 1, "misfire_grace_time": 300},
 )
 
@@ -98,6 +99,8 @@ def start() -> None:
     scheduler.start()
     for job in jobs:
         schedule_job(job)
+    scheduler.add_job(cancel_overdue, IntervalTrigger(minutes=1), args=[settings.max_run_minutes],
+                      id="watchdog", executor="watchdog", replace_existing=True)
     scheduler.add_job(purge_old_logs, IntervalTrigger(hours=6), id="purge-logs", replace_existing=True,
                       next_run_time=datetime.now())
     write_log("INFO", f"Planificateur démarré ({sum(j.enabled for j in jobs)} job(s) actif(s)).")

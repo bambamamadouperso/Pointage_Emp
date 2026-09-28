@@ -1,4 +1,5 @@
 """Moteur de synchronisation MariaDB -> PostgreSQL."""
+import socket
 import threading
 import time as _time
 from datetime import date, datetime, time, timedelta
@@ -22,6 +23,7 @@ from sqlalchemy import (
     Text,
     Time,
     create_engine,
+    event,
     inspect,
     select,
     text,
@@ -41,18 +43,132 @@ from .netcheck import NetError, call_with_timeout, check_port
 from .joblog import RunLogger, write_log
 from .models import MODE_FULL, MODE_INCREMENTAL, SOURCE_KINDS, Connection, JobRun, SyncJob, TableMapping, utcnow
 
-# Un verrou par job : une même synchronisation ne tourne jamais deux fois en parallèle.
-_job_locks: dict[int, threading.Lock] = {}
-_locks_guard = threading.Lock()
+class JobCancelled(Exception):
+    """Exécution arrêtée à la demande (bouton « Arrêter » ou durée maximale dépassée)."""
 
 
-def _lock_for(job_id: int) -> threading.Lock:
-    with _locks_guard:
-        return _job_locks.setdefault(job_id, threading.Lock())
+class RunControl:
+    """État d'une exécution en cours : permet de l'arrêter, même bloquée dans une requête."""
+
+    def __init__(self, job_id: int):
+        self.job_id = job_id
+        self.run_id: Optional[int] = None
+        self.started = _time.monotonic()
+        self.stop = threading.Event()
+        self.reason = ""
+        self.forced = False
+        self._raw: list = []  # connexions DBAPI ouvertes par cette exécution
+        self._workers: list = []  # processus pilotes HFSQL utilisés par cette exécution
+
+    def check(self) -> None:
+        if self.stop.is_set():
+            raise JobCancelled(self.reason or "Arrêté à la demande.")
+
+    def watch(self, engine: Engine) -> Engine:
+        event.listen(engine, "connect", lambda dbapi_conn, _rec: self._raw.append(dbapi_conn))
+        return engine
+
+    def add_worker(self, worker) -> None:
+        self._workers.append(worker)
+        if self.stop.is_set():
+            worker.kill()
+
+    def interrupt(self, reason: str) -> None:
+        """Demande l'arrêt et débloque les requêtes en cours (annulation côté serveur, pilote arrêté)."""
+        self.reason = reason
+        self.stop.set()
+        for raw in list(self._raw):
+            try:
+                if type(raw).__module__.startswith("psycopg"):
+                    raw.cancel()  # annule la requête PostgreSQL en cours (ex. attente d'un verrou)
+                elif getattr(raw, "_sock", None) is not None:  # pymysql
+                    raw._sock.shutdown(socket.SHUT_RDWR)
+            except Exception:
+                pass
+        for worker in list(self._workers):
+            try:
+                worker.kill()
+            except Exception:
+                pass
+
+
+# Une exécution au plus par job : une même synchronisation ne tourne jamais deux fois en parallèle.
+_active: dict[int, RunControl] = {}
+_active_guard = threading.Lock()
 
 
 def is_running(job_id: int) -> bool:
-    return _lock_for(job_id).locked()
+    with _active_guard:
+        return job_id in _active
+
+
+def cancel_job(job_id: int, reason: str = "Arrêté à la demande.", wait: float = 20) -> str:
+    """Arrête l'exécution en cours d'un job.
+
+    Renvoie « stopped » (arrêt propre), « forced » (exécution bloquée abandonnée), « orphan » (exécution
+    restée « En cours » sans tâche active, clôturée) ou « none » (rien à arrêter).
+    """
+    with _active_guard:
+        control = _active.get(job_id)
+    if control is None:
+        return "orphan" if _close_orphan_runs(job_id, reason) else "none"
+    write_log("WARNING", f"Arrêt demandé : {reason}", job_id=job_id, run_id=control.run_id)
+    control.interrupt(reason)
+    deadline = _time.monotonic() + wait
+    while _time.monotonic() < deadline:
+        with _active_guard:
+            if _active.get(job_id) is not control:
+                return "stopped"
+        _time.sleep(0.2)
+    # La tâche ne rend pas la main : elle est abandonnée, le job peut être relancé.
+    control.forced = True
+    with _active_guard:
+        if _active.get(job_id) is control:
+            del _active[job_id]
+    _close_run(control.run_id, job_id, f"{reason} (arrêt forcé : la tâche ne répondait plus).")
+    write_log("ERROR", "Arrêt forcé : la tâche bloquée est abandonnée, le job peut être relancé.",
+              job_id=job_id, run_id=control.run_id)
+    return "forced"
+
+
+def cancel_overdue(max_minutes: int) -> None:
+    """Arrête les exécutions qui dépassent la durée maximale (appelé régulièrement par le planificateur)."""
+    if max_minutes <= 0:
+        return
+    with _active_guard:
+        late = [c for c in _active.values()
+                if not c.stop.is_set() and _time.monotonic() - c.started > max_minutes * 60]
+    for c in late:
+        cancel_job(c.job_id, f"Durée maximale dépassée ({max_minutes} min).")
+
+
+def _close_run(run_id: Optional[int], job_id: int, message: str) -> None:
+    if run_id is None:
+        return
+    db = SessionLocal()
+    try:
+        run = db.get(JobRun, run_id)
+        if run is not None and run.status == "running":
+            run.status, run.message, run.finished_at = "cancelled", message, utcnow()
+            job = db.get(SyncJob, job_id)
+            if job is not None:
+                job.last_status, job.last_run_at = "cancelled", run.finished_at
+            db.commit()
+    finally:
+        db.close()
+
+
+def _close_orphan_runs(job_id: int, reason: str) -> int:
+    db = SessionLocal()
+    try:
+        runs = db.scalars(select(JobRun).where(JobRun.job_id == job_id, JobRun.status == "running")).all()
+        for run in runs:
+            run.status, run.finished_at = "cancelled", utcnow()
+            run.message = f"{reason} (exécution sans tâche active)."
+        db.commit()
+        return len(runs)
+    finally:
+        db.close()
 
 
 # --------------------------------------------------------------------------- connexions
@@ -63,7 +179,12 @@ def make_engine(conn: Connection) -> Engine:
     if conn.kind == "mariadb":
         kwargs["connect_args"] = {"connect_timeout": 10, "read_timeout": 3600}
     elif conn.kind == "postgresql":
-        kwargs["connect_args"] = {"connect_timeout": 10, "application_name": "mariadb-pg-sync"}
+        kwargs["connect_args"] = {
+            "connect_timeout": 10, "application_name": "mariadb-pg-sync",
+            # Connexion coupée détectée en quelques minutes ; attente d'un verrou limitée à 10 min.
+            "keepalives": 1, "keepalives_idle": 60, "keepalives_interval": 10, "keepalives_count": 5,
+            "options": "-c lock_timeout=600000",
+        }
     return create_engine(conn.sqlalchemy_url(), **kwargs)
 
 
@@ -359,6 +480,7 @@ def sync_table(
         with src_engine.connect() as src:
             result = src.execution_options(stream_results=True, yield_per=batch_size).execute(stmt)
             for part in result.partitions():
+                _checkpoint(log)
                 rows = clean(part)
                 rows_read += len(rows)
                 with dst_engine.begin() as dst:
@@ -376,6 +498,7 @@ def sync_table(
             dst.execute(text(f"DELETE FROM {preparer.format_table(dst_table)}"))
             result = src.execution_options(stream_results=True, yield_per=batch_size).execute(stmt)
             for part in result.partitions():
+                _checkpoint(log)
                 rows = clean(part)
                 rows_read += len(rows)
                 write(dst, rows)
@@ -459,6 +582,7 @@ def sync_sheet(
         rows.sort(key=lambda r: r[inc])
         with dst_engine.begin() as dst:
             for i in range(0, len(rows), batch_size):
+                _checkpoint(log)
                 write(dst, rows[i:i + batch_size])
         if rows:
             _save_watermark(mapping.id, rows[-1][inc])
@@ -468,6 +592,7 @@ def sync_sheet(
         with dst_engine.begin() as dst:
             dst.execute(text(f"DELETE FROM {preparer.format_table(dst_table)}"))
             for i in range(0, len(rows), batch_size):
+                _checkpoint(log)
                 write(dst, rows[i:i + batch_size])
     return rows_read, len(rows)
 
@@ -514,6 +639,7 @@ def sync_odbc_table(
         cur = src.select(name, columns, inc, last, strict)
         try:
             while True:
+                _checkpoint(log)
                 part = cur.fetchmany(batch_size)
                 if not part:
                     break
@@ -535,6 +661,7 @@ def sync_odbc_table(
             with dst_engine.begin() as dst:
                 dst.execute(text(f"DELETE FROM {preparer.format_table(dst_table)}"))
                 while True:
+                    _checkpoint(log)
                     part = cur.fetchmany(batch_size)
                     if not part:
                         break
@@ -546,6 +673,12 @@ def sync_odbc_table(
         finally:
             cur.close()
     return rows_read, rows_written
+
+
+def _checkpoint(log: RunLogger) -> None:
+    control = getattr(log, "control", None)
+    if control is not None:
+        control.check()
 
 
 def _save_watermark(mapping_id: int, value: Any) -> None:
@@ -575,14 +708,18 @@ def run_job(
     reset      : vide les tables cibles et remet les curseurs à zéro avant de tout réimporter.
     recreate   : supprime les tables cibles (DROP) pour recréer aussi leur structure.
     """
-    lock = _lock_for(job_id)
-    if not lock.acquire(blocking=False):
-        write_log("WARNING", "Exécution ignorée : le job est déjà en cours.", job_id=job_id)
-        return None
+    control = RunControl(job_id)
+    with _active_guard:
+        if job_id in _active:
+            write_log("WARNING", "Exécution ignorée : le job est déjà en cours.", job_id=job_id)
+            return None
+        _active[job_id] = control
     try:
-        return _run_job_locked(job_id, trigger, mapping_id, reset, recreate)
+        return _run_job_locked(control, trigger, mapping_id, reset, recreate)
     finally:
-        lock.release()
+        with _active_guard:
+            if _active.get(job_id) is control:
+                del _active[job_id]
 
 
 TRIGGER_LABELS = {"manual": "manuel", "schedule": "planifié", "reload": "réimport complet"}
@@ -606,8 +743,9 @@ def reset_target(dst_engine: Engine, schema: str, mapping: TableMapping, recreat
 
 
 def _run_job_locked(
-    job_id: int, trigger: str, mapping_id: Optional[int] = None, reset: bool = False, recreate: bool = False
+    control: RunControl, trigger: str, mapping_id: Optional[int] = None, reset: bool = False, recreate: bool = False
 ) -> Optional[int]:
+    job_id = control.job_id
     db = SessionLocal()
     try:
         job = db.get(SyncJob, job_id)
@@ -616,7 +754,9 @@ def _run_job_locked(
         run = JobRun(job_id=job.id, trigger=trigger, status="running", started_at=utcnow())
         db.add(run)
         db.commit()
+        control.run_id = run.id
         log = RunLogger(job.id, run.id)
+        log.control = control
         started = _time.monotonic()
         log.info(f"Démarrage du job « {job.name} » ({TRIGGER_LABELS.get(trigger, trigger)}).")
 
@@ -626,15 +766,15 @@ def _run_job_locked(
                 raise ValueError("La source doit être MariaDB, HFSQL ou Google Sheets et la cible PostgreSQL.")
             is_sheet = job.source.kind == "gsheet"
             is_odbc = job.source.kind == "hfsql"
-            dst_engine = make_engine(job.target)
+            dst_engine = control.watch(make_engine(job.target))
             checks = [("cible", dst_engine)]
             if is_odbc:
                 try:
-                    odbc_src = hfsql.Source(job.source)
+                    odbc_src = hfsql.Source(job.source, on_worker=control.add_worker)
                 except Exception as exc:
                     raise RuntimeError(f"connexion source impossible : {_short_error(exc)}") from exc
             elif not is_sheet:
-                src_engine = make_engine(job.source)
+                src_engine = control.watch(make_engine(job.source))
                 checks.insert(0, ("source", src_engine))
             # Vérifie les connexions avant de traiter les tables.
             for label, eng in checks:
@@ -672,6 +812,7 @@ def _run_job_locked(
             if not mappings:
                 log.warning("Aucune table active à synchroniser.")
             for mapping in mappings:
+                control.check()
                 t0 = _time.monotonic()
                 try:
                     if is_sheet:
@@ -691,6 +832,7 @@ def _run_job_locked(
                         mapping.source_table,
                     )
                 except Exception as exc:  # une table en échec n'arrête pas les autres
+                    control.check()
                     run.tables_failed += 1
                     log.error(f"Échec : {_short_error(exc)}", mapping.source_table)
                 db.commit()
@@ -704,17 +846,27 @@ def _run_job_locked(
                 f"{run.tables_ok} table(s) OK, {run.tables_failed} en échec, {run.rows_written} ligne(s)."
             )
         except Exception as exc:
-            run.status = "error"
-            run.message = _short_error(exc)
-            log.error(f"Job interrompu : {run.message}")
+            if control.stop.is_set():
+                run.status = "cancelled"
+                run.message = (f"{control.reason or 'Arrêté à la demande.'} {run.tables_ok} table(s) terminée(s), "
+                               f"{run.rows_written} ligne(s) écrite(s).")
+                log.warning(f"Job arrêté : {run.message}")
+            else:
+                run.status = "error"
+                run.message = _short_error(exc)
+                log.error(f"Job interrompu : {run.message}")
         finally:
             for eng in (src_engine, dst_engine):
                 if eng is not None:
                     eng.dispose()
             if odbc_src is not None:
                 # En cas d'erreur, la connexion n'est pas gardée : la prochaine exécution en ouvre une neuve.
-                odbc_src.close(discard=run.tables_failed > 0 or run.status == "error")
+                odbc_src.close(discard=run.tables_failed > 0 or run.status in ("error", "cancelled"))
 
+        if control.forced:
+            # L'exécution a déjà été clôturée par l'arrêt forcé : ne pas écraser son état.
+            db.rollback()
+            return run.id
         run.finished_at = utcnow()
         job.last_run_at = run.finished_at
         job.last_status = run.status

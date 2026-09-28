@@ -35,6 +35,11 @@ avec historique et logs.
   ou des types ont changé). L'opération est journalisée (« réimport complet » dans l'historique).
 - Une table en erreur n'arrête pas les autres (état « Partiel ») ; un même job ne tourne jamais deux fois
   en parallèle.
+- **Arrêter une exécution** : bouton « ■ Arrêter » (liste des jobs, page du job ou de l'exécution). La requête
+  en cours est annulée (PostgreSQL, MariaDB, pilote HFSQL) ; les lots déjà écrits en mode incrémental sont
+  conservés, la table en cours en mode complet revient à son état précédent. L'exécution passe à l'état
+  « Arrêté » et le job peut être relancé aussitôt. Une exécution qui dépasse `MAX_RUN_MINUTES` est arrêtée
+  automatiquement, et l'attente d'un verrou PostgreSQL est limitée à 10 minutes.
 
 > Le mode incrémental ne répercute pas les suppressions faites dans la source. Pour une table où des
 > lignes sont supprimées, utilisez le mode complet.
@@ -184,6 +189,7 @@ chaque worker exécuterait les jobs.
 | `LOG_RETENTION_DAYS`    | `30`                       | Conservation des logs et de l'historique |
 | `BATCH_SIZE`            | `5000`                     | Lignes lues/écrites par lot |
 | `SCHEDULER_MAX_WORKERS` | `4`                        | Jobs exécutés en parallèle au maximum |
+| `MAX_RUN_MINUTES`       | `360`                      | Arrêt automatique d'une exécution plus longue (0 = sans limite) |
 
 Si vous changez `SECRET_KEY` (ou `ENCRYPTION_KEY`), ressaisissez les mots de passe des connexions.
 

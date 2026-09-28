@@ -28,6 +28,8 @@ class Settings:
     log_retention_days: int = field(default_factory=lambda: _int("LOG_RETENTION_DAYS", 30))
     # Nombre maximum de jobs de synchronisation exécutés en parallèle.
     max_workers: int = field(default_factory=lambda: _int("SCHEDULER_MAX_WORKERS", 4))
+    # Durée maximale d'une exécution (minutes) : au-delà, elle est arrêtée automatiquement (0 = sans limite).
+    max_run_minutes: int = field(default_factory=lambda: _int("MAX_RUN_MINUTES", 360))
     # Fuseau horaire d'affichage des dates dans le tableau de bord.
     timezone: str = field(default_factory=lambda: os.getenv("APP_TIMEZONE", "UTC"))
     # Désactive le planificateur (utile pour les tests).

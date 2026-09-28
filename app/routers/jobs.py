@@ -9,7 +9,7 @@ from .. import gsheet, scheduler
 from ..database import get_db
 from ..joblog import write_log
 from ..models import MODE_FULL, MODE_INCREMENTAL, MODE_LABELS, SOURCE_KINDS, Connection, JobRun, SyncJob, TableMapping
-from ..sync import is_running, list_columns, list_tables
+from ..sync import cancel_job, is_running, list_columns, list_tables
 from ..web import back_url, flash, redirect, render, require_login
 
 router = APIRouter(prefix="/jobs", dependencies=[Depends(require_login)])
@@ -134,13 +134,15 @@ def job_detail(job_id: int, request: Request, db: Session = Depends(get_db)):
     except Exception as exc:
         source_error = str(exc)
     mapped = {m.source_table for m in job.tables}
+    running = is_running(job.id)
     return render(
         request,
         "job_detail.html",
         job=job,
         runs=runs,
         next_run=scheduler.next_run_time(job.id),
-        running=is_running(job.id),
+        running=running,
+        has_stale=not running and any(r.status == "running" for r in runs),
         source_tables=source_tables,
         unmapped=[t for t in source_tables if t not in mapped],
         source_error=source_error,
@@ -170,6 +172,23 @@ def run_job_now(job_id: int, request: Request, db: Session = Depends(get_db)):
     else:
         scheduler.run_now(job_id)
         flash(request, f"Exécution du job « {job.name} » lancée.", "ok")
+    return redirect(back_url(request, f"/jobs/{job_id}"))
+
+
+@router.post("/{job_id}/stop")
+def stop_job(job_id: int, request: Request, db: Session = Depends(get_db)):
+    """Arrête l'exécution en cours (même bloquée dans une requête ou dans le pilote HFSQL)."""
+    job = _get_job(db, job_id)
+    if job is None:
+        return redirect("/jobs")
+    outcome = cancel_job(job_id, f"Arrêté par {request.session.get('user') or 'un administrateur'}.")
+    messages = {
+        "stopped": (f"Exécution du job « {job.name} » arrêtée. Vous pouvez la relancer.", "ok"),
+        "forced": (f"Le job « {job.name} » ne répondait plus : exécution abandonnée. Vous pouvez le relancer.", "warn"),
+        "orphan": (f"Exécution restée « En cours » du job « {job.name} » clôturée. Vous pouvez le relancer.", "ok"),
+        "none": (f"Aucune exécution en cours pour le job « {job.name} ».", "info"),
+    }
+    flash(request, *messages[outcome])
     return redirect(back_url(request, f"/jobs/{job_id}"))
 
 
