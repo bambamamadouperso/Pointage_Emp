@@ -51,10 +51,7 @@
     <input type="hidden" name="p" value="{{ preset }}">
     <label>Service <select name="service"><option value="">Tous</option>
       {% for s in services %}<option value="{{ s }}" {{ 'selected' if f.service == s }}>{{ s }}</option>{% endfor %}</select></label>
-    {% if categories %}
-    <label>Catégorie <select name="categorie"><option value="">Toutes</option>
-      {% for c in categories %}<option value="{{ c }}" {{ 'selected' if f.categorie == c }}>{{ c }}</option>{% endfor %}</select></label>
-    {% endif %}
+    {% include "_filtre_statut_personnel.html" %}
     {% if has_hierarchy %}
     <label>Équipe de <select name="equipe"><option value="">{{ 'Toute mon équipe' if scope_label else 'Tout le personnel' }}</option>
       {% for key, label, n in managers %}<option value="{{ key }}" {{ 'selected' if f.team == key }}>{{ label }}</option>{% endfor %}</select></label>
@@ -154,7 +151,7 @@
   </section>
 </div>
 
-{% if data.categories %}{{ group_table('Par catégorie', data.categories, 'categorie', 'Catégorie') }}{% endif %}
+{% if data.categories %}{{ group_table('Par statut du personnel', data.categories, 'categorie', 'Statut du personnel') }}{% endif %}
 {{ group_table('Par service', data.services, 'service', 'Service') }}
 
 <section class="card">
@@ -179,13 +176,13 @@
   <div class="card-head"><div><h2>Par employé</h2><p class="muted small">{{ data.employes | length | num }} employé(s) ; les 100 premiers selon le tri choisi (tous dans l'export).</p></div>
     <label class="check small">Trier par <select name="tri" form="rfilters">{% for code, label in sorts.items() %}<option value="{{ code }}" {{ 'selected' if sort == code }}>{{ label }}</option>{% endfor %}</select></label></div>
   <div class="table-wrap"><table class="report-table">
-    <thead><tr><th>Matricule</th><th>Nom</th><th>Service</th><th class="right">Présence</th><th class="right">Absences</th>
+    <thead><tr><th>Matricule</th><th>Nom</th><th>Service</th>{% if categories %}<th>Statut</th>{% endif %}<th class="right">Présence</th><th class="right">Absences</th>
       <th class="right">Retards</th><th class="right">Retard cumulé</th><th class="right">Arrivée moy.</th><th class="right">Oublis</th>
       <th class="right">Congé</th><th class="right">Télétr.</th><th class="right">Heures validées</th></tr></thead>
     <tbody>{% for e in data.employes[:100] %}
       <tr><td class="mono small">{{ e.matricule }}</td>
         <td class="nowrap">{{ e.nom }} {{ e.prenom or '' }}{% if e.terrain %} <span class="badge st-field" title="Agent terrain">terrain</span>{% endif %}</td>
-        <td class="small">{{ e.service or '—' }}</td><td class="right">{{ pct(e.taux_presence) }}</td>
+        <td class="small">{{ e.service or '—' }}</td>{% if categories %}<td class="small">{{ e.categorie or '—' }}</td>{% endif %}<td class="right">{{ pct(e.taux_presence) }}</td>
         <td class="right {{ 'hot' if e.absences >= 3 }}">{{ e.absences or '·' }}</td><td class="right {{ 'hot' if e.retards >= 3 }}">{{ e.retards or '·' }}</td>
         <td class="right">{{ hhmm(timedelta(minutes=e.retard_min_total | float)) if e.retard_min_total else '·' }}</td>
         <td class="right">{% if e.arrivee_moy_min %}{{ '%02d' | format((e.arrivee_moy_min // 60) | int) }}h{{ '%02d' | format((e.arrivee_moy_min % 60) | int) }}{% else %}—{% endif %}</td>

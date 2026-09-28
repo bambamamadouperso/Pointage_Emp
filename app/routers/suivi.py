@@ -201,7 +201,7 @@ def export(request: Request, db: Session = Depends(get_db)):
     wb = Workbook()
     ws = wb.active
     ws.title = "Suivi journalier"
-    headers = ["Date", "Matricule", "Nom", "Prénom", "Service", "Catégorie", "1er pointage", "Dernier pointage", "Nb pointages",
+    headers = ["Date", "Matricule", "Nom", "Prénom", "Service", "Statut du personnel", "1er pointage", "Dernier pointage", "Nb pointages",
                "Statut", "Durée validée", "Durée effective", "Durée validée (min)", "Durée effective (min)",
                "Responsable", "Dans la liste des employés"]
     ws.append(headers)
@@ -237,7 +237,7 @@ def export(request: Request, db: Session = Depends(get_db)):
     info = wb.create_sheet("Filtres")
     for label, value in [
         ("Du", f.du.strftime("%d/%m/%Y")), ("Au", f.au.strftime("%d/%m/%Y")), ("Recherche", f.q or "—"),
-        ("Service", f.service or "Tous"), ("Catégorie", f.categorie or "Toutes"),
+        ("Service", f.service or "Tous"), ("Statut du personnel", f.categorie or "Tous"),
         ("Personnes", {"liste": "employés de la liste", "hors": "hors liste"}.get(f.population, "toutes")),
         ("Équipe", (f.team + (" (directs)" if f.directs else "")) if f.team else "Toutes"),
         ("Périmètre", "équipe du compte" if f.scope_root is not None else "tout le personnel"),

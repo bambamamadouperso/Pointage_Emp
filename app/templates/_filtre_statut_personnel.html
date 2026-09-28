@@ -1,0 +1,11 @@
+{# Filtre « Statut du personnel » (cadre, non cadre…) : toujours visible ; à configurer s'il n'y a pas encore de colonne. #}
+<label class="statut-perso">Statut du personnel
+  {% if categories %}
+  <select name="categorie"><option value="">Tous</option>
+    {% for c in categories %}<option value="{{ c }}" {{ 'selected' if f.categorie == c }}>{{ c }}</option>{% endfor %}
+  </select>
+  {% else %}
+  <select disabled title="Colonne du statut (cadre, non cadre…) non configurée"><option>Non configuré</option></select>
+  {% if can(role, 'admin') %}<a class="small" href="/admin/pointage#statut-personnel">Choisir la colonne dans la table Personnel →</a>{% endif %}
+  {% endif %}
+</label>

@@ -25,7 +25,7 @@
     <button type="button" class="btn small ghost" id="uncheck_visible">Décocher les employés affichés</button>
   </div>
   <div class="table-wrap sub-table"><table>
-    <thead><tr><th class="check-col"></th><th>Matricule</th><th>Nom</th><th>Service</th><th>Catégorie</th><th>E-mail de la fiche</th><th>Adresse à utiliser</th></tr></thead>
+    <thead><tr><th class="check-col"></th><th>Matricule</th><th>Nom</th><th>Service</th><th>Statut du personnel</th><th>E-mail de la fiche</th><th>Adresse à utiliser</th></tr></thead>
     <tbody>
     {% for e in employees %}{% set sub = subs.get(e.emp_key) %}
       <tr data-text="{{ (e.matricule ~ ' ' ~ (e.nom or '') ~ ' ' ~ (e.prenom or '') ~ ' ' ~ (e.email or '') ~ ' ' ~ (sub.email if sub else '')) | lower }}"

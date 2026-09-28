@@ -122,7 +122,7 @@ def pointage_config(request: Request, db: Session = Depends(get_db)):
             if not mapping.email_col and not exploring:
                 src = person_cols if mapping.email_in != "emp" and mapping.person_table else emp_cols
                 mapping.email_col = pointage.guess("email_col", list(src))
-            if not mapping.cat_col and not exploring and cfg.installed_at is None:
+            if not mapping.cat_col and not exploring:  # suggestion (enregistrée seulement si l'on valide)
                 src = person_cols if mapping.person_table else emp_cols
                 mapping.cat_in = "person" if mapping.person_table else "emp"
                 mapping.cat_col = pointage.guess("cat_col", list(src))

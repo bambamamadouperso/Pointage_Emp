@@ -90,10 +90,10 @@
     {% endif %}
   </fieldset>
 
-  <fieldset class="limits"><legend>Catégorie du personnel <span class="muted small">(cadre, non cadre… : filtre du suivi et des rapports)</span></legend>
+  <fieldset class="limits" id="statut-personnel"><legend>Statut du personnel <span class="muted small">(cadre, non cadre… : filtre du suivi et de tous les rapports)</span></legend>
     {% set cat_person = m.cat_in != 'emp' and m.person_table %}
     <div class="row">
-      <label>Colonne de la catégorie
+      <label>Colonne du statut (cadre, non cadre…)
         <select name="cat_in" data-reload>
           <option value="person" {{ 'selected' if cat_person }} {{ 'disabled' if not m.person_table }}>dans {{ m.person_table or 'la table des noms' }}</option>
           <option value="emp" {{ 'selected' if not cat_person }}>dans {{ m.emp_table or 'la table des employés' }}</option>

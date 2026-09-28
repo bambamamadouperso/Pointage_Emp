@@ -95,7 +95,7 @@ def export(request: Request, db: Session = Depends(get_db)):
 
     wb = Workbook()
     sheets = [
-        ("Employés", ["Matricule", "Nom", "Prénom", "Service", "Catégorie", "Responsable", "Agent terrain", "Jours attendus",
+        ("Employés", ["Matricule", "Nom", "Prénom", "Service", "Statut du personnel", "Responsable", "Agent terrain", "Jours attendus",
                       "Présences", "Taux de présence", "À l'heure", "Retards", "Minutes de retard", "Taux de ponctualité",
                       "Absences", "dont lundi/vendredi", "Pointages incomplets", "Congés", "Télétravail", "Sur le terrain",
                       "Heures validées"],
@@ -109,7 +109,7 @@ def export(request: Request, db: Session = Depends(get_db)):
          [[s["service"], s["employes"], pct(s["taux_presence"]), pct(s["taux_absence"]), pct(s["taux_ponctualite"]),
            s["retards"], float(s["retard_min_total"]), s["absences"], s["incomplets"], hours(s["heures_validees"]),
            hours(s["heures_moy_bureau"])] for s in data["services"]], {3, 4, 5}),
-        *([("Catégories", ["Catégorie", "Employés", "Taux de présence", "Taux d'absentéisme", "Taux de ponctualité",
+        *([("Statuts du personnel", ["Statut du personnel", "Employés", "Taux de présence", "Taux d'absentéisme", "Taux de ponctualité",
                             "Retards", "Minutes de retard", "Absences", "Pointages incomplets", "Heures validées",
                             "Moyenne heures / jour au bureau"],
              [[g["groupe"], g["employes"], pct(g["taux_presence"]), pct(g["taux_absence"]), pct(g["taux_ponctualite"]),
@@ -138,7 +138,7 @@ def export(request: Request, db: Session = Depends(get_db)):
         ws.freeze_panes = "A2"
         ws.auto_filter.ref = ws.dimensions
     info = wb.create_sheet("Filtres")
-    for row in [("Du", f.du.strftime("%d/%m/%Y")), ("Au", f.au.strftime("%d/%m/%Y")), ("Service", f.service or "Tous"), ("Catégorie", f.categorie or "Toutes"),
+    for row in [("Du", f.du.strftime("%d/%m/%Y")), ("Au", f.au.strftime("%d/%m/%Y")), ("Service", f.service or "Tous"), ("Statut du personnel", f.categorie or "Tous"),
                 ("Équipe", (f.team + (" (directs)" if f.directs else "")) if f.team else "Toutes"),
                 ("Exporté par", request.session.get("user", ""))]:
         info.append(row)

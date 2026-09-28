@@ -549,7 +549,7 @@ def test_reports_page_and_export(configured, logged_client):
     r = logged_client.get("/rapports/export.xlsx?" + url.split("?", 1)[1])
     assert r.status_code == 200
     wb = load_workbook(io.BytesIO(r.content))
-    assert wb.sheetnames[:5] == ["Employés", "Services", "Catégories", "Par jour", "Alertes"]
+    assert wb.sheetnames[:5] == ["Employés", "Services", "Statuts du personnel", "Par jour", "Alertes"]
     rows = {row[0]: row for row in wb["Employés"].iter_rows(min_row=2, values_only=True)}
     assert rows["E005"][14] == 4  # Ba Khady : 4 absences (mercredi férié)
     assert any(row[0] == "Absences répétées" for row in wb["Alertes"].iter_rows(min_row=2, values_only=True))
@@ -568,19 +568,29 @@ def test_category_filter(configured, pg, logged_client):
         m = pointage.Mapping.from_json(db.query(PointageConfig).one().data)
     assert pointage.categories(pg, m) == ["Cadre", "Non cadre"]
     page = logged_client.get(f"/suivi?date={MON.isoformat()}&categorie=Cadre").text
-    assert 'name="categorie"' in page and "Catégorie : Cadre" in page
+    assert 'name="categorie"' in page and "Statut du personnel : Cadre" in page
     assert "Diallo" in page and "Sow" in page and "Ndiaye" not in page
     xlsx = load_workbook(io.BytesIO(logged_client.get(f"/suivi/export.xlsx?date={MON.isoformat()}&categorie=Cadre").content))
     ws = xlsx.active
-    assert ws.cell(1, 6).value == "Catégorie" and {row[5] for row in ws.iter_rows(min_row=2, values_only=True)} == {"Cadre"}
+    assert ws.cell(1, 6).value == "Statut du personnel" and {row[5] for row in ws.iter_rows(min_row=2, values_only=True)} == {"Cadre"}
     url = f"/rapports?p=perso&du={MON.isoformat()}&au={(MON + timedelta(days=4)).isoformat()}"
     rep = logged_client.get(url).text
-    assert "Par catégorie" in rep and "Non cadre" in rep
+    assert "Par statut du personnel" in rep and "Non cadre" in rep
     assert "Ba Khady" not in logged_client.get(url + "&categorie=Cadre").text
     wb = load_workbook(io.BytesIO(logged_client.get("/rapports/export.xlsx?" + url.split("?", 1)[1]).content))
-    assert "Catégories" in wb.sheetnames
+    assert "Statuts du personnel" in wb.sheetnames
     admin = logged_client.get("/admin/pointage").text
-    assert "Catégorie du personnel" in admin and "<code>Cadre</code>" in admin
+    assert "Statut du personnel" in admin and "<code>Cadre</code>" in admin
+    # Colonne non configurée : le filtre reste visible (désactivé), avec le lien de configuration.
+    import app.pointage as pt
+    original = pt.categories
+    pt.categories = lambda *a, **k: []
+    try:
+        for url in (f"/suivi?date={MON.isoformat()}", "/rapports?p=7j"):
+            html = logged_client.get(url).text
+            assert "Statut du personnel" in html and "Non configuré" in html and "#statut-personnel" in html, url
+    finally:
+        pt.categories = original
 
 
 def test_badge_mails_test_mode_production_and_no_duplicates(configured, pg, logged_client, monkeypatch):
