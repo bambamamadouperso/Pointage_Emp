@@ -67,7 +67,7 @@ def pointage_config(request: Request, db: Session = Depends(get_db)):
     connections = db.scalars(select(Connection).where(Connection.kind == "postgresql").order_by(Connection.name)).all()
     conn = db.get(Connection, conn_id) if conn_id else (connections[0] if connections else None)
     schemas, tables, punch_cols, emp_cols, service_cols, error, installed = [], [], {}, {}, {}, None, False
-    person_cols, hier_cols = {}, {}
+    person_cols, hier_cols, diag, stale = {}, {}, None, False
     if conn is not None:
         engine = make_engine(conn)
         try:
@@ -109,6 +109,10 @@ def pointage_config(request: Request, db: Session = Depends(get_db)):
                     mapping.hier_emp_col = mapping.emp_key_col
                     hier_cols = emp_cols
             installed = cfg.installed_at is not None and pointage.is_installed(engine, mapping)
+            if installed and not exploring:
+                diag = pointage.diagnostics(engine, mapping)
+                last = diag["dernier_pointage"]
+                stale = last is not None and (date.today() - last.date()).days > 3
         except Exception as exc:
             error = friendly(exc)
         finally:
@@ -116,7 +120,7 @@ def pointage_config(request: Request, db: Session = Depends(get_db)):
     return render(
         request, "admin/pointage.html", cfg=cfg, m=mapping, conn=conn, connections=connections, schemas=schemas,
         tables=tables, punch_cols=punch_cols, emp_cols=emp_cols, service_cols=service_cols, error=error,
-        person_cols=person_cols, hier_cols=hier_cols,
+        person_cols=person_cols, hier_cols=hier_cols, diag=diag, stale=stale,
         installed=installed, exploring=exploring,
     )
 

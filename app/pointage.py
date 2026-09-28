@@ -39,7 +39,7 @@ STATUTS = {
     "NON_OUVRE": ("Jour non ouvré", "st-off"),
 }
 # Version des objets PostgreSQL : si elle change, ils sont réinstallés automatiquement.
-SQL_VERSION = 3
+SQL_VERSION = 4
 
 SORTABLE = {
     "jour": "jour", "matricule": "matricule", "nom": "nom", "service": "service", "responsable": "responsable",
@@ -114,6 +114,9 @@ class Mapping:
     hier_emp_col: str = ""            # l'employé
     hier_manager_col: str = ""        # son responsable
     hier_ref: str = "key"             # ces deux colonnes contiennent la clé employé (« key ») ou le matricule
+    # Liste de référence des personnes attendues chaque jour : table des employés (« emp ») ou table des noms
+    # (« person », ex. Personnel : tout le personnel est attendu, même sans fiche dans la table des employés).
+    reference: str = "emp"
 
     @classmethod
     def from_json(cls, raw: Optional[str]) -> "Mapping":
@@ -140,6 +143,8 @@ class Mapping:
                 out.append("colonnes de liaison et du nom de la table des noms")
         elif not self.emp_nom_col:
             out.append("colonne du nom (ou table des noms)")
+        if self.reference == "person" and not self.person_table:
+            out.append("table des noms (liste de référence choisie : table des noms)")
         if self.service_table and not (self.service_key_col and self.service_label_col):
             out.append("colonnes de la table des services")
         if self.hier_table and not (self.hier_emp_col and self.hier_manager_col):
@@ -286,11 +291,26 @@ def build_sql(m: Mapping, punch_types: dict[str, str], emp_types: dict[str, str]
         service = f"e.{qi(m.emp_service_col)}::text"
     else:
         service = "NULL::text"
+    by_person = m.reference == "person" and bool(m.person_table)
     if m.emp_active_col:
         values = [v.strip().lower() for v in m.emp_active_values.split(",") if v.strip()] or ["1", "true", "t", "oui"]
-        actif = f"lower(btrim(e.{qi(m.emp_active_col)}::text)) IN ({', '.join(lit(v) for v in values)})"
+        alias = "pe" if by_person else "e"  # la colonne « actif » appartient à la liste de référence
+        actif = f"lower(btrim({alias}.{qi(m.emp_active_col)}::text)) IN ({', '.join(lit(v) for v in values)})"
     else:
         actif = "true"
+    if by_person:
+        # Tout le personnel est attendu : on part de la table des noms, reliée (si possible) à la table des employés.
+        pkey_person = f"btrim(pe.{qi(m.person_key_col)}::text)"
+        base_key = f"COALESCE({ekey}, 'P-' || {pkey_person})"
+        base_mat = f"COALESCE({mat}, {pkey_person})"
+        person_ref = pkey_person
+        base_from = (f"FROM {qt(m.schema, m.person_table)} pe\n    LEFT JOIN {emp} e ON "
+                     f"btrim(e.{qi(m.emp_person_col)}::text) = {pkey_person} {service_join}")
+        base_where = f"pe.{qi(m.person_key_col)} IS NOT NULL"
+    else:
+        base_key, base_mat = ekey, mat
+        base_from = f"FROM {emp} e {person_join} {service_join}"
+        base_where = f"e.{qi(m.emp_key_col)} IS NOT NULL"
 
     # Hiérarchie : chaque employé a au plus un responsable (N+1), identifié par clé, matricule ou personne.
     ref_col = {"matricule": "matricule", "person": "person_ref"}.get(m.hier_ref, "emp_key")
@@ -311,10 +331,10 @@ hier AS (
         hier_select = "NULL::text AS responsable_key, NULL::text AS responsable"
     employees_view = f"""CREATE VIEW {S}.v_pointage_employes AS
 WITH base AS (
-    SELECT DISTINCT ON (1) {ekey} AS emp_key, {mat} AS matricule, {nom} AS nom, {prenom} AS prenom,
+    SELECT DISTINCT ON (1) {base_key} AS emp_key, {base_mat} AS matricule, {nom} AS nom, {prenom} AS prenom,
            {service} AS service, ({actif}) AS actif, {person_ref} AS person_ref
-    FROM {emp} e {person_join} {service_join}
-    WHERE e.{qi(m.emp_key_col)} IS NOT NULL
+    {base_from}
+    WHERE {base_where}
     ORDER BY 1
 ){hier_cte}
 SELECT b.emp_key, b.matricule, b.nom, b.prenom, b.service, b.actif, {hier_select}
@@ -469,11 +489,13 @@ def install(engine: Engine, m: Mapping, author: str) -> None:
     for col in (m.punch_emp_col, m.punch_ts_col, m.punch_time_col):
         if col and col not in punch_types:
             raise PointageError(f"Colonne « {col} » absente de {m.punch_table}.")
+    by_person = m.reference == "person" and bool(m.person_table)
     for col in (m.emp_key_col, m.emp_matricule_col, m.emp_nom_col, m.emp_prenom_col, m.emp_service_col,
-                m.emp_active_col, m.emp_person_col):
+                None if by_person else m.emp_active_col, m.emp_person_col):
         if col and col not in emp_types:
             raise PointageError(f"Colonne « {col} » absente de {m.emp_table}.")
-    for table, cols in ((m.person_table, (m.person_key_col, m.person_nom_col, m.person_prenom_col)),
+    for table, cols in ((m.person_table, (m.person_key_col, m.person_nom_col, m.person_prenom_col,
+                                          m.emp_active_col if by_person else None)),
                         (m.service_table, (m.service_key_col, m.service_label_col)),
                         (m.hier_table, (m.hier_emp_col, m.hier_manager_col))):
         if not table:
@@ -504,6 +526,34 @@ def install(engine: Engine, m: Mapping, author: str) -> None:
         except Exception as exc:
             raise PointageError(f"Les calculs échouent sur les données actuelles : {exc.__class__.__name__}: "
                                 f"{str(exc).splitlines()[0]}") from exc
+
+
+def diagnostics(engine: Engine, m: Mapping, days: int = 31) -> dict:
+    """Contrôle de la configuration : qui est attendu, qui est exclu, qui pointe sans fiche, dernier pointage."""
+    S = qi(m.objs)
+    since = date.today() - timedelta(days=days)
+    with engine.connect() as c:
+        d = dict(c.execute(text(
+            f"SELECT count(*) AS total, count(*) FILTER (WHERE actif) AS actifs, "
+            f"count(*) FILTER (WHERE NOT actif) AS inactifs FROM {S}.v_pointage_employes")).mappings().one())
+        d["dernier_pointage"] = c.execute(text(f"SELECT max(horodatage) FROM {S}.v_pointage_brut")).scalar()
+        recent = f"(SELECT DISTINCT emp_key FROM {S}.v_pointage_brut WHERE horodatage >= :d AND emp_key IS NOT NULL)"
+        d["sans_pointage"] = c.execute(text(
+            f"SELECT count(*) FROM {S}.v_pointage_employes e WHERE actif AND e.emp_key NOT IN {recent}"),
+            {"d": since}).scalar()
+        d["inactifs_qui_pointent"] = c.execute(text(
+            f"SELECT matricule, concat_ws(' ', nom, prenom) FROM {S}.v_pointage_employes e "
+            f"WHERE NOT actif AND e.emp_key IN {recent} ORDER BY 2 LIMIT 20"), {"d": since}).all()
+        d["hors_liste"] = c.execute(text(
+            f"SELECT count(*) FROM {recent} r WHERE r.emp_key NOT IN (SELECT emp_key FROM {S}.v_pointage_employes)"),
+            {"d": since}).scalar()
+    d["jours"] = days
+    return d
+
+
+def last_punch(engine: Engine, m: Mapping) -> Optional[datetime]:
+    with engine.connect() as c:
+        return c.execute(text(f"SELECT max(horodatage) FROM {qi(m.objs)}.v_pointage_brut")).scalar()
 
 
 def is_installed(engine: Engine, m: Mapping) -> bool:

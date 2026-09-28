@@ -46,7 +46,8 @@ def pg():
             (5, 'E005', 105, 2, '1'), (6, 'E006', 106, 1, '0'), (7, 'E007', 107, 1, '1')"""))
         c.execute(text(f"""INSERT INTO {SCHEMA}."Personnel" VALUES
             (101, 'Diallo', 'Awa'), (102, 'Ndiaye', 'Moussa'), (103, 'Sow', 'Fatou'), (104, 'Fall', 'Ibou'),
-            (105, 'Ba', 'Khady'), (106, 'Gueye', 'Ousmane'), (107, 'Diop', 'Aminata')"""))
+            (105, 'Ba', 'Khady'), (106, 'Gueye', 'Ousmane'), (107, 'Diop', 'Aminata'),
+            (108, 'Kane', 'Omar')"""))  # Kane : dans Personnel, sans fiche dans Employes
         # Diallo encadre Ndiaye, Sow et Gueye ; Sow encadre Fall et Ba ; Diop n'a pas de responsable.
         c.execute(text(f"""INSERT INTO {SCHEMA}.hierarchie VALUES
             ('E002', 'E001'), ('E003', 'E001'), ('E006', 'E001'), ('E004', 'E003'), ('E005', 'E003'), ('E007', NULL)"""))
@@ -311,3 +312,33 @@ def test_admin_users_and_params_pages(configured, logged_client):
     audit = logged_client.get("/admin/audit?q=Paramètres").text
     assert "07:45 → 08:15" in audit
     assert "Traitements planifiés" in logged_client.get("/admin").text
+
+
+def test_diagnostics(configured, pg):
+    with SessionLocal() as db:
+        m = pointage.Mapping.from_json(db.query(PointageConfig).one().data)
+    d = pointage.diagnostics(pg, m)
+    assert (d["total"], d["actifs"], d["inactifs"]) == (7, 6, 1)
+    assert d["hors_liste"] == 1 and d["sans_pointage"] == 1  # badge 99 ; Ba Khady n'a jamais pointé
+    assert d["dernier_pointage"] == datetime(2026, 9, 26, 12, 0)
+
+
+def test_reference_whole_personnel(configured, pg, logged_client):
+    """Liste de référence = table Personnel, sans colonne « actif » : tout le personnel est attendu."""
+    with SessionLocal() as db:
+        cfg = db.query(PointageConfig).one()
+        original, conn_id = cfg.data, cfg.conn_id
+    data = {**pointage.Mapping.from_json(original).__dict__, "reference": "person", "emp_active_col": "",
+            "conn_id": conn_id}
+    try:
+        r = logged_client.post("/admin/pointage", data=data, follow_redirects=True)
+        assert "installées" in r.text, r.text[:2000]
+        day = rows(pg, MON)
+        assert day[("108", MON)].statut == "ABSENT" and day[("108", MON)].nom == "Kane"  # sans fiche Employes
+        assert day[("E006", MON)].statut == "ABSENT"  # plus de filtre « actif » : attendu lui aussi
+        assert day[("E001", MON)].statut == "A_L_HEURE" and day[("E002", MON)].responsable == "Diallo Awa"
+        page = logged_client.get("/admin/pointage").text
+        assert "Tout le personnel de la table des noms" in page and "Personnes dans la liste" in page
+    finally:
+        restore = {**pointage.Mapping.from_json(original).__dict__, "conn_id": conn_id}
+        assert "installées" in logged_client.post("/admin/pointage", data=restore, follow_redirects=True).text

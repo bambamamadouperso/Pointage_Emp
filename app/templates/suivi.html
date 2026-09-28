@@ -6,7 +6,8 @@
   <div>
     <h1>Suivi journalier</h1>
     <p class="muted">{% if single_day %}{{ f.du | jour_fr }}{% else %}Du {{ f.du.strftime('%d/%m/%Y') }} au {{ f.au.strftime('%d/%m/%Y') }}{% endif %}
-      · premier et dernier pointage de chaque journée</p>
+      · premier et dernier pointage de chaque journée
+      {% if last_punch %}· dernier pointage reçu {{ last_punch.strftime('%d/%m/%Y %H:%M') }}{% endif %}</p>
   </div>
   {% if configured and data %}
   <div class="actions">
@@ -85,6 +86,9 @@
 </form>
 
 {% if scope_label %}<div class="flash info">Périmètre de votre compte : équipe de <strong>{{ scope_label }}</strong> (toute la hiérarchie).</div>{% endif %}
+{% if stale %}<div class="flash warn">Dernier pointage reçu le <strong>{{ last_punch.strftime('%d/%m/%Y à %H:%M') }}</strong> :
+  les jours suivants apparaissent en « Absent » pour tout le monde. Si des personnes ont badgé depuis, vérifiez la
+  synchronisation de la table des pointages{% if can(role, 'manager') %} (<a href="/jobs">Jobs</a>){% endif %}.</div>{% endif %}
 {% if warning %}<div class="flash warn">{{ warning }}</div>{% endif %}
 {% if error %}<div class="flash err">{{ error }}</div>{% endif %}
 

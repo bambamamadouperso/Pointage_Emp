@@ -105,7 +105,7 @@ def suivi(request: Request, db: Session = Depends(get_db)):
     size = size if size in PAGE_SIZES else 100
     context = dict(f=f, warning=warning, today=date.today(), statuts=pointage.STATUTS, page=page, size=size, page_sizes=PAGE_SIZES,
                    hhmm=pointage.hhmm, configured=mapping is not None, data=None, error=None, services=[],
-                   managers=[], scope_label=None, has_hierarchy=bool(mapping and mapping.hier_table),
+                   managers=[], scope_label=None, last_punch=None, stale=False, has_hierarchy=bool(mapping and mapping.hier_table),
                    single_day=f.du == f.au, mode="jour" if f.du == f.au else "periode")
     if mapping is None:
         return render(request, "suivi.html", **context)
@@ -115,6 +115,10 @@ def suivi(request: Request, db: Session = Depends(get_db)):
         context["data"] = pointage.daily(engine, mapping, f, page, size)
         context["services"] = pointage.services(engine, mapping, f.scope_root)
         context["managers"] = pointage.managers(engine, mapping, f.scope_root)
+        last = pointage.last_punch(engine, mapping)
+        context["last_punch"] = last
+        # Pointages plus anciens que la période affichée : synchronisation probablement arrêtée.
+        context["stale"] = last is not None and last.date() < min(f.au, date.today()) - timedelta(days=1)
     except ScopeError as exc:
         context["error"] = str(exc)
     except Exception as exc:

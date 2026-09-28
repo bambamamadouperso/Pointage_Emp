@@ -252,7 +252,7 @@ tr.lvl-warning td { background: color-mix(in srgb, var(--warn-bg) 40%, transpare
 
 /* ---------------------------------------------------------------- messages */
 .flash {
-  display: flex; align-items: flex-start; justify-content: space-between; gap: .75rem;
+  display: block; position: relative;
   padding: .75rem 1rem; border-radius: var(--radius-sm); margin-bottom: 1rem; background: var(--info-bg);
   color: var(--text); border-left: 4px solid var(--primary); word-break: break-word;
   transition: opacity .25s, transform .25s;
@@ -261,7 +261,8 @@ tr.lvl-warning td { background: color-mix(in srgb, var(--warn-bg) 40%, transpare
 .flash.warn { background: var(--warn-bg); color: var(--warn); border-left-color: var(--warn-solid); }
 .flash.err { background: var(--err-bg); color: var(--err); border-left-color: var(--err-solid); }
 .flash.leaving { opacity: 0; transform: translateY(-4px); }
-.flash-close { border: 0; background: transparent; color: inherit; font-size: 1.25rem; line-height: 1; cursor: pointer; opacity: .6; padding: 0 .2rem; }
+.flash:has(.flash-close) { padding-right: 2.6rem; }
+.flash-close { position: absolute; top: .6rem; right: .7rem; border: 0; background: transparent; color: inherit; font-size: 1.25rem; line-height: 1; cursor: pointer; opacity: .6; padding: 0 .2rem; }
 .flash-close:hover { opacity: 1; }
 .flash form.inline-form { display: inline; margin-left: .6rem; }
 
@@ -413,6 +414,9 @@ tr.detail-row:hover > td { background: var(--surface-2); }
 .admin-grid .card:hover { text-decoration: none; transform: translateY(-2px); box-shadow: var(--shadow-lg); }
 .admin-grid .card h2 { color: var(--accent); }
 .admin-grid .card p { margin: 0; }
+.diag .stats { margin: .2rem 0 .6rem; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+.diag .stat .value { font-size: 1.35rem; }
+.diag .flash { margin-bottom: .5rem; }
 .param-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: .9rem; }
 .days { display: flex; gap: .5rem; flex-wrap: wrap; }
 .days label.check { padding: .3rem .7rem; border: 1px solid var(--border-strong); border-radius: 999px; cursor: pointer; }

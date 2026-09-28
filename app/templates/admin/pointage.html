@@ -70,11 +70,6 @@
       <label>Libellé du service {{ colselect('service_label_col', service_cols, m.service_label_col) }}</label>
     </div>
     {% endif %}
-    <div class="row">
-      <label>Colonne « actif » <span class="muted small">(facultatif : seuls les actifs peuvent être absents)</span>
-        {{ colselect('emp_active_col', emp_cols, m.emp_active_col, True) }}</label>
-      <label>Valeurs considérées actives <input name="emp_active_values" value="{{ m.emp_active_values }}" placeholder="1, true, oui"></label>
-    </div>
   </fieldset>
 
   <fieldset class="limits"><legend>Noms et prénoms <span class="muted small">(si ils sont dans une autre table, ex. Personnel)</span></legend>
@@ -92,6 +87,43 @@
     </div>
     {% else %}
     <p class="muted small">Laissez « aucune » si le nom et le prénom sont dans la table des employés.</p>
+    {% endif %}
+  </fieldset>
+
+  <fieldset class="limits"><legend>Qui doit pointer ? <span class="muted small">(chaque jour ouvré sans pointage = absent)</span></legend>
+    {% set by_person = m.reference == 'person' and m.person_table %}
+    <div class="row">
+      <label>Liste de référence
+        <select name="reference" data-reload>
+          <option value="emp" {{ 'selected' if not by_person }}>Table des employés ({{ m.emp_table or '—' }})</option>
+          <option value="person" {{ 'selected' if by_person }} {{ 'disabled' if not m.person_table }}>Tout le personnel de la table des noms ({{ m.person_table or 'à choisir ci-dessus' }})</option>
+        </select></label>
+      <label>Colonne « actif » de {{ m.person_table if by_person else m.emp_table }} <span class="muted small">(facultatif)</span>
+        {{ colselect('emp_active_col', person_cols if by_person else emp_cols, m.emp_active_col, True) }}</label>
+      <label>Valeurs considérées actives <input name="emp_active_values" value="{{ m.emp_active_values }}" placeholder="1, true, oui"></label>
+    </div>
+    <p class="muted small">Sans colonne « actif », toute la liste de référence est attendue chaque jour ouvré. Avec une
+      colonne « actif », les personnes inactives ne sont jamais comptées absentes (elles apparaissent seulement les jours où elles pointent).</p>
+    {% if diag %}
+    <div class="diag">
+      <div class="stats">
+        <div class="stat c-violet"><span class="label">Personnes dans la liste</span><span class="value">{{ diag.total | num }}</span></div>
+        <div class="stat c-ok"><span class="label">Attendues chaque jour (actives)</span><span class="value">{{ diag.actifs | num }}</span></div>
+        <div class="stat {{ 'c-late' if diag.inactifs else 'c-teal' }}"><span class="label">Exclues (inactives)</span><span class="value">{{ diag.inactifs | num }}</span></div>
+        <div class="stat c-sky"><span class="label">Actives sans pointage ({{ diag.jours }} j)</span><span class="value">{{ diag.sans_pointage | num }}</span></div>
+        <div class="stat c-pink"><span class="label">Badges hors liste ({{ diag.jours }} j)</span><span class="value">{{ diag.hors_liste | num }}</span></div>
+        <div class="stat {{ 'c-err' if stale else 'c-teal' }}"><span class="label">Dernier pointage reçu</span>
+          <span class="value small">{{ diag.dernier_pointage.strftime('%d/%m/%Y %H:%M') if diag.dernier_pointage else '—' }}</span></div>
+      </div>
+      {% if diag.inactifs_qui_pointent %}
+      <div class="flash warn">Ces personnes sont marquées <strong>inactives</strong> mais ont pointé ces {{ diag.jours }} derniers jours :
+        elles ne seront jamais comptées absentes. Vérifiez la colonne « actif » et ses valeurs :
+        {% for mat, nom in diag.inactifs_qui_pointent %}{{ nom }} ({{ mat }}){{ ', ' if not loop.last }}{% endfor %}.</div>
+      {% endif %}
+      {% if stale %}<div class="flash err">Aucun pointage reçu depuis le {{ diag.dernier_pointage.strftime('%d/%m/%Y') }} :
+        la synchronisation de la table des pointages semble arrêtée (voir <a href="/jobs">Jobs</a>).
+        Tant qu'elle ne reprend pas, tout le monde apparaît absent.</div>{% endif %}
+    </div>
     {% endif %}
   </fieldset>
 

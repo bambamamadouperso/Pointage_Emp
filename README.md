@@ -84,8 +84,12 @@ employé / responsable peuvent contenir la clé employé, le matricule ou l'iden
   P2 > fin de pause). Une durée n'est jamais négative.
 - Un seul pointage : **pointage incomplet** (durées non calculées). Aucun pointage un jour ouvré : **absent** ;
   un jour non ouvré ou férié : **jour non ouvré** (pas d'absence).
-- La liste part de la **table des employés** : chaque employé (actif) apparaît chaque jour, qu'il ait pointé ou
-  non. Les personnes qui ont pointé sans figurer dans la table des employés apparaissent aussi, marquées
+- La liste part d'une **liste de référence** (*Source des pointages → Qui doit pointer ?*) : la table des
+  employés, ou **tout le personnel de la table des noms** (ex. `Personnel`, y compris les personnes sans fiche
+  dans la table des employés). Chaque personne active de cette liste apparaît chaque jour, qu'elle ait pointé ou
+  non. La colonne « actif » (facultative) exclut les inactifs des absences. Un panneau de contrôle indique le
+  nombre de personnes attendues, exclues, sans pointage, les badges hors liste et la date du **dernier pointage
+  reçu** (alerte si la synchronisation semble arrêtée, aussi affichée dans le suivi). Les personnes qui ont pointé sans figurer dans la table des employés apparaissent aussi, marquées
   **« Hors liste »** (filtre « Personnes » et carte « Hors liste »).
 - Après une mise à jour de l'application, la fonction et les vues PostgreSQL sont réinstallées automatiquement
   à la première ouverture du suivi (entrée dans le journal d'audit).
