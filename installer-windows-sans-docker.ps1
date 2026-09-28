@@ -222,16 +222,49 @@ function Stop-App {
     }
 }
 
+# Lecture sûre du .env : seuls les 64 premiers Ko sont lus (un fichier abîmé ou démesuré faisait
+# planter l'installation par manque de mémoire) et seules les lignes « CLE=valeur » sont gardées.
+# Un fichier abîmé est mis de côté (.env.abime-<date>) et remplacé par sa partie valide.
+function Read-EnvLines {
+    if (-not (Test-Path $EnvFile -PathType Leaf)) { return @() }
+    $size = (Get-Item $EnvFile).Length
+    $stream = [IO.File]::OpenRead($EnvFile)
+    try {
+        $buffer = New-Object byte[] ([Math]::Min($size, 65536))
+        $read = $stream.Read($buffer, 0, $buffer.Length)
+    } finally { $stream.Dispose() }
+    $text = [Text.Encoding]::UTF8.GetString($buffer, 0, $read).TrimStart([char]0xFEFF)
+    $entries = [ordered]@{}
+    $damaged = $size -gt 65536 -or $text.IndexOf([char]0) -ge 0
+    foreach ($line in ($text -split "[`r`n`0]+")) {
+        $clean = $line.Trim()
+        if (-not $clean -or $clean.StartsWith("#")) { continue }
+        if ($clean.Length -lt 4096 -and $clean -match "^([A-Za-z_][A-Za-z0-9_]*)\s*=") {
+            if ($entries.Contains($Matches[1])) { $damaged = $true }
+            $entries[$Matches[1]] = $clean
+        } else {
+            $damaged = $true
+        }
+    }
+    $lines = @($entries.Values)
+    if ($damaged) {
+        $backup = "$EnvFile.abime-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
+        Move-Item -Path $EnvFile -Destination $backup -Force
+        Write-EnvFile $lines
+        Write-Warn ("Fichier .env abîmé ($([Math]::Round($size / 1KB)) Ko) : réparé ($($lines.Count) paramètres " +
+                    "conservés). L'original est dans $(Split-Path $backup -Leaf) (vous pourrez le supprimer).")
+    }
+    return $lines
+}
+
 function Get-EnvValue([string]$Name) {
-    if (-not (Test-Path $EnvFile)) { return "" }
-    $line = Get-Content $EnvFile | Where-Object { $_ -match "^\s*$Name\s*=" } | Select-Object -First 1
+    $line = Read-EnvLines | Where-Object { $_ -match "^\s*$Name\s*=" } | Select-Object -Last 1
     if ($line) { return ($line -split "=", 2)[1].Trim().Trim("'") }
     return ""
 }
 
 function Set-EnvValue([string]$Name, [string]$Value) {
-    $lines = @()
-    if (Test-Path $EnvFile) { $lines = @(Get-Content $EnvFile | Where-Object { $_ -notmatch "^\s*$Name\s*=" }) }
+    $lines = @(Read-EnvLines | Where-Object { $_ -notmatch "^\s*$Name\s*=" })
     Write-EnvFile ($lines + "$Name=$Value")
 }
 
@@ -309,9 +342,18 @@ Write-Ok "Dépendances installées."
 # ---- 3. Configuration
 Write-Step "3" "Configuration (.env)"
 if (Test-Path $EnvFile) {
-    $lines = @(Get-Content $EnvFile | Where-Object { $_ -notmatch "^\s*APP_PORT\s*=" })
-    $portLine = Get-Content $EnvFile | Where-Object { $_ -match "^\s*APP_PORT\s*=" } | Select-Object -First 1
+    $all = @(Read-EnvLines)
+    $lines = @($all | Where-Object { $_ -notmatch "^\s*APP_PORT\s*=" })
+    $portLine = $all | Where-Object { $_ -match "^\s*APP_PORT\s*=" } | Select-Object -Last 1
     if (-not $PSBoundParameters.ContainsKey("Port") -and $portLine -match "(\d+)") { $Port = [int]$Matches[1] }
+    # Paramètres indispensables perdus (fichier abîmé) : on les recrée.
+    if (-not ($lines | Where-Object { $_ -match "^\s*ADMIN_USERNAME\s*=" })) { $lines += "ADMIN_USERNAME=admin" }
+    if (-not ($lines | Where-Object { $_ -match "^\s*ADMIN_PASSWORD\s*=" })) {
+        Write-Warn "Mot de passe du compte 'admin' introuvable dans .env : choisissez-en un nouveau."
+        $lines += "ADMIN_PASSWORD='$(Read-AdminPassword)'"
+    }
+    if (-not ($lines | Where-Object { $_ -match "^\s*SECRET_KEY\s*=" })) { $lines += "SECRET_KEY=$(New-SecretKey)" }
+    if (-not ($lines | Where-Object { $_ -match "^\s*APP_TIMEZONE\s*=" })) { $lines += "APP_TIMEZONE=$TimeZone" }
     Write-EnvFile ($lines + "APP_PORT=$Port")
     Write-Ok "Fichier .env existant conservé."
 } else {
