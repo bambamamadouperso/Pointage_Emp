@@ -194,7 +194,7 @@ def test_screen_filters_detail_and_export(configured, logged_client):
     assert page.status_code == 200
     html = page.text
     assert "Diallo" in html and "st-late" in html and "Lundi 21/09/2026" in html
-    assert "Taux de ponctualité" in html and "Moyenne durée validée" in html
+    assert "Taux de ponctualité" in html and "Durées moyennes" in html
     only_late = logged_client.get(f"/suivi?date={MON.isoformat()}&statut=RETARD").text
     assert "E002</td>" in only_late and "E001</td>" not in only_late
     search = logged_client.get(f"/suivi?date={MON.isoformat()}&q=E003").text
@@ -440,7 +440,7 @@ def test_approved_leave_and_remote_work_replace_absence(configured, pg, logged_c
         page = logged_client.get(f"/suivi?date={TUE.isoformat()}").text
     finally:
         suivi.load_config = monkey_cfg
-    assert "En congé" in page and 'badge st-leave">Congé Annuel' in page and "Congé exceptionnel" in page
+    assert "Autres situations" in page and 'badge st-leave">Congé Annuel' in page and "Congé exceptionnel" in page
     assert 'badge st-remote">Télétravail' in page
 
     # Administration : la section Congés propose les colonnes de la table choisie.
@@ -485,3 +485,67 @@ def test_check_employee_tool(configured, logged_client):
     unknown = logged_client.get(f"/admin/verifier?q=99{period}").text
     assert "Badges hors liste" in unknown and "Aucune personne" in unknown
     assert "Vérifier un employé" in logged_client.get(f"/suivi?date={MON.isoformat()}").text
+
+
+def test_field_agents_never_absent_nor_late(configured, pg, logged_client):
+    """Agents terrain (service entier ou employé) : « Sur le terrain », durée validée minimale, jamais absent/retard."""
+    page = logged_client.get("/admin/terrain").text
+    assert "Aucun agent terrain" in page and "Production" in page
+    r = logged_client.post("/admin/terrain", data={"type": "employe", "matricule": "E002", "libelle": "Commercial"},
+                           follow_redirects=True)
+    assert "déclaré agent terrain" in r.text
+    r = logged_client.post("/admin/terrain", data={"type": "service", "service": "RH"}, follow_redirects=True)
+    assert "Ndiaye Moussa" in r.text and ">3<" in r.text  # RH : Sow, Fall, Ba
+    assert "introuvable" not in r.text
+    bad = logged_client.post("/admin/terrain", data={"type": "employe", "matricule": "ZZZ"}, follow_redirects=True).text
+    assert "Aucun employé trouvé" in bad
+
+    r = rows(pg, MON)
+    moussa = r[("E002", MON)]  # arrivé à 8h10 : pas de retard ; 8h validées minimum, durée effective mesurée
+    assert (moussa.statut, moussa.statut_libelle) == ("TERRAIN", "Sur le terrain") and moussa.terrain
+    assert hm(moussa.duree_validee) == "8h00" and hm(moussa.duree_effective) == "7h05" and moussa.retard_min is None
+    khady = r[("E005", MON)]  # aucun pointage : pas absente
+    assert khady.statut == "TERRAIN" and hm(khady.duree_validee) == "8h00" and khady.duree_effective is None
+    assert r[("E004", MON)].statut == "TERRAIN"  # un seul pointage : pas « incomplet »
+    assert r[("E001", MON)].statut == "A_L_HEURE" and not r[("E001", MON)].terrain
+    assert rows(pg, WED)[("E005", WED)].statut == "NON_OUVRE"
+    assert r[("E007", MON)].retard_min == 15  # 7h45 pour un début à 7h30
+
+    page = logged_client.get(f"/suivi?date={MON.isoformat()}").text
+    assert "Sur le terrain" in page and 'badge st-field">Sur le terrain' in page
+
+    for entry in pointage.field_entries(pg, pointage.Mapping.from_json(_cfg_data())):
+        logged_client.post(f"/admin/terrain/{entry['id']}/delete")
+    assert rows(pg, MON)[("E005", MON)].statut == "ABSENT"
+
+
+def _cfg_data() -> str:
+    with SessionLocal() as db:
+        return db.query(PointageConfig).one().data
+
+
+def test_reports_page_and_export(configured, logged_client):
+    """Rapports : indicateurs, graphiques, services, alertes, employés, export Excel."""
+    import io
+
+    from openpyxl import load_workbook
+
+    url = f"/rapports?p=perso&du={MON.isoformat()}&au={(MON + timedelta(days=4)).isoformat()}"
+    page = logged_client.get(url)
+    assert page.status_code == 200, page.text[:2000]
+    html = page.text
+    for part in ("Taux de présence", "Taux d'absentéisme", "Présence par jour", "Selon le jour de la semaine",
+                 "Heures d'arrivée au bureau", "Par service", "À suivre", "Par employé", "Absences répétées"):
+        assert part in html, part
+    assert "Ba Khady" in html and "Production" in html and "RH" in html
+    assert "<svg class=\"chart\"" in html and "data-tip=" in html
+    # Tri, filtre service et période prédéfinie
+    assert logged_client.get(url + "&tri=retards&service=RH").status_code == 200
+    assert logged_client.get("/rapports?p=mois-1").status_code == 200
+    r = logged_client.get("/rapports/export.xlsx?" + url.split("?", 1)[1])
+    assert r.status_code == 200
+    wb = load_workbook(io.BytesIO(r.content))
+    assert wb.sheetnames[:4] == ["Employés", "Services", "Par jour", "Alertes"]
+    rows = {row[0]: row for row in wb["Employés"].iter_rows(min_row=2, values_only=True)}
+    assert rows["E005"][13] == 4  # Ba Khady : 4 absences (mercredi férié)
+    assert any(row[0] == "Absences répétées" for row in wb["Alertes"].iter_rows(min_row=2, values_only=True))

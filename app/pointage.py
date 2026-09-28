@@ -26,6 +26,7 @@ PARAMS = [
     ("jours_ouvres", "Jours ouvrés", "days", "1,2,3,4,5"),
     ("duree_conge", "Durée attribuée par jour de congé", "duration", "08:00"),
     ("duree_teletravail", "Durée attribuée par jour de télétravail", "duration", "08:00"),
+    ("duree_terrain", "Durée validée minimale par jour pour un agent terrain", "duration", "08:00"),
 ]
 PARAM_LABELS = {k: label for k, label, _, _ in PARAMS}
 PARAM_TYPES = {k: kind for k, _, kind, _ in PARAMS}
@@ -42,10 +43,11 @@ STATUTS = {
     "CONGE_ANNUEL": ("Congé Annuel", "st-leave"),
     "CONGE_EXCEP": ("Congé exceptionnel", "st-leave"),
     "TELETRAVAIL": ("Télétravail", "st-remote"),
+    "TERRAIN": ("Sur le terrain", "st-field"),
 }
 CONGES = ("CONGE_ANNUEL", "CONGE_EXCEP")
 # Version des objets PostgreSQL : si elle change, ils sont réinstallés automatiquement.
-SQL_VERSION = 9
+SQL_VERSION = 10
 # Limites des requêtes lancées depuis les pages web : une attente de verrou ou une requête lente ne doit jamais
 # bloquer le site (au pire, la page affiche une erreur au bout de 2 minutes).
 WEB_LIMITS = {"lock_timeout_s": 15, "statement_timeout_s": 120}
@@ -480,14 +482,20 @@ RETURNS TABLE (
     jour date, jour_ouvre boolean, premier_pointage timestamp, dernier_pointage timestamp, nb_pointages integer,
     statut text, statut_libelle text, debut_valide time, fin_validee time, pause_deduite interval,
     duree_validee interval, duree_effective interval, duree_validee_min numeric, duree_effective_min numeric,
-    hors_liste boolean
+    hors_liste boolean, terrain boolean, retard_min numeric
 )
 LANGUAGE sql STABLE
 -- La compilation JIT coûte plus d'une seconde par appel, pour aucun gain sur ce type de requête.
 SET jit = off
 AS $fn$
 WITH emp AS (
-    SELECT * FROM {S}.v_pointage_employes
+    -- Agents terrain (ex. commerciaux) : désignés par leur service ou individuellement (table pointage_terrain).
+    SELECT v.*, EXISTS (
+        SELECT 1 FROM {S}.pointage_terrain t
+        WHERE (t.type = 'service' AND lower(btrim(t.valeur)) = lower(btrim(v.service)))
+           OR (t.type = 'employe' AND btrim(t.valeur) IN (v.matricule, v.emp_key))
+    ) AS terrain
+    FROM {S}.v_pointage_employes v
 ),
 pl AS (
     SELECT {pkey} AS emp_key, {ts} AS ts FROM {punch} p{raw_filter}
@@ -508,6 +516,7 @@ par AS (
         {param('jours_ouvres', '')} AS jours_ouvres,
         {param('duree_conge', '::interval')} AS duree_conge,
         {param('duree_teletravail', '::interval')} AS duree_teletravail,
+        {param('duree_terrain', '::interval')} AS duree_terrain,
         EXISTS (SELECT 1 FROM {S}.pointage_jours_feries f WHERE f.jour = d::date) AS ferie
     FROM generate_series(p_du::timestamp, LEAST(p_au, current_date)::timestamp, interval '1 day') AS d
 ),
@@ -526,7 +535,8 @@ g AS (
     SELECT b.emp_key, b.jour, e.matricule, e.nom, e.prenom, e.service, e.responsable_key, e.responsable,
            a.p1, a.p2, a.n, (e.emp_key IS NULL) AS hors_liste,
            p.debut_journee, p.debut_pause, p.fin_pause, p.fin_journee, p.seuil_retard, p.duree_pause,
-           p.duree_conge, p.duree_teletravail, k.statut AS conge, t.statut AS tele,
+           p.duree_conge, p.duree_teletravail, p.duree_terrain, k.statut AS conge, t.statut AS tele,
+           COALESCE(e.terrain, false) AS terrain,
            (NOT p.ferie AND extract(isodow FROM b.jour)::int = ANY (
                string_to_array(regexp_replace(p.jours_ouvres, '[^0-9,]', '', 'g'), ',')::int[])) AS jour_ouvre
     FROM base b
@@ -538,8 +548,11 @@ g AS (
 ),
 c AS (
     SELECT g.*,
-        CASE WHEN g.n IS NULL THEN CASE WHEN g.jour_ouvre THEN COALESCE(g.conge, g.tele, 'ABSENT')
+        CASE WHEN g.n IS NULL THEN CASE WHEN g.jour_ouvre
+                                          THEN COALESCE(g.conge, g.tele, CASE WHEN g.terrain THEN 'TERRAIN' END, 'ABSENT')
                                      ELSE COALESCE(g.tele, 'NON_OUVRE') END  -- le télétravail vaut aussi les jours non ouvrés
+             -- Agent terrain qui passe au bureau un jour ouvré : ni retard ni pointage incomplet.
+             WHEN g.terrain AND g.jour_ouvre THEN 'TERRAIN'
              WHEN g.n < 2 THEN 'INCOMPLET'
              WHEN g.p1::time >= g.seuil_retard THEN 'RETARD'
              ELSE 'A_L_HEURE' END AS statut,
@@ -556,11 +569,15 @@ SELECT c.emp_key, COALESCE(c.matricule, c.emp_key), COALESCE(c.nom, 'Hors liste'
        c.responsable_key, c.responsable, c.jour, c.jour_ouvre, c.p1, c.p2, COALESCE(c.n, 0), c.statut, CASE c.statut {labels} END,
        c.debut_valide, c.fin_validee, c.pause, v.hv, v.de,
        round((extract(epoch FROM v.hv) / 60)::numeric, 2), round((extract(epoch FROM v.de) / 60)::numeric, 2),
-       c.hors_liste
+       c.hors_liste, c.terrain,
+       CASE WHEN c.statut = 'RETARD' THEN round((extract(epoch FROM c.p1::time - c.debut_journee) / 60)::numeric, 0) END
 FROM c
 CROSS JOIN LATERAL (
     SELECT CASE WHEN c.statut IN ('CONGE_ANNUEL', 'CONGE_EXCEP') THEN c.duree_conge
                 WHEN c.statut = 'TELETRAVAIL' THEN c.duree_teletravail
+                -- Agent terrain : au moins la durée prévue, davantage si ses pointages le justifient.
+                WHEN c.statut = 'TERRAIN' THEN GREATEST(c.duree_terrain, CASE WHEN c.n >= 2 THEN
+                    (LEAST(c.p2::time, c.fin_journee) - LEAST(c.p1::time, c.debut_journee)) - c.pause END)
                 WHEN c.n >= 2 THEN GREATEST((c.fin_validee - c.debut_valide) - c.pause, interval '0') END AS hv,
            CASE WHEN c.statut IN ('CONGE_ANNUEL', 'CONGE_EXCEP') THEN c.duree_conge
                 WHEN c.statut = 'TELETRAVAIL' THEN c.duree_teletravail
@@ -580,6 +597,15 @@ $fn$"""
     modifie_le timestamptz NOT NULL DEFAULT now()
 )""",
         "params_index": f"CREATE INDEX IF NOT EXISTS pointage_parametres_cle_date ON {S}.pointage_parametres (cle, date_effet)",
+        "field_table": f"""CREATE TABLE IF NOT EXISTS {S}.pointage_terrain (
+    id serial PRIMARY KEY,
+    type text NOT NULL CHECK (type IN ('service', 'employe')),
+    valeur text NOT NULL,
+    libelle text,
+    auteur text,
+    modifie_le timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (type, valeur)
+)""",
         "holidays_table": f"""CREATE TABLE IF NOT EXISTS {S}.pointage_jours_feries (
     jour date PRIMARY KEY,
     libelle text,
@@ -652,7 +678,7 @@ def install(engine: Engine, m: Mapping, author: str) -> None:
                                    f"({qi(m.punch_ts_col)})"))
             except Exception:
                 pass
-        for key in ("schema", "params_table", "params_index", "holidays_table", "drop_view", "drop_raw_view",
+        for key in ("schema", "params_table", "params_index", "holidays_table", "field_table", "drop_view", "drop_raw_view",
                     "drop_function", "drop_team_function", "drop_employees_view", "employees_view",
                     "team_function", "function", "view", "raw_view", "comment"):
             c.execute(text(sql[key]))
@@ -828,6 +854,41 @@ def delete_holiday(engine: Engine, m: Mapping, day: date) -> None:
         c.execute(text(f"DELETE FROM {qi(m.objs)}.pointage_jours_feries WHERE jour = :j"), {"j": day})
 
 
+FIELD_TYPES = {"service": "Service entier", "employe": "Employé"}
+
+
+def field_entries(engine: Engine, m: Mapping) -> list[dict]:
+    """Agents terrain : services entiers et employés désignés, avec le nombre de personnes concernées."""
+    S = qi(m.objs)
+    with engine.connect() as c:
+        return [dict(r) for r in c.execute(text(
+            f"SELECT t.id, t.type, t.valeur, t.libelle, t.auteur, t.modifie_le, "
+            f"(SELECT count(*) FROM {S}.v_pointage_employes v WHERE v.actif AND "
+            f" ((t.type = 'service' AND lower(btrim(t.valeur)) = lower(btrim(v.service))) "
+            f"  OR (t.type = 'employe' AND btrim(t.valeur) IN (v.matricule, v.emp_key)))) AS personnes, "
+            f"(SELECT concat_ws(' ', v.nom, v.prenom) FROM {S}.v_pointage_employes v WHERE t.type = 'employe' "
+            f" AND btrim(t.valeur) IN (v.matricule, v.emp_key) LIMIT 1) AS nom "
+            f"FROM {S}.pointage_terrain t ORDER BY t.type DESC, t.valeur")).mappings()]
+
+
+def add_field(engine: Engine, m: Mapping, kind: str, value: str, label: str, author: str) -> None:
+    if kind not in FIELD_TYPES or not value.strip():
+        raise PointageError("Choisissez un service ou saisissez un matricule.")
+    if kind == "employe" and resolve_employee(engine, m, value) is None:
+        raise PointageError(f"Aucun employé trouvé pour « {value.strip()} ».")
+    with engine.begin() as c:
+        c.execute(text(
+            f"INSERT INTO {qi(m.objs)}.pointage_terrain (type, valeur, libelle, auteur) VALUES (:t, :v, :l, :a) "
+            f"ON CONFLICT (type, valeur) DO UPDATE SET libelle = EXCLUDED.libelle, auteur = EXCLUDED.auteur, "
+            f"modifie_le = now()"), {"t": kind, "v": value.strip(), "l": label.strip(), "a": author})
+
+
+def delete_field(engine: Engine, m: Mapping, entry_id: int) -> Optional[tuple[str, str]]:
+    with engine.begin() as c:
+        return c.execute(text(f"DELETE FROM {qi(m.objs)}.pointage_terrain WHERE id = :i RETURNING type, valeur"),
+                         {"i": entry_id}).first()
+
+
 # --------------------------------------------------------------------------- écran de suivi
 
 
@@ -893,9 +954,10 @@ def daily(engine: Engine, m: Mapping, f: Filters, page: int = 1, size: int = 100
         count(*) FILTER (WHERE statut = 'NON_OUVRE') AS non_ouvres,
         count(*) FILTER (WHERE statut IN ('CONGE_ANNUEL', 'CONGE_EXCEP')) AS conges,
         count(*) FILTER (WHERE statut = 'TELETRAVAIL') AS teletravail,
+        count(*) FILTER (WHERE statut = 'TERRAIN') AS terrain,
         count(DISTINCT emp_key) FILTER (WHERE hors_liste) AS hors_liste,
-        avg(duree_validee) FILTER (WHERE statut NOT IN ('CONGE_ANNUEL', 'CONGE_EXCEP', 'TELETRAVAIL')) AS moy_validee,
-        avg(duree_effective) FILTER (WHERE statut NOT IN ('CONGE_ANNUEL', 'CONGE_EXCEP', 'TELETRAVAIL')) AS moy_effective,
+        avg(duree_validee) FILTER (WHERE statut NOT IN ('CONGE_ANNUEL', 'CONGE_EXCEP', 'TELETRAVAIL', 'TERRAIN')) AS moy_validee,
+        avg(duree_effective) FILTER (WHERE statut NOT IN ('CONGE_ANNUEL', 'CONGE_EXCEP', 'TELETRAVAIL', 'TERRAIN')) AS moy_effective,
         count(DISTINCT emp_key) AS employes
         FROM {source}{where}""").bindparams(*binds)
     rows_sql = text(f"SELECT * FROM {source}{where}{_order(f)} LIMIT :lim OFFSET :off").bindparams(*binds)

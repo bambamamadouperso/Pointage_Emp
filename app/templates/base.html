@@ -26,6 +26,8 @@
     <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></symbol>
     <symbol id="i-logout" viewBox="0 0 24 24"><path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3"/><path d="M10 17l-5-5 5-5M5 12h11"/></symbol>
     <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></symbol>
+    <symbol id="i-pin" viewBox="0 0 24 24"><path d="M12 21s-7-6.2-7-11.5A7 7 0 0 1 19 9.5C19 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/></symbol>
+    <symbol id="i-chart" viewBox="0 0 24 24"><path d="M4 20h16"/><path d="M7 16v-5M12 16V6M17 16v-8"/></symbol>
     <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
   </defs>
 </svg>
@@ -43,6 +45,7 @@
   <nav class="side-nav" aria-label="Navigation principale">
     <p class="nav-group">Suivi</p>
     {{ nav('/suivi', 'clock', 'Suivi journalier', path.startswith('/suivi')) }}
+    {{ nav('/rapports', 'chart', 'Rapports', path.startswith('/rapports')) }}
     {% if can(role, 'manager') %}
     <p class="nav-group">Synchronisation</p>
     {{ nav('/', 'home', 'Tableau de bord', path == '/') }}
@@ -57,6 +60,7 @@
     {{ nav('/admin', 'grid', "Vue d'ensemble", path == '/admin') }}
     {{ nav('/admin/parametres', 'sliders', 'Paramètres horaires', path.startswith('/admin/parametres')) }}
     {{ nav('/admin/pointage', 'link', 'Source des pointages', path.startswith('/admin/pointage')) }}
+    {{ nav('/admin/terrain', 'pin', 'Agents terrain', path.startswith('/admin/terrain')) }}
     {{ nav('/admin/verifier', 'user', 'Vérifier un employé', path.startswith('/admin/verifier')) }}
     {{ nav('/admin/users', 'users', 'Utilisateurs', path.startswith('/admin/users')) }}
     {{ nav('/admin/audit', 'shield', "Journal d'audit", path.startswith('/admin/audit')) }}

@@ -80,7 +80,7 @@ PUBLIC_PATHS = re.compile(r"^/(login|health|static/.*)$")
 # (méthode, chemin, rôle minimum) : la première règle qui correspond s'applique ; sinon « admin ».
 RULES = [
     ("GET", re.compile(r"^/jobs/(new|\d+/edit|\d+/columns)$"), "admin"),
-    ("*", re.compile(r"^/(suivi)(/.*)?$"), "lecteur"),
+    ("*", re.compile(r"^/(suivi|rapports)(/.*)?$"), "lecteur"),
     ("*", re.compile(r"^/(compte|logout)$"), "lecteur"),
     ("GET", re.compile(r"^/$"), "manager"),
     ("GET", re.compile(r"^/(jobs|runs|logs|data)(/.*)?$"), "manager"),

@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block title %}Agents terrain{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Agents terrain</h1>
+    <p class="muted">Commerciaux et autres personnes qui travaillent surtout hors du bureau : leurs journées ne sont
+      jamais comptées en absence ni en retard.</p></div>
+  <a href="/admin" class="muted">← Administration</a>
+</div>
+{% if mapping is none %}
+  <div class="flash warn">Configurez d'abord la <a href="/admin/pointage">source des pointages</a>.</div>
+{% else %}
+{% if error %}<div class="flash err">{{ error }}</div>{% endif %}
+
+<section class="card rules">
+  <h2>Règle appliquée</h2>
+  <ul class="rule-list">
+    <li><span class="badge st-field">Sur le terrain</span> chaque jour ouvré sans congé ni télétravail, qu'il ait badgé ou non :
+      pas de statut « Absent », « En retard » ni « Pointage incomplet ».</li>
+    <li><strong>Durée validée</strong> : au moins <strong>{{ duree | replace(':', 'h') }}</strong> par jour
+      (<a href="/admin/parametres">Paramètres horaires</a> → « Durée validée minimale par jour pour un agent terrain »),
+      davantage si ses pointages le justifient.</li>
+    <li><strong>Durée effective</strong> : mesurée seulement quand il badge à l'arrivée et au départ ; sinon « — ».</li>
+    <li>Les congés et le télétravail approuvés gardent leur propre statut. Les jours non ouvrés restent « Jour non ouvré ».</li>
+    <li>Les agents terrain sont comptés à part (carte « Sur le terrain ») et exclus du taux de ponctualité et des moyennes.</li>
+  </ul>
+</section>
+
+<section class="card">
+  <h2>Désigner des agents terrain</h2>
+  <div class="field-forms">
+    <form method="post" action="/admin/terrain" class="inline">
+      <input type="hidden" name="type" value="service">
+      <label>Service entier
+        <select name="service" required><option value="">— choisir —</option>
+          {% for s in services %}<option value="{{ s }}">{{ s }}</option>{% endfor %}
+        </select></label>
+      <label>Motif <input name="libelle" placeholder="ex. Force de vente"></label>
+      <button class="btn primary">Ajouter le service</button>
+    </form>
+    <form method="post" action="/admin/terrain" class="inline">
+      <input type="hidden" name="type" value="employe">
+      <label>Employé (matricule) <input name="matricule" required placeholder="ex. 590394"></label>
+      <label>Motif <input name="libelle" placeholder="ex. Commercial zone Nord"></label>
+      <button class="btn primary">Ajouter l'employé</button>
+    </form>
+  </div>
+  <p class="muted small">Un service entier suit ses membres automatiquement (arrivées et départs compris).
+    Désignez un employé individuellement s'il est commercial dans un service qui ne l'est pas.</p>
+</section>
+
+<section class="card">
+  <h2>Liste actuelle</h2>
+  {% if not entries %}<p class="empty">Aucun agent terrain déclaré : tout le personnel est soumis aux règles de pointage.</p>{% else %}
+  <div class="table-wrap"><table>
+    <thead><tr><th>Type</th><th>Service / employé</th><th>Motif</th><th class="right">Personnes actives</th><th>Ajouté par</th><th></th></tr></thead>
+    <tbody>{% for e in entries %}
+      <tr><td>{{ types[e.type] }}</td>
+        <td>{% if e.type == 'employe' %}<span class="mono">{{ e.valeur }}</span> {{ e.nom or '(introuvable)' }}{% else %}{{ e.valeur }}{% endif %}</td>
+        <td>{{ e.libelle or '—' }}</td><td class="right">{{ e.personnes | num }}</td>
+        <td class="muted small">{{ e.auteur or '—' }} · {{ e.modifie_le.strftime('%d/%m/%Y') }}</td>
+        <td><form method="post" action="/admin/terrain/{{ e.id }}/delete" data-confirm="Retirer « {{ e.valeur }} » des agents terrain ?">
+          <button class="btn small danger">Retirer</button></form></td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+  {% endif %}
+</section>
+{% endif %}
+{% endblock %}

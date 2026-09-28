@@ -11,6 +11,8 @@
     <p class="muted small">{% if cfg.installed_at %}Installée le {{ cfg.installed_at | dt(False) }} :
       <code>{{ mapping.schema }}.{{ mapping.punch_table }}</code> + <code>{{ mapping.emp_table }}</code>
       {% else %}<span class="warn-text">À configurer</span> : tables des pointages et des employés{% endif %}</p></a>
+  <a class="card" href="/admin/terrain"><h2>Agents terrain</h2>
+    <p class="muted small">Commerciaux et agents hors du bureau : ni absence ni retard, durée validée minimale par jour.</p></a>
   <a class="card" href="/admin/users"><h2>Utilisateurs et rôles</h2>
     <p class="muted small">{{ users }} utilisateur(s) · rôles administrateur, manager, lecteur.</p></a>
   <a class="card" href="/admin/audit"><h2>Journal d'audit</h2>

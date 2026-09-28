@@ -206,7 +206,7 @@ def export(request: Request, db: Session = Depends(get_db)):
     ws.append(headers)
     fills = {"A_L_HEURE": "DCFCE7", "RETARD": "FFEDD5", "ABSENT": "FEE2E2", "INCOMPLET": "E5E7EB", "NON_OUVRE": "E0F2FE",
              "CONGE_ANNUEL": "E4F5D3", "CONGE_EXCEP": "E4F5D3",
-             "TELETRAVAIL": "CDEEE7"}
+             "TELETRAVAIL": "CDEEE7", "TERRAIN": "DBEAFE"}
     for r in rows:
         ws.append([
             r["jour"], r["matricule"], r["nom"], r["prenom"], r["service"],

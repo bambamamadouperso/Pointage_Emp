@@ -1,0 +1,223 @@
+{% extends "base.html" %}
+{% block title %}Rapports{% endblock %}
+{% block main_class %}container wide{% endblock %}
+{% macro pct(v) %}{{ '%.1f'|format(v) ~ ' %' if v is not none else '—' }}{% endmacro %}
+{% macro delta(cur, prev, good_up=True, unit=' pt') %}
+  {%- if cur is not none and prev is not none -%}
+    {%- set d = cur - prev -%}
+    {%- if d | abs < 0.05 -%}<span class="delta flat">= période précédente</span>
+    {%- else -%}<span class="delta {{ 'good' if (d > 0) == good_up else 'bad' }}">{{ '▲' if d > 0 else '▼' }} {{ '%+.1f'|format(d) }}{{ unit }}</span>
+    {%- endif -%}
+  {%- endif -%}
+{% endmacro %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Rapports</h1>
+    <p class="muted">Du {{ f.du | jour_fr }} au {{ f.au | jour_fr }} · employés de la liste
+      {%- if scope_label %} · équipe de {{ scope_label }}{% endif %}</p>
+  </div>
+  {% if data %}<div class="actions"><a class="btn" href="/rapports/export.xlsx?{{ request.query_params }}">⬇ Export Excel</a></div>{% endif %}
+</div>
+
+{% if not configured %}
+  <div class="flash warn">Le module de pointage n'est pas encore configuré.</div>
+{% else %}
+<form method="get" class="card report-filters" id="rfilters">
+  <div class="presets" role="group" aria-label="Période">
+    {% for code, label in presets %}<a class="chip {{ 'selected' if preset == code }}" href="?{{ request.query_params | with_param('p', code) }}">{{ label }}</a>{% endfor %}
+    <details class="custom" {{ 'open' if preset == 'perso' }}><summary class="chip {{ 'selected' if preset == 'perso' }}">Personnalisée…</summary>
+      <span class="inline">
+        <input type="date" name="du" value="{{ f.du.isoformat() }}" aria-label="Du"> → <input type="date" name="au" value="{{ f.au.isoformat() }}" aria-label="Au">
+        <button class="btn small" name="p" value="perso">OK</button></span></details>
+  </div>
+  <div class="row">
+    <input type="hidden" name="p" value="{{ preset }}">
+    <label>Service <select name="service"><option value="">Tous</option>
+      {% for s in services %}<option value="{{ s }}" {{ 'selected' if f.service == s }}>{{ s }}</option>{% endfor %}</select></label>
+    {% if has_hierarchy %}
+    <label>Équipe de <select name="equipe"><option value="">{{ 'Toute mon équipe' if scope_label else 'Tout le personnel' }}</option>
+      {% for key, label, n in managers %}<option value="{{ key }}" {{ 'selected' if f.team == key }}>{{ label }}</option>{% endfor %}</select></label>
+    <label class="check"><input type="checkbox" name="directs" value="1" {{ 'checked' if f.directs }} {{ 'disabled' if not f.team }}> Directs seulement</label>
+    {% endif %}
+  </div>
+</form>
+
+{% if error %}<div class="flash err">{{ error }}</div>{% endif %}
+
+{% if data %}
+{% set k = data.kpi %}{% set prev = data.precedent or {} %}
+{% if not k.attendus %}
+  <div class="card"><p class="empty">Aucune journée à analyser sur cette période avec ces filtres.</p></div>
+{% else %}
+<section class="stats report-kpis">
+  <div class="stat c-ok hero"><span class="label">Taux de présence</span><span class="value">{{ pct(k.taux_presence) }}</span>
+    <span class="hint">{{ k.presents | num }} journées présentes sur {{ k.disponibles | num }} (hors congés) {{ delta(k.taux_presence, prev.get('taux_presence')) }}</span></div>
+  <div class="stat c-err"><span class="label">Taux d'absentéisme</span><span class="value">{{ pct(k.taux_absence) }}</span>
+    <span class="hint">{{ k.absences | num }} journée(s) d'absence {{ delta(k.taux_absence, prev.get('taux_absence'), False) }}</span></div>
+  <div class="stat c-sky"><span class="label">Taux de ponctualité</span><span class="value">{{ pct(k.taux_ponctualite) }}</span>
+    <span class="hint">à l'heure / (à l'heure + retards) {{ delta(k.taux_ponctualite, prev.get('taux_ponctualite')) }}</span></div>
+  <div class="stat c-late"><span class="label">Retards</span><span class="value">{{ k.retards | num }}</span>
+    <span class="hint">{{ hhmm(timedelta(minutes=k.retard_min_total | float)) }} cumulées{% if k.retard_min_moyen %} · {{ k.retard_min_moyen | round | int }} min en moyenne{% endif %}</span></div>
+  <div class="stat c-teal"><span class="label">Heures validées</span><span class="value">{{ (k.heures_validees or 0) | round | int | num }} h</span>
+    <span class="hint">{% if k.heures_moy_bureau %}{{ hhmm(timedelta(hours=k.heures_moy_bureau | float)) }} par jour au bureau{% endif %}</span></div>
+  <div class="stat c-inc"><span class="label">Oublis de badge</span><span class="value">{{ k.incomplets | num }}</span>
+    <span class="hint">journées avec un seul pointage</span></div>
+</section>
+<p class="muted small kpi-note">{{ k.employes | num }} employé(s) · {{ k.attendus | num }} journées ouvrées attendues ·
+  {{ k.conges | num }} en congé · {{ k.teletravail | num }} en télétravail · {{ k.terrain | num }} sur le terrain
+  {% if data.precedent_du %}· évolution comparée au {{ data.precedent_du.strftime('%d/%m') }}–{{ data.precedent_au.strftime('%d/%m/%Y') }}{% endif %}</p>
+
+{% set t = data.trend %}
+<section class="card chart-card">
+  <div class="card-head"><div><h2>Présence {{ 'par jour' if data.granularite == 'jour' else 'par semaine' }}</h2>
+    <p class="muted small">Répartition des journées-employé par statut. Survolez une colonne pour le détail.</p></div></div>
+  <ul class="legend">{% for key, label, color in series %}<li><span class="swatch" style="background:{{ color }}"></span>{{ label }}</li>{% endfor %}</ul>
+  <svg class="chart" viewBox="0 0 {{ t.w }} {{ t.h }}" role="img" aria-label="Répartition des statuts par {{ data.granularite }}">
+    {% for tk in t.ticks %}<line class="grid" x1="{{ t.left }}" x2="{{ t.right }}" y1="{{ tk.y }}" y2="{{ tk.y }}"/>
+      <text class="axis" x="{{ t.left - 6 }}" y="{{ tk.y + 4 }}" text-anchor="end">{{ tk.v | num }}</text>{% endfor %}
+    {% for c in t.cols %}
+      <g class="col" tabindex="0" data-tip="{{ (c.row.jour | jour_fr(True)) if data.granularite == 'jour' else 'Semaine du ' ~ c.row.jour.strftime('%d/%m') }}|{% for s in c.segs | reverse %}{{ s.value }} {{ s.label }}{{ '|' if not loop.last }}{% endfor %}{% if not c.segs %}Aucune journée attendue{% endif %}">
+        <rect class="hit" x="{{ c.slot_x }}" y="{{ t.top }}" width="{{ c.slot_w }}" height="{{ t.base - t.top }}"/>
+        {% for s in c.segs %}
+          {% if s.top and s.h > 4 %}<path fill="{{ s.color }}" d="M{{ s.x }},{{ s.y + s.h }} V{{ s.y + 4 }} Q{{ s.x }},{{ s.y }} {{ s.x + 4 }},{{ s.y }} H{{ s.x + s.w - 4 }} Q{{ s.x + s.w }},{{ s.y }} {{ s.x + s.w }},{{ s.y + 4 }} V{{ s.y + s.h }} Z"/>
+          {% else %}<rect fill="{{ s.color }}" x="{{ s.x }}" y="{{ s.y }}" width="{{ s.w }}" height="{{ s.h }}"/>{% endif %}
+        {% endfor %}
+      </g>
+    {% endfor %}
+    <line class="baseline" x1="{{ t.left }}" x2="{{ t.right }}" y1="{{ t.base }}" y2="{{ t.base }}"/>
+    {% for c in t.labels %}<text class="axis" x="{{ c.cx }}" y="{{ t.base + 18 }}" text-anchor="middle">{{ c.row.jour.strftime('%d/%m') }}</text>{% endfor %}
+  </svg>
+  <details class="table-view"><summary>Voir les données</summary>
+    <div class="table-wrap"><table><thead><tr><th>{{ 'Jour' if data.granularite == 'jour' else 'Semaine du' }}</th>{% for key, label, color in series %}<th class="right">{{ label }}</th>{% endfor %}</tr></thead>
+      <tbody>{% for j in data.jours %}<tr><td>{{ j.jour | jour_fr(True) }}</td>{% for key, label, color in series %}<td class="right">{{ j[key] }}</td>{% endfor %}</tr>{% endfor %}</tbody></table></div>
+  </details>
+</section>
+
+<div class="report-grid">
+  <section class="card">
+    <h2>Selon le jour de la semaine</h2>
+    <p class="muted small">Un pic le lundi ou le vendredi signale souvent des absences de confort.</p>
+    <ul class="legend"><li><span class="swatch" style="background:#e11d48"></span>Taux d'absentéisme</li>
+      <li><span class="swatch" style="background:#f97316"></span>Taux de retard</li></ul>
+    {% set wmax = [data.semaine | map(attribute='taux_absence') | select('number') | max | default(0),
+                   data.semaine | map(attribute='taux_retard') | select('number') | max | default(0), 1] | max %}
+    <div class="hbars">
+      {% for w in data.semaine %}
+      <div class="hbar-row"><span class="hbar-label">{{ w.jour }}</span>
+        <div class="hbar-track">
+          <div class="hbar" tabindex="0" data-tip="{{ w.jour }}|{{ pct(w.taux_absence) }} d'absentéisme ({{ w.absences }} absence(s))"><span style="width:{{ ((w.taux_absence or 0) / wmax * 100) | round(1) }}%; background:#e11d48"></span><em>{{ pct(w.taux_absence) }}</em></div>
+          <div class="hbar" tabindex="0" data-tip="{{ w.jour }}|{{ pct(w.taux_retard) }} de retards ({{ w.retards }} retard(s))"><span style="width:{{ ((w.taux_retard or 0) / wmax * 100) | round(1) }}%; background:#f97316"></span><em>{{ pct(w.taux_retard) }}</em></div>
+        </div></div>
+      {% endfor %}
+    </div>
+  </section>
+
+  {% set a = data.arrival %}
+  <section class="card">
+    <h2>Heures d'arrivée au bureau</h2>
+    <p class="muted small">{{ a.total | num }} arrivées, par quart d'heure. Seuil de retard : {{ a.seuil | replace(':', 'h') }}.</p>
+    <ul class="legend"><li><span class="swatch" style="background:#10b981"></span>Avant le seuil</li>
+      <li><span class="swatch" style="background:#f97316"></span>À partir du seuil (retard)</li></ul>
+    <svg class="chart" viewBox="0 0 {{ a.w }} {{ a.h }}" role="img" aria-label="Histogramme des heures d'arrivée">
+      {% for tk in a.ticks %}<line class="grid" x1="{{ a.left }}" x2="{{ a.right }}" y1="{{ tk.y }}" y2="{{ tk.y }}"/>
+        <text class="axis" x="{{ a.left - 6 }}" y="{{ tk.y + 4 }}" text-anchor="end">{{ tk.v | num }}</text>{% endfor %}
+      {% for b in a.bars %}<g class="col" tabindex="0" data-tip="{{ b.label }}|{{ b.v }} arrivée(s){{ ' en retard' if b.late and b.v }}">
+        <rect class="hit" x="{{ b.slot_x }}" y="{{ a.top }}" width="{{ b.slot_w }}" height="{{ a.base - a.top }}"/>
+        {% if b.h > 4 %}<path fill="{{ b.color }}" d="M{{ b.x }},{{ a.base }} V{{ b.y + 4 }} Q{{ b.x }},{{ b.y }} {{ b.x + 4 }},{{ b.y }} H{{ b.x + b.w - 4 }} Q{{ b.x + b.w }},{{ b.y }} {{ b.x + b.w }},{{ b.y + 4 }} V{{ a.base }} Z"/>
+        {% elif b.h > 0 %}<rect fill="{{ b.color }}" x="{{ b.x }}" y="{{ b.y }}" width="{{ b.w }}" height="{{ b.h }}"/>{% endif %}</g>{% endfor %}
+      <line class="marker" x1="{{ a.seuil_x }}" x2="{{ a.seuil_x }}" y1="{{ a.top - 6 }}" y2="{{ a.base }}"/>
+      <text class="axis strong" x="{{ a.seuil_x + 4 }}" y="{{ a.top + 2 }}">seuil {{ a.seuil | replace(':', 'h') }}</text>
+      <line class="baseline" x1="{{ a.left }}" x2="{{ a.right }}" y1="{{ a.base }}" y2="{{ a.base }}"/>
+      {% for h in a.hours %}<text class="axis" x="{{ h.x }}" y="{{ a.base + 18 }}" text-anchor="middle">{{ h.label }}</text>{% endfor %}
+    </svg>
+  </section>
+</div>
+
+<section class="card">
+  <div class="card-head"><div><h2>Par service</h2><p class="muted small">Classés du plus fort au plus faible absentéisme.</p></div></div>
+  <div class="table-wrap"><table class="report-table">
+    <thead><tr><th>Service</th><th class="right">Employés</th><th>Présence</th><th>Absentéisme</th><th class="right">Ponctualité</th>
+      <th class="right">Retards</th><th class="right">Oublis de badge</th><th class="right">Moy. / jour au bureau</th></tr></thead>
+    <tbody>{% for s in data.services %}
+      <tr><td><a href="?{{ request.query_params | with_param('service', s.service) }}">{{ s.service }}</a></td><td class="right">{{ s.employes }}</td>
+        <td class="nowrap"><span class="meter ok"><span style="width:{{ (s.taux_presence or 0) | round(1) }}%"></span></span> {{ pct(s.taux_presence) }}</td>
+        <td class="nowrap"><span class="meter err"><span style="width:{{ ([(s.taux_absence or 0) * 3, 100] | min) | round(1) }}%"></span></span> {{ pct(s.taux_absence) }}</td>
+        <td class="right">{{ pct(s.taux_ponctualite) }}</td><td class="right">{{ s.retards }}</td><td class="right">{{ s.incomplets }}</td>
+        <td class="right">{{ hhmm(timedelta(hours=s.heures_moy_bureau | float)) if s.heures_moy_bureau else '—' }}</td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+</section>
+
+<section class="card">
+  <div class="card-head"><div><h2>À suivre</h2>
+    <p class="muted small">Situations à examiner avec le responsable : {{ 3 }}+ absences, absences surtout le lundi ou le vendredi,
+      {{ 3 }}+ retards ou 2h de retard cumulé, {{ 3 }}+ oublis de badge.</p></div></div>
+  {% if not data.alertes %}<p class="empty">Rien à signaler sur cette période.</p>{% else %}
+  <div class="table-wrap"><table>
+    <thead><tr><th>Motif</th><th>Employé</th><th>Service</th><th>Responsable</th><th>Détail</th><th></th></tr></thead>
+    <tbody>{% for al in data.alertes[:60] %}
+      <tr><td><span class="badge {{ 'st-abs' if al.gravite == 3 else ('st-late' if al.gravite == 2 else 'st-inc') }}">{{ al.motif }}</span></td>
+        <td><span class="mono small">{{ al.matricule }}</span> {{ al.nom }}</td><td>{{ al.service or '—' }}</td><td class="small">{{ al.responsable or '—' }}</td>
+        <td class="small">{{ al.detail }}</td>
+        <td class="nowrap"><a class="small" href="/suivi?du={{ f.du.isoformat() }}&au={{ f.au.isoformat() }}&q={{ al.matricule | urlencode }}">Voir les journées →</a></td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+  {% if data.alertes | length > 60 %}<p class="muted small">{{ data.alertes | length - 60 }} autre(s) dans l'export Excel.</p>{% endif %}
+  {% endif %}
+</section>
+
+<section class="card">
+  <div class="card-head"><div><h2>Par employé</h2><p class="muted small">{{ data.employes | length | num }} employé(s) ; les 100 premiers selon le tri choisi (tous dans l'export).</p></div>
+    <label class="check small">Trier par <select name="tri" form="rfilters">{% for code, label in sorts.items() %}<option value="{{ code }}" {{ 'selected' if sort == code }}>{{ label }}</option>{% endfor %}</select></label></div>
+  <div class="table-wrap"><table class="report-table">
+    <thead><tr><th>Matricule</th><th>Nom</th><th>Service</th><th class="right">Présence</th><th class="right">Absences</th>
+      <th class="right">Retards</th><th class="right">Retard cumulé</th><th class="right">Arrivée moy.</th><th class="right">Oublis</th>
+      <th class="right">Congé</th><th class="right">Télétr.</th><th class="right">Heures validées</th></tr></thead>
+    <tbody>{% for e in data.employes[:100] %}
+      <tr><td class="mono small">{{ e.matricule }}</td>
+        <td class="nowrap">{{ e.nom }} {{ e.prenom or '' }}{% if e.terrain %} <span class="badge st-field" title="Agent terrain">terrain</span>{% endif %}</td>
+        <td class="small">{{ e.service or '—' }}</td><td class="right">{{ pct(e.taux_presence) }}</td>
+        <td class="right {{ 'hot' if e.absences >= 3 }}">{{ e.absences or '·' }}</td><td class="right {{ 'hot' if e.retards >= 3 }}">{{ e.retards or '·' }}</td>
+        <td class="right">{{ hhmm(timedelta(minutes=e.retard_min_total | float)) if e.retard_min_total else '·' }}</td>
+        <td class="right">{% if e.arrivee_moy_min %}{{ '%02d' | format((e.arrivee_moy_min // 60) | int) }}h{{ '%02d' | format((e.arrivee_moy_min % 60) | int) }}{% else %}—{% endif %}</td>
+        <td class="right">{{ e.incomplets or '·' }}</td><td class="right">{{ e.conges or '·' }}</td><td class="right">{{ e.teletravail or '·' }}</td>
+        <td class="right">{{ '%.1f' | format(e.heures_validees | float) if e.heures_validees else '—' }}</td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+</section>
+{% endif %}
+{% endif %}
+{% endif %}
+<div class="chart-tip" id="chart_tip" role="status" hidden></div>
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  const form = document.getElementById('rfilters');
+  if (form) form.querySelectorAll('select, input[type=checkbox]').forEach(el => el.addEventListener('change', () => {
+    if (el.name === 'equipe' && !el.value) { const d = form.querySelector('[name=directs]'); if (d) d.checked = false; }
+    form.requestSubmit();
+  }));
+  document.querySelectorAll('select[form=rfilters]').forEach(el => el.addEventListener('change', () => form.requestSubmit()));
+  // Infobulle : même contenu au survol et au clavier ; texte inséré avec textContent.
+  const tip = document.getElementById('chart_tip');
+  function show(el, x, y) {
+    const [head, ...lines] = el.dataset.tip.split('|');
+    tip.replaceChildren();
+    const h = document.createElement('strong'); h.textContent = head; tip.appendChild(h);
+    lines.forEach(l => { const d = document.createElement('div'); d.textContent = l; tip.appendChild(d); });
+    tip.hidden = false;
+    const r = tip.getBoundingClientRect();
+    tip.style.left = Math.min(x + 14, window.innerWidth - r.width - 8) + 'px';
+    tip.style.top = Math.max(y - r.height - 10, 8) + 'px';
+  }
+  document.querySelectorAll('[data-tip]').forEach(el => {
+    el.addEventListener('pointermove', e => show(el, e.clientX, e.clientY));
+    el.addEventListener('pointerleave', () => { tip.hidden = true; });
+    el.addEventListener('focus', () => { const r = el.getBoundingClientRect(); show(el, r.left + r.width / 2, r.top); });
+    el.addEventListener('blur', () => { tip.hidden = true; });
+  });
+})();
+</script>
+{% endblock %}

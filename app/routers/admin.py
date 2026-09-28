@@ -276,6 +276,65 @@ def holiday_delete(request: Request, jour: str = Form(...), db: Session = Depend
     return redirect("/admin/parametres#feries")
 
 
+# --------------------------------------------------------------------------- agents terrain
+
+
+@router.get("/terrain")
+def field_page(request: Request, db: Session = Depends(get_db)):
+    cfg, mapping = _mapping_ready(db)
+    context = dict(mapping=mapping, entries=[], services=[], error=None, types=pointage.FIELD_TYPES,
+                   duree=pointage.PARAM_DEFAULTS["duree_terrain"])
+    if mapping is not None:
+        engine = make_engine(cfg.conn, **pointage.WEB_LIMITS)
+        try:
+            context["entries"] = pointage.field_entries(engine, mapping)
+            context["services"] = pointage.services(engine, mapping)
+            context["duree"] = pointage.params_at(engine, mapping, date.today())["duree_terrain"]
+        except Exception as exc:
+            context["error"] = friendly(exc)
+        finally:
+            engine.dispose()
+    return render(request, "admin/terrain.html", **context)
+
+
+@router.post("/terrain")
+def field_add(request: Request, type: str = Form(...), service: str = Form(""), matricule: str = Form(""),
+              libelle: str = Form(""), db: Session = Depends(get_db)):
+    cfg, mapping = _mapping_ready(db)
+    if mapping is None:
+        return redirect("/admin/pointage")
+    value = service if type == "service" else matricule
+    engine = make_engine(cfg.conn, **pointage.WEB_LIMITS)
+    try:
+        pointage.add_field(engine, mapping, type, value, libelle, request.session.get("user", ""))
+    except pointage.PointageError as exc:
+        flash(request, str(exc), "err")
+        return redirect("/admin/terrain")
+    finally:
+        engine.dispose()
+    what = f"service « {value.strip()} »" if type == "service" else f"employé {value.strip()}"
+    auth.audit(request, "Agent terrain ajouté", what, libelle.strip())
+    flash(request, f"{what[0].upper()}{what[1:]} déclaré agent terrain : ses journées ne seront plus comptées "
+                   f"en absence ni en retard.", "ok")
+    return redirect("/admin/terrain")
+
+
+@router.post("/terrain/{entry_id}/delete")
+def field_delete(request: Request, entry_id: int, db: Session = Depends(get_db)):
+    cfg, mapping = _mapping_ready(db)
+    if mapping is None:
+        return redirect("/admin/pointage")
+    engine = make_engine(cfg.conn, **pointage.WEB_LIMITS)
+    try:
+        removed = pointage.delete_field(engine, mapping, entry_id)
+    finally:
+        engine.dispose()
+    if removed:
+        auth.audit(request, "Agent terrain retiré", f"{removed[0]} « {removed[1]} »")
+        flash(request, f"« {removed[1]} » n'est plus agent terrain.", "ok")
+    return redirect("/admin/terrain")
+
+
 # --------------------------------------------------------------------------- utilisateurs
 
 
