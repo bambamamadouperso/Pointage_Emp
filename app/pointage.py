@@ -627,7 +627,7 @@ def last_punch(engine: Engine, m: Mapping, use_cache: bool = True) -> Optional[d
     with engine.connect() as c:
         if raw:  # le plus grand jour d'abord (index), puis l'heure exacte sur ce seul jour
             value = c.execute(text(f"SELECT max({ts}) FROM {punch} p WHERE {raw} >= "
-                                   f"(SELECT max({raw}) FROM {punch} p) - 1")).scalar()
+                                   f"(SELECT max({raw}) FROM {punch} p) - interval '1 day'")).scalar()
         else:
             value = c.execute(text(f"SELECT max(horodatage) FROM {qi(m.objs)}.v_pointage_brut")).scalar()
     _last_punch_cache[key] = (_t.monotonic(), value)

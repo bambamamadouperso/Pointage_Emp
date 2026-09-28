@@ -323,6 +323,21 @@ def test_diagnostics(configured, pg):
     assert d["dernier_pointage"] == datetime(2026, 9, 26, 12, 0)
 
 
+def test_last_punch_with_timestamp_column(configured, pg):
+    """Colonne des pointages de type horodatage (date + heure) : « horodatage - 1 » était refusé."""
+    import dataclasses
+
+    with pg.begin() as c:
+        c.execute(text(f"DROP TABLE IF EXISTS {SCHEMA}.punch_ts"))
+        c.execute(text(f"CREATE TABLE {SCHEMA}.punch_ts (employe_id int, horodatage timestamp)"))
+        c.execute(text(f"INSERT INTO {SCHEMA}.punch_ts VALUES (1, '2026-09-27 07:40'), (1, '2026-09-28 16:05'), "
+                       f"(2, '2026-09-28 08:10')"))
+    with SessionLocal() as db:
+        m = pointage.Mapping.from_json(db.query(PointageConfig).one().data)
+    m = dataclasses.replace(m, punch_table="punch_ts", punch_ts_col="horodatage", punch_time_col="")
+    assert pointage.last_punch(pg, m, use_cache=False) == datetime(2026, 9, 28, 16, 5)
+
+
 def test_reference_whole_personnel(configured, pg, logged_client):
     """Liste de référence = table Personnel, sans colonne « actif » : tout le personnel est attendu."""
     with SessionLocal() as db:
