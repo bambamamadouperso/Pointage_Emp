@@ -372,6 +372,16 @@ if (Test-Path $EnvFile) {
     Write-Ok "Fichier .env créé (identifiant : admin)."
 }
 
+# Clé de chiffrement des mots de passe des connexions : si elle a changé (fichier .env recréé),
+# l'ancienne est recherchée dans les copies du .env (.env.abime-*) et remise en place.
+if (Test-Path (Join-Path $Root "data\app.db")) {
+    $out = Invoke-Native { & $VenvPython -m app.recuperer_cle }
+    $code = $LASTEXITCODE
+    $out | Where-Object { $_ -and $_ -notmatch "^\d{4}-\d\d-\d\d .* (INFO|DEBUG) " } | ForEach-Object { Write-Host "    $_" }
+    if ($code -eq 1) { Write-Warn "Mots de passe des connexions à ressaisir dans l'application (voir ci-dessus)." }
+    elseif ($code -eq 0) { Write-Ok "Mots de passe des connexions lisibles." }
+}
+
 # ---- 4. Démarrage
 Write-Step "4" "Démarrage de l'application (tâche Windows au démarrage du serveur)"
 Register-App
