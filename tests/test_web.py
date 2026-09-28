@@ -10,6 +10,19 @@ def test_login_required(client):
     assert client.get("/health").json()["status"] == "ok"
 
 
+def test_login_page_never_shows_menu(client):
+    """Pas de menu avant la connexion ; déjà connecté : renvoyé à sa page d'accueil."""
+    page = client.get("/login").text
+    assert 'id="sidebar"' not in page and "Se connecter" in page
+    client.post("/login", data={"username": "admin", "password": "secret"})
+    r = client.get("/login", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/"
+    client.post("/logout")
+    assert 'id="sidebar"' not in client.get("/login").text
+    r = client.post("/login", data={"username": "admin", "password": "faux"})
+    assert "Identifiants incorrects" in r.text and 'id="sidebar"' not in r.text
+
+
 def test_bad_login(client):
     r = client.post("/login", data={"username": "admin", "password": "faux"})
     assert "Identifiants incorrects" in r.text

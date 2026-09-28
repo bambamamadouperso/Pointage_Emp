@@ -115,7 +115,16 @@ pre{{white-space:pre-wrap;background:#f1f3f5;padding:12px;border-radius:6px}}a{{
 
 @app.get("/login")
 def login_page(request: Request):
-    return render(request, "login.html")
+    """Page de connexion, toujours sans menu ; déjà connecté (compte valide) : directement à sa page d'accueil."""
+    username = request.session.get("user")
+    role = auth.current_role(username) if username else None
+    if role:
+        return redirect(auth.home_for(role))
+    flashes = request.session.get("_flash", [])
+    request.session.clear()  # session d'un compte supprimé, désactivé ou expiré
+    if flashes:
+        request.session["_flash"] = flashes
+    return render(request, "login.html", user=None, role=None)
 
 
 @app.post("/login")
