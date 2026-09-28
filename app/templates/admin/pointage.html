@@ -215,7 +215,7 @@
       <label>Colonne de l'état <span class="muted small">(facultatif)</span> {{ colselect('tw_state_col', tw_cols, m.tw_state_col, True) }}</label>
       <label>Valeur(s) « approuvé » <input name="tw_state_values" value="{{ m.tw_state_values }}" placeholder="Approuvée"></label>
     </div>
-    <p class="muted small">Chaque jour ouvré de télétravail reçoit la « Durée attribuée par jour de télétravail » (8h par défaut,
+    <p class="muted small">Chaque jour de télétravail, y compris un jour non ouvré (week-end, férié), reçoit la « Durée attribuée par jour de télétravail » (8h par défaut,
       voir Paramètres horaires) en durée validée et en durée effective. Un congé approuvé le même jour l'emporte ;
       un jour où la personne a badgé garde le statut calculé d'après ses pointages.</p>
     {% else %}

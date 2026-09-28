@@ -45,7 +45,7 @@ STATUTS = {
 }
 CONGES = ("CONGE_ANNUEL", "CONGE_EXCEP")
 # Version des objets PostgreSQL : si elle change, ils sont réinstallés automatiquement.
-SQL_VERSION = 8
+SQL_VERSION = 9
 # Limites des requêtes lancées depuis les pages web : une attente de verrou ou une requête lente ne doit jamais
 # bloquer le site (au pire, la page affiche une erreur au bout de 2 minutes).
 WEB_LIMITS = {"lock_timeout_s": 15, "statement_timeout_s": 120}
@@ -538,7 +538,8 @@ g AS (
 ),
 c AS (
     SELECT g.*,
-        CASE WHEN g.n IS NULL THEN CASE WHEN g.jour_ouvre THEN COALESCE(g.conge, g.tele, 'ABSENT') ELSE 'NON_OUVRE' END
+        CASE WHEN g.n IS NULL THEN CASE WHEN g.jour_ouvre THEN COALESCE(g.conge, g.tele, 'ABSENT')
+                                     ELSE COALESCE(g.tele, 'NON_OUVRE') END  -- le télétravail vaut aussi les jours non ouvrés
              WHEN g.n < 2 THEN 'INCOMPLET'
              WHEN g.p1::time >= g.seuil_retard THEN 'RETARD'
              ELSE 'A_L_HEURE' END AS statut,

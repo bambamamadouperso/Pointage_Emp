@@ -396,7 +396,8 @@ def test_approved_leave_and_remote_work_replace_absence(configured, pg, logged_c
             ('E003', '2026-09-22 00:00', '2026-09-22 00:00', 'Approuvée'),   -- télétravail
             ('E005', '2026-09-22 00:00', '2026-09-22 00:00', 'Approuvée'),   -- aussi en congé : le congé l'emporte
             ('E001', '2026-09-22 00:00', '2026-09-22 00:00', 'Refusée'),     -- non approuvé
-            ('E002', '2026-09-22 00:00', '2026-09-22 00:00', 'Approuvée')    -- a badgé : garde son statut"""))
+            ('E002', '2026-09-22 00:00', '2026-09-22 00:00', 'Approuvée'),   -- a badgé : garde son statut
+            ('E007', '2026-09-23 00:00', '2026-09-23 00:00', 'Approuvée')    -- mercredi férié : télétravail quand même"""))
     with SessionLocal() as db:
         m = pointage.Mapping.from_json(db.query(PointageConfig).one().data)
     m = dataclasses.replace(
@@ -425,6 +426,9 @@ def test_approved_leave_and_remote_work_replace_absence(configured, pg, logged_c
     assert (fatou.statut, fatou.statut_libelle, hm(fatou.duree_validee), hm(fatou.duree_effective)) == (
         "TELETRAVAIL", "Télétravail", "8h00", "8h00")
     assert r[("E005", TUE)].statut == "CONGE_ANNUEL" and r[("E002", TUE)].statut in ("A_L_HEURE", "RETARD")
+    # Le télétravail prime sur les jours non ouvrés (le congé, lui, non) : 8h le mercredi férié.
+    assert (r[("E007", WED)].statut, hm(r[("E007", WED)].duree_validee)) == ("TELETRAVAIL", "8h00")
+    assert r[("E005", WED)].statut == "NON_OUVRE" and r[("E003", WED)].statut == "NON_OUVRE"
 
     # Écran : carte « En congé », badge vert clair, moyennes hors congés.
     from app.routers import suivi
