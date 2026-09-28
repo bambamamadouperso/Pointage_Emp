@@ -334,3 +334,19 @@ def test_auto_retry_then_suspend(logged_client, monkeypatch):
         db.commit()
     sync.after_run(job_id, "schedule", "cancelled", auto_stopped=True, manual_stop=False)
     assert len(retries) == 4 and retry_count() == 0
+
+
+def test_unexpected_error_page(logged_client, monkeypatch):
+    """Erreur imprévue : page lisible avec la cause (et non « Internal Server Error »)."""
+    from app.routers import suivi
+
+    def broken(db):
+        raise RuntimeError("colonne introuvable xyz")
+
+    monkeypatch.setattr(suivi, "load_config", broken)
+    from fastapi.testclient import TestClient
+
+    with TestClient(logged_client.app, raise_server_exceptions=False, cookies=logged_client.cookies) as c:
+        r = c.get("/suivi")
+    assert r.status_code == 500
+    assert "La page n'a pas pu s'afficher" in r.text and "colonne introuvable xyz" in r.text

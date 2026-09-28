@@ -1,4 +1,5 @@
 """Point d'entrée : application web d'administration de la synchronisation MariaDB -> PostgreSQL."""
+import html
 import logging
 from datetime import datetime, timezone
 import os
@@ -7,7 +8,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Form, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -86,6 +87,30 @@ async def _invalid_form(request: Request, exc: RequestValidationError):
 @app.exception_handler(LoginRequired)
 async def _login_required(request: Request, _: LoginRequired):
     return redirect("/login")
+
+
+@app.exception_handler(Exception)
+async def _unexpected_error(request: Request, exc: Exception):
+    """Erreur imprévue : trace complète dans le journal, page lisible (au lieu de « Internal Server Error »)."""
+    when = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+    logger.error("Erreur sur %s %s", request.method, request.url.path, exc_info=exc)
+    summary = f"{exc.__class__.__name__} : {str(exc).strip()[:600]}"
+    try:
+        write_log("ERROR", f"Erreur de page {request.url.path} : {summary}")
+    except Exception:
+        pass
+    logged_in = bool(request.scope.get("session", {}).get("user"))
+    detail = (f"<p><b>Détail :</b></p><pre>{html.escape(summary)}</pre>" if logged_in else "")
+    body = f"""<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Erreur</title>
+<style>body{{font-family:Segoe UI,Arial,sans-serif;background:#f4f7f9;color:#1c2b36;margin:0;padding:40px 16px}}
+main{{max-width:760px;margin:auto;background:#fff;border-radius:10px;padding:24px 28px;border-left:6px solid #b42318}}
+pre{{white-space:pre-wrap;background:#f1f3f5;padding:12px;border-radius:6px}}a{{color:#0b4f6c}}</style></head>
+<body><main><h1>La page n'a pas pu s'afficher</h1>
+<p>Une erreur imprévue s'est produite sur <code>{html.escape(request.url.path)}</code> le {when}
+(version {__version__}).</p>{detail}
+<p>Le détail complet est dans <code>logs\\application.log</code> (chercher « Erreur sur » à cette heure).</p>
+<p><a href="javascript:history.back()">← Retour</a> · <a href="/">Accueil</a></p></main></body></html>"""
+    return HTMLResponse(body, status_code=500)
 
 
 @app.get("/login")
