@@ -5,6 +5,7 @@ from typing import Optional
 
 from apscheduler.executors.pool import ThreadPoolExecutor
 from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy import delete, select, update
 
@@ -12,6 +13,7 @@ from .config import settings
 from .database import SessionLocal
 from .joblog import write_log
 from .models import JobRun, LogEntry, SyncJob, utcnow
+from . import sync
 from .sync import cancel_overdue, run_job
 
 logger = logging.getLogger("scheduler")
@@ -59,6 +61,29 @@ def run_now(job_id: int, trigger: str = "manual", **options) -> None:
         run_job(job_id, trigger, **options)
 
 
+def _run_retry(job_id: int) -> None:
+    """Relance automatique : ignorée si le job a été désactivé entre-temps."""
+    with SessionLocal() as db:
+        job = db.get(SyncJob, job_id)
+        if job is None or not job.enabled:
+            return
+    run_job(job_id, "retry")
+
+
+def schedule_retry(job_id: int, delay_minutes: int) -> None:
+    if not scheduler.running:
+        return
+    when = datetime.now(timezone.utc) + timedelta(minutes=delay_minutes, seconds=0 if delay_minutes else 5)
+    scheduler.add_job(_run_retry, DateTrigger(run_date=when), args=[job_id], id=f"retry-{job_id}",
+                      replace_existing=True, misfire_grace_time=None)
+
+
+def suspend(job_id: int) -> None:
+    unschedule_job(job_id)
+    if scheduler.running and scheduler.get_job(f"retry-{job_id}"):
+        scheduler.remove_job(f"retry-{job_id}")
+
+
 def next_run_time(job_id: int) -> Optional[datetime]:
     if not scheduler.running:
         return None
@@ -96,6 +121,7 @@ def start() -> None:
         jobs = db.scalars(select(SyncJob)).all()
     if n:
         write_log("WARNING", f"{n} exécution(s) interrompue(s) lors du dernier arrêt.")
+    sync.schedule_retry, sync.suspend_job = schedule_retry, suspend
     scheduler.start()
     for job in jobs:
         schedule_job(job)

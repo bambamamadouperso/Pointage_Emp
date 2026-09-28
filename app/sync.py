@@ -57,6 +57,8 @@ class RunControl:
         self.max_minutes = settings.max_run_minutes
         self.stop = threading.Event()
         self.reason = ""
+        self.auto = False  # arrêt automatique (durée maximale dépassée) : peut déclencher une relance
+        self.trigger = "schedule"
         self.forced = False
         self._raw: list = []  # connexions DBAPI ouvertes par cette exécution
         self._workers: list = []  # processus pilotes HFSQL utilisés par cette exécution
@@ -74,9 +76,9 @@ class RunControl:
         if self.stop.is_set():
             worker.kill()
 
-    def interrupt(self, reason: str) -> None:
+    def interrupt(self, reason: str, auto: bool = False) -> None:
         """Demande l'arrêt et débloque les requêtes en cours (annulation côté serveur, pilote arrêté)."""
-        self.reason = reason
+        self.reason, self.auto = reason, auto
         self.stop.set()
         for raw in list(self._raw):
             try:
@@ -103,7 +105,13 @@ def is_running(job_id: int) -> bool:
         return job_id in _active
 
 
-def cancel_job(job_id: int, reason: str = "Arrêté à la demande.", wait: float = 20) -> str:
+# Branchements fournis par le planificateur (évite une importation circulaire) :
+# schedule_retry(job_id, délai en minutes) et suspend_job(job_id).
+schedule_retry: Optional[Callable[[int, int], None]] = None
+suspend_job: Optional[Callable[[int], None]] = None
+
+
+def cancel_job(job_id: int, reason: str = "Arrêté à la demande.", wait: float = 20, auto: bool = False) -> str:
     """Arrête l'exécution en cours d'un job.
 
     Renvoie « stopped » (arrêt propre), « forced » (exécution bloquée abandonnée), « orphan » (exécution
@@ -114,7 +122,7 @@ def cancel_job(job_id: int, reason: str = "Arrêté à la demande.", wait: float
     if control is None:
         return "orphan" if _close_orphan_runs(job_id, reason) else "none"
     write_log("WARNING", f"Arrêt demandé : {reason}", job_id=job_id, run_id=control.run_id)
-    control.interrupt(reason)
+    control.interrupt(reason, auto)
     deadline = _time.monotonic() + wait
     while _time.monotonic() < deadline:
         with _active_guard:
@@ -129,6 +137,7 @@ def cancel_job(job_id: int, reason: str = "Arrêté à la demande.", wait: float
     _close_run(control.run_id, job_id, f"{reason} (arrêt forcé : la tâche ne répondait plus).")
     write_log("ERROR", "Arrêt forcé : la tâche bloquée est abandonnée, le job peut être relancé.",
               job_id=job_id, run_id=control.run_id)
+    after_run(job_id, control.trigger, "cancelled", auto_stopped=auto, manual_stop=not auto)
     return "forced"
 
 
@@ -138,7 +147,55 @@ def cancel_overdue() -> None:
         late = [c for c in _active.values()
                 if c.max_minutes > 0 and not c.stop.is_set() and _time.monotonic() - c.started > c.max_minutes * 60]
     for c in late:
-        cancel_job(c.job_id, f"Arrêt automatique : durée maximale dépassée ({c.max_minutes} min).")
+        cancel_job(c.job_id, f"Arrêt automatique : durée maximale dépassée ({c.max_minutes} min).", auto=True)
+
+
+def after_run(job_id: int, trigger: str, status: str, auto_stopped: bool, manual_stop: bool) -> None:
+    """Relances automatiques : après un arrêt automatique, le job est relancé jusqu'à N fois.
+
+    Une exécution réussie remet le compteur à zéro. Si la dernière relance échoue encore, le job est
+    suspendu (désactivé, plus de relance ni d'exécution planifiée) jusqu'à sa réactivation.
+    """
+    db = SessionLocal()
+    try:
+        job = db.get(SyncJob, job_id)
+        if job is None:
+            return
+        if status in ("success", "partial"):
+            if job.retry_count:
+                write_log("INFO", f"Exécution réussie après {job.retry_count} relance(s) automatique(s).",
+                          job_id=job_id)
+                job.retry_count = 0
+                db.commit()
+            return
+        # Un arrêt manuel interrompt la série ; seuls un arrêt automatique ou l'échec d'une relance comptent.
+        if manual_stop or not (auto_stopped or trigger == "retry"):
+            return
+        limit = job.effective_retry_max
+        if limit <= 0:
+            return
+        attempts = job.retry_count or 0
+        if attempts >= limit:
+            job.enabled = False
+            job.retry_count = 0
+            job.suspended_reason = (
+                f"Suspendu automatiquement : {limit} relance(s) après un arrêt automatique sans succès. "
+                "Vérifiez les logs, puis réactivez le job."
+            )
+            db.commit()
+            write_log("ERROR", f"Job « {job.name} » suspendu : {limit} relance(s) automatique(s) en échec. "
+                               "Il ne sera plus relancé tant qu'il n'est pas réactivé.", job_id=job_id)
+            if suspend_job is not None:
+                suspend_job(job_id)
+            return
+        job.retry_count = attempts + 1
+        delay = max(job.effective_retry_delay_minutes, 0)
+        db.commit()
+        write_log("WARNING", f"Relance automatique {attempts + 1}/{limit} dans {delay} min.", job_id=job_id)
+        if schedule_retry is not None:
+            schedule_retry(job_id, delay)
+    finally:
+        db.close()
 
 
 def _close_run(run_id: Optional[int], job_id: int, message: str) -> None:
@@ -710,6 +767,7 @@ def run_job(
     recreate   : supprime les tables cibles (DROP) pour recréer aussi leur structure.
     """
     control = RunControl(job_id)
+    control.trigger = trigger
     with _active_guard:
         if job_id in _active:
             write_log("WARNING", "Exécution ignorée : le job est déjà en cours.", job_id=job_id)
@@ -723,7 +781,7 @@ def run_job(
                 del _active[job_id]
 
 
-TRIGGER_LABELS = {"manual": "manuel", "schedule": "planifié", "reload": "réimport complet"}
+TRIGGER_LABELS = {"manual": "manuel", "schedule": "planifié", "reload": "réimport complet", "retry": "relance auto."}
 
 
 def reset_target(dst_engine: Engine, schema: str, mapping: TableMapping, recreate: bool, log: RunLogger) -> None:
@@ -875,6 +933,9 @@ def _run_job_locked(
         db.commit()
         level = {"success": "INFO", "partial": "WARNING"}.get(run.status, "ERROR")
         log(level, f"Fin du job ({run.status}) en {_time.monotonic() - started:.1f} s : {run.message}")
+        stopped = run.status == "cancelled"
+        after_run(job_id, trigger, run.status, auto_stopped=stopped and control.auto,
+                  manual_stop=stopped and not control.auto)
         return run.id
     finally:
         db.close()

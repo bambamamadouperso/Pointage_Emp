@@ -55,6 +55,21 @@
       <span class="muted small">Si une table cible reste verrouillée plus longtemps, son écriture échoue au lieu de bloquer le job (défaut : {{ defaults.lock_wait_minutes or 'sans limite' }}{{ ' min' if defaults.lock_wait_minutes }}).</span>
     </label>
     </div>
+    <div class="row">
+    <label>Relances après un arrêt automatique
+      <span class="inline"><input name="retry_max" type="number" min="0" class="narrow"
+        value="{{ job.retry_max if job.retry_max is not none else '' }}"
+        placeholder="{{ defaults.retry_max }}"> tentative(s)</span>
+      <span class="muted small">Si toutes les relances échouent, le job est suspendu : plus aucune exécution
+        tant qu'il n'est pas réactivé (défaut : {{ defaults.retry_max }} ; 0 = pas de relance).</span>
+    </label>
+    <label>Délai avant chaque relance
+      <span class="inline"><input name="retry_delay_minutes" type="number" min="0" class="narrow"
+        value="{{ job.retry_delay_minutes if job.retry_delay_minutes is not none else '' }}"
+        placeholder="{{ defaults.retry_delay_minutes }}"> minutes</span>
+      <span class="muted small">Défaut : {{ defaults.retry_delay_minutes }} min.</span>
+    </label>
+    </div>
   </fieldset>
   <label class="check"><input type="checkbox" name="enabled" value="true" {{ 'checked' if job.enabled }}> Job actif (exécuté automatiquement)</label>
   <p class="muted small">Le schéma et les tables cibles sont créés automatiquement s'ils n'existent pas. Les tables à copier se configurent après l'enregistrement.</p>

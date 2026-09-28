@@ -105,6 +105,12 @@ class SyncJob(Base):
     # Protections (minutes, 0 = sans limite, vide = valeur par défaut MAX_RUN_MINUTES / LOCK_WAIT_MINUTES).
     max_run_minutes: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     lock_wait_minutes: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    # Relances après un arrêt automatique (vide = RETRY_MAX / RETRY_DELAY_MINUTES, 0 relance = aucune).
+    retry_max: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    retry_delay_minutes: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    retry_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=0)
+    # Raison de la suspension automatique (relances épuisées) ; effacée à la réactivation.
+    suspended_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     source: Mapped[Connection] = relationship(foreign_keys=[source_id])
     target: Mapped[Connection] = relationship(foreign_keys=[target_id])
@@ -123,6 +129,18 @@ class SyncJob(Base):
         from .config import settings
 
         return settings.lock_wait_minutes if self.lock_wait_minutes is None else self.lock_wait_minutes
+
+    @property
+    def effective_retry_max(self) -> int:
+        from .config import settings
+
+        return settings.retry_max if self.retry_max is None else self.retry_max
+
+    @property
+    def effective_retry_delay_minutes(self) -> int:
+        from .config import settings
+
+        return settings.retry_delay_minutes if self.retry_delay_minutes is None else self.retry_delay_minutes
 
     @property
     def interval_label(self) -> str:

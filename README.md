@@ -41,6 +41,10 @@ avec historique et logs.
   « Arrêté » et le job peut être relancé aussitôt. Une exécution qui dépasse `MAX_RUN_MINUTES` est arrêtée
   automatiquement, et l'attente d'un verrou PostgreSQL est limitée à `LOCK_WAIT_MINUTES`. Ces deux délais
   se règlent aussi job par job (formulaire du job, rubrique « Protections »).
+- **Relances automatiques** : après un arrêt automatique, le job est relancé après `RETRY_DELAY_MINUTES`
+  minutes, jusqu'à `RETRY_MAX` fois (3 par défaut). Une exécution réussie remet le compteur à zéro. Si la
+  dernière relance échoue encore, le job est **suspendu** (badge rouge, plus aucune exécution) jusqu'à ce
+  qu'il soit réactivé. Un arrêt manuel ne déclenche pas de relance. Réglable job par job.
 
 > Le mode incrémental ne répercute pas les suppressions faites dans la source. Pour une table où des
 > lignes sont supprimées, utilisez le mode complet.
@@ -192,6 +196,8 @@ chaque worker exécuterait les jobs.
 | `SCHEDULER_MAX_WORKERS` | `4`                        | Jobs exécutés en parallèle au maximum |
 | `MAX_RUN_MINUTES`       | `360`                      | Arrêt automatique d'une exécution plus longue (0 = sans limite) |
 | `LOCK_WAIT_MINUTES`     | `10`                       | Attente maximale d'un verrou PostgreSQL (0 = sans limite) |
+| `RETRY_MAX`             | `3`                        | Relances après un arrêt automatique, puis suspension du job (0 = aucune) |
+| `RETRY_DELAY_MINUTES`   | `2`                        | Délai avant chaque relance automatique |
 
 Si vous changez `SECRET_KEY` (ou `ENCRYPTION_KEY`), ressaisissez les mots de passe des connexions.
 

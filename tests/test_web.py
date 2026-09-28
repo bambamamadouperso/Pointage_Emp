@@ -262,3 +262,74 @@ def test_cancel_overdue_uses_job_limit():
     sync.cancel_overdue()
     assert not idle.stop.is_set()
     del sync._active[987655]
+
+
+def test_auto_retry_then_suspend(logged_client, monkeypatch):
+    """Arrêt automatique → 3 relances ; si la 3e échoue encore, le job est suspendu."""
+    import time
+
+    from app import sync
+    from app.database import SessionLocal
+    from app.models import Connection, JobRun, SyncJob
+
+    retries, suspended = [], []
+    monkeypatch.setattr(sync, "schedule_retry", lambda job_id, delay: retries.append((job_id, delay)))
+    monkeypatch.setattr(sync, "suspend_job", lambda job_id: suspended.append(job_id))
+    with SessionLocal() as db:
+        s = Connection(name="rt-src", kind="mariadb", host="h", port=3306, database="d", username="u")
+        d = Connection(name="rt-dst", kind="postgresql", host="h", port=5432, database="d", username="u")
+        db.add_all([s, d])
+        db.flush()
+        job = SyncJob(name="rt-job", source_id=s.id, target_id=d.id, interval_seconds=60, enabled=True,
+                      retry_delay_minutes=5)
+        db.add(job)
+        db.commit()
+        job_id = job.id
+
+    def retry_count():
+        with SessionLocal() as db:
+            return db.get(SyncJob, job_id).retry_count
+
+    # Un arrêt manuel ne déclenche rien.
+    sync.after_run(job_id, "schedule", "cancelled", auto_stopped=False, manual_stop=True)
+    assert retries == [] and not retry_count()
+    # Arrêt automatique d'une tâche bloquée : 1re relance programmée.
+    with SessionLocal() as db:
+        run = JobRun(job_id=job_id, trigger="schedule", status="running")
+        db.add(run)
+        db.commit()
+        run_id = run.id
+    control = sync.RunControl(job_id)
+    control.run_id, control.max_minutes, control.started = run_id, 1, time.monotonic() - 120
+    sync._active[job_id] = control
+    assert sync.cancel_job(job_id, "Durée maximale dépassée", wait=0.3, auto=True) == "forced"
+    assert retries == [(job_id, 5)] and retry_count() == 1
+    # Relances 2 et 3 en échec.
+    sync.after_run(job_id, "retry", "error", auto_stopped=False, manual_stop=False)
+    sync.after_run(job_id, "retry", "cancelled", auto_stopped=True, manual_stop=False)
+    assert len(retries) == 3 and retry_count() == 3
+    # La 3e relance échoue : suspension, plus de relance.
+    sync.after_run(job_id, "retry", "error", auto_stopped=False, manual_stop=False)
+    assert len(retries) == 3 and suspended == [job_id]
+    with SessionLocal() as db:
+        job = db.get(SyncJob, job_id)
+        assert not job.enabled and "Suspendu" in job.suspended_reason
+    page = logged_client.get(f"/jobs/{job_id}").text
+    assert "suspendu" in page and "Réactiver le job" in page
+    assert "suspendu" in logged_client.get("/jobs").text
+    # Réactivation : suspension levée, compteur remis à zéro.
+    logged_client.post(f"/jobs/{job_id}/toggle")
+    with SessionLocal() as db:
+        job = db.get(SyncJob, job_id)
+        assert job.enabled and job.suspended_reason is None and not job.retry_count
+    # Une relance réussie remet le compteur à zéro.
+    sync.after_run(job_id, "schedule", "cancelled", auto_stopped=True, manual_stop=False)
+    assert retry_count() == 1
+    sync.after_run(job_id, "retry", "success", auto_stopped=False, manual_stop=False)
+    assert retry_count() == 0
+    # 0 relance configurée : rien n'est programmé.
+    with SessionLocal() as db:
+        db.get(SyncJob, job_id).retry_max = 0
+        db.commit()
+    sync.after_run(job_id, "schedule", "cancelled", auto_stopped=True, manual_stop=False)
+    assert len(retries) == 4 and retry_count() == 0

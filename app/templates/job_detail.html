@@ -5,7 +5,7 @@
 <div class="page-head">
   <div>
     <h1>{{ job.name }}
-      {% if job.enabled %}<span class="badge ok">actif</span>{% else %}<span class="badge">inactif</span>{% endif %}
+      {% if job.enabled %}<span class="badge ok">actif</span>{% elif job.suspended_reason %}<span class="badge err">suspendu</span>{% else %}<span class="badge">inactif</span>{% endif %}
       {% if running %}{{ status_badge('running') }}{% endif %}
     </h1>
     <p class="muted">
@@ -36,6 +36,9 @@
   </div>
 </div>
 
+{% if job.suspended_reason %}<div class="flash err">{{ job.suspended_reason }}
+  <form method="post" action="/jobs/{{ job.id }}/toggle" class="inline-form"><button class="btn small">Réactiver le job</button></form></div>
+{% elif job.retry_count %}<div class="flash warn">Relance automatique en cours : tentative {{ job.retry_count }} / {{ job.effective_retry_max }}.</div>{% endif %}
 <section class="stats">
   <div class="stat"><span class="label">Intervalle</span><span class="value">{{ job.interval_label }}</span></div>
   <div class="stat"><span class="label">Dernier état</span><span class="value">{{ status_badge(job.last_status) }}</span></div>
@@ -43,6 +46,8 @@
   <div class="stat"><span class="label">Arrêt auto. / attente verrou</span><span class="value small">
     {{ (job.effective_max_run_minutes ~ ' min') if job.effective_max_run_minutes else 'sans limite' }} /
     {{ (job.effective_lock_wait_minutes ~ ' min') if job.effective_lock_wait_minutes else 'sans limite' }}</span></div>
+  <div class="stat"><span class="label">Relances auto.</span><span class="value small">
+    {% if job.effective_retry_max %}{{ job.effective_retry_max }} × après {{ job.effective_retry_delay_minutes }} min{% else %}aucune{% endif %}</span></div>
   <div class="stat"><span class="label">Prochaine exécution</span><span class="value small">{{ next_run | dt if job.enabled else '—' }}</span></div>
 </section>
 

@@ -90,6 +90,8 @@ def save_job(
     enabled: bool = Form(False),
     max_run_minutes: str = Form(""),
     lock_wait_minutes: str = Form(""),
+    retry_max: str = Form(""),
+    retry_delay_minutes: str = Form(""),
     db: Session = Depends(get_db),
 ):
     job = _get_job(db, job_id) if job_id else SyncJob()
@@ -106,15 +108,20 @@ def save_job(
 
     limits = {}
     for field_name, raw, label in (("max_run_minutes", max_run_minutes, "La durée maximale"),
-                                   ("lock_wait_minutes", lock_wait_minutes, "L'attente maximale d'un verrou")):
+                                   ("lock_wait_minutes", lock_wait_minutes, "L'attente maximale d'un verrou"),
+                                   ("retry_max", retry_max, "Le nombre de relances"),
+                                   ("retry_delay_minutes", retry_delay_minutes, "Le délai avant relance")):
         raw = raw.strip()
         if raw and (not raw.isdigit()):
-            flash(request, f"{label} doit être un nombre entier de minutes (0 = sans limite, vide = par défaut).", "err")
+            flash(request, f"{label} doit être un nombre entier positif (vide = valeur par défaut).", "err")
             return redirect(f"/jobs/{job_id}/edit" if job_id else "/jobs/new")
         limits[field_name] = int(raw) if raw else None
 
     job.name, job.source_id, job.target_id = name.strip(), source_id, target_id
-    job.max_run_minutes, job.lock_wait_minutes = limits["max_run_minutes"], limits["lock_wait_minutes"]
+    for field_name, value in limits.items():
+        setattr(job, field_name, value)
+    if enabled and job.suspended_reason:
+        job.suspended_reason, job.retry_count = None, 0
     job.target_schema = target_schema.strip() or "public"
     job.interval_seconds, job.enabled = seconds, enabled
     if not job_id:
@@ -239,6 +246,8 @@ def toggle_job(job_id: int, request: Request, db: Session = Depends(get_db)):
     if job is None:
         return redirect("/jobs")
     job.enabled = not job.enabled
+    if job.enabled:  # réactivation : nouvelle série de relances possible
+        job.suspended_reason, job.retry_count = None, 0
     db.commit()
     scheduler.schedule_job(job)
     state = "activé" if job.enabled else "désactivé"

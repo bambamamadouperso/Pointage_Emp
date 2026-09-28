@@ -14,7 +14,7 @@
       <td>{{ status_badge(run.status) }}</td>
       <td>{{ run.tables_ok }}{% if run.tables_failed %} <span class="err-text">/ {{ run.tables_failed }} ✗</span>{% endif %}</td>
       <td>{{ run.rows_written | num }}</td>
-      <td class="muted">{{ {'manual': 'manuel', 'schedule': 'planifié', 'reload': 'réimport complet'}.get(run.trigger, run.trigger) }}</td>
+      <td class="muted">{{ {'manual': 'manuel', 'schedule': 'planifié', 'reload': 'réimport complet', 'retry': 'relance auto.'}.get(run.trigger, run.trigger) }}</td>
     </tr>
   {% endfor %}
   </tbody>

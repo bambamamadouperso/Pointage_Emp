@@ -32,6 +32,10 @@ class Settings:
     max_run_minutes: int = field(default_factory=lambda: _int("MAX_RUN_MINUTES", 360))
     # Attente maximale d'un verrou PostgreSQL (minutes) avant d'abandonner l'écriture (0 = sans limite).
     lock_wait_minutes: int = field(default_factory=lambda: _int("LOCK_WAIT_MINUTES", 10))
+    # Relances automatiques après un arrêt automatique (0 = aucune) ; au-delà, le job est suspendu.
+    retry_max: int = field(default_factory=lambda: _int("RETRY_MAX", 3))
+    # Délai avant chaque relance automatique (minutes).
+    retry_delay_minutes: int = field(default_factory=lambda: _int("RETRY_DELAY_MINUTES", 2))
     # Fuseau horaire d'affichage des dates dans le tableau de bord.
     timezone: str = field(default_factory=lambda: os.getenv("APP_TIMEZONE", "UTC"))
     # Désactive le planificateur (utile pour les tests).

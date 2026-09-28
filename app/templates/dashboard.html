@@ -30,7 +30,7 @@
     <tbody>
     {% for job in jobs %}
       <tr>
-        <td><a href="/jobs/{{ job.id }}">{{ job.name }}</a>{% if not job.enabled %} <span class="badge">inactif</span>{% endif %}</td>
+        <td><a href="/jobs/{{ job.id }}">{{ job.name }}</a>{% if job.suspended_reason %} <span class="badge err" title="{{ job.suspended_reason }}">suspendu</span>{% elif not job.enabled %} <span class="badge">inactif</span>{% endif %}</td>
         <td class="muted">{{ job.source.name }} → {{ job.target.name }}.{{ job.target_schema }}</td>
         <td>{{ job.interval_label }}</td>
         <td>{% if running[job.id] %}{{ status_badge('running') }}{% else %}{{ status_badge(job.last_status) }}{% endif %}</td>
