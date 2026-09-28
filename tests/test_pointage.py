@@ -33,16 +33,23 @@ def pg():
         c.execute(text(f"DROP SCHEMA IF EXISTS {SCHEMA} CASCADE"))
         c.execute(text(f"CREATE SCHEMA {SCHEMA}"))
         c.execute(text(f"CREATE TABLE {SCHEMA}.services (id int PRIMARY KEY, libelle text)"))
+        # Noms et prénoms dans une autre table (Personnel) ; hiérarchie dans une table dédiée (par matricule).
         c.execute(text(f"""CREATE TABLE {SCHEMA}."Employes" ("IDEmployes" int PRIMARY KEY, "Matricule" text,
-                          "Nom" text, "Prenom" text, "IDService" int, "Actif" text)"""))
+                          "IDPersonnel" int, "IDService" int, "Actif" text)"""))
+        c.execute(text(f"""CREATE TABLE {SCHEMA}."Personnel" ("IDPersonnel" int PRIMARY KEY, "Nom" text, "Prenom" text)"""))
+        c.execute(text(f"""CREATE TABLE {SCHEMA}.hierarchie (matricule_employe text, matricule_responsable text)"""))
         c.execute(text(f"CREATE TABLE {SCHEMA}.punchlog (id serial PRIMARY KEY, employe_id int, "
                        f"date_pointage date, heure_pointage text, terminal text)"))
         c.execute(text(f"INSERT INTO {SCHEMA}.services VALUES (1, 'Production'), (2, 'RH')"))
         c.execute(text(f"""INSERT INTO {SCHEMA}."Employes" VALUES
-            (1, 'E001', 'Diallo', 'Awa', 1, '1'), (2, 'E002', 'Ndiaye', 'Moussa', 1, '1'),
-            (3, 'E003', 'Sow', 'Fatou', 2, '1'), (4, 'E004', 'Fall', 'Ibou', 2, '1'),
-            (5, 'E005', 'Ba', 'Khady', 2, '1'), (6, 'E006', 'Gueye', 'Ousmane', 1, '0'),
-            (7, 'E007', 'Diop', 'Aminata', 1, '1')"""))
+            (1, 'E001', 101, 1, '1'), (2, 'E002', 102, 1, '1'), (3, 'E003', 103, 2, '1'), (4, 'E004', 104, 2, '1'),
+            (5, 'E005', 105, 2, '1'), (6, 'E006', 106, 1, '0'), (7, 'E007', 107, 1, '1')"""))
+        c.execute(text(f"""INSERT INTO {SCHEMA}."Personnel" VALUES
+            (101, 'Diallo', 'Awa'), (102, 'Ndiaye', 'Moussa'), (103, 'Sow', 'Fatou'), (104, 'Fall', 'Ibou'),
+            (105, 'Ba', 'Khady'), (106, 'Gueye', 'Ousmane'), (107, 'Diop', 'Aminata')"""))
+        # Diallo encadre Ndiaye, Sow et Gueye ; Sow encadre Fall et Ba ; Diop n'a pas de responsable.
+        c.execute(text(f"""INSERT INTO {SCHEMA}.hierarchie VALUES
+            ('E002', 'E001'), ('E003', 'E001'), ('E006', 'E001'), ('E004', 'E003'), ('E005', 'E003'), ('E007', NULL)"""))
         punches = [
             (1, MON, "07:20"), (1, MON, "12:00"), (1, MON, "17:10"),   # à l'heure : 7h30 validées, 8h20 effectives
             (2, MON, "08:10"), (2, MON, "16:45"),                      # retard : 6h50 validées
@@ -84,9 +91,13 @@ def configured(pg):
             "conn_id": conn_id, "schema": SCHEMA, "objects_schema": "", "punch_table": "punchlog",
             "punch_emp_col": "employe_id", "punch_ts_col": "date_pointage", "punch_time_col": "heure_pointage",
             "emp_table": "Employes", "emp_key_col": "IDEmployes", "emp_matricule_col": "Matricule",
-            "emp_nom_col": "Nom", "emp_prenom_col": "Prenom", "emp_service_col": "IDService",
+            "emp_service_col": "IDService",
             "service_table": "services", "service_key_col": "id", "service_label_col": "libelle",
             "emp_active_col": "Actif", "emp_active_values": "1",
+            "person_table": "Personnel", "emp_person_col": "IDPersonnel", "person_key_col": "IDPersonnel",
+            "person_nom_col": "Nom", "person_prenom_col": "Prenom",
+            "hier_table": "hierarchie", "hier_emp_col": "matricule_employe",
+            "hier_manager_col": "matricule_responsable", "hier_ref": "matricule",
         }, follow_redirects=True)
         assert "installées" in r.text, r.text[:3000]
         # Seuil de retard porté à 8h15 à partir du mardi ; mercredi férié.
@@ -126,6 +137,19 @@ def test_calculations_match_specification(configured, pg):
     assert aminata.statut == "RETARD" and hm(aminata.heure_validee) == "4h15" and hm(aminata.duree_effective) == "4h15"
     assert r[("99", MON)].nom == "(employé inconnu)"
     assert r[("E001", MON)].service == "Production" and r[("E001", MON)].statut_libelle == "À l'heure"
+    # Noms venant de la table Personnel, responsable venant de la table hierarchie.
+    assert (awa.nom, awa.prenom, awa.responsable) == ("Diallo", "Awa", None)
+    assert moussa.responsable == "Diallo Awa" and moussa.responsable_key == "1"
+    assert r[("E004", MON)].responsable == "Sow Fatou" and aminata.responsable is None
+
+
+def test_hierarchy_team_function(configured, pg):
+    with pg.connect() as c:
+        team = dict(c.execute(text(f"SELECT emp_key, niveau FROM {SCHEMA}.f_pointage_equipe('1')")).all())
+        assert team == {"1": 0, "2": 1, "3": 1, "6": 1, "4": 2, "5": 2}
+        assert {k for (k,) in c.execute(text(f"SELECT emp_key FROM {SCHEMA}.f_pointage_equipe('3')"))} == {"3", "4", "5"}
+        emp = c.execute(text(f"SELECT * FROM {SCHEMA}.v_pointage_employes WHERE matricule = 'E005'")).mappings().one()
+        assert (emp["nom"], emp["responsable"], emp["service"]) == ("Ba", "Sow Fatou", "RH")
 
 
 def test_history_holidays_and_weekends(configured, pg):
@@ -152,13 +176,18 @@ def test_screen_filters_detail_and_export(configured, logged_client):
     assert "Diallo" in html and "st-late" in html and "Lundi 21/09/2026" in html
     assert "Taux de ponctualité" in html and "Moyenne heure validée" in html
     only_late = logged_client.get(f"/suivi?date={MON.isoformat()}&statut=RETARD").text
-    assert "Ndiaye" in only_late and "Diallo" not in only_late
+    assert "E002</td>" in only_late and "E001</td>" not in only_late
     search = logged_client.get(f"/suivi?date={MON.isoformat()}&q=E003").text
-    assert "Sow" in search and "Ndiaye" not in search
+    assert "E003</td>" in search and "E002</td>" not in search
     service = logged_client.get(f"/suivi?date={MON.isoformat()}&service=RH").text
-    assert "Sow" in service and "Diallo" not in service
+    assert "E003</td>" in service and "E001</td>" not in service
     period = logged_client.get(f"/suivi?du={MON.isoformat()}&au={SAT.isoformat()}&sort=validee&dir=desc").text
     assert "journées-employé" in period
+    team = logged_client.get(f"/suivi?date={MON.isoformat()}&equipe=3").text
+    assert "E003</td>" in team and "E004</td>" in team and "E005</td>" in team and "E001</td>" not in team
+    assert "Responsable" in team and "Sow Fatou · 2 direct(s)" in team.replace(" (E003)", "")
+    directs = logged_client.get(f"/suivi?date={MON.isoformat()}&equipe=1&directs=1").text
+    assert "E002</td>" in directs and "E004</td>" not in directs
     detail = logged_client.get(f"/suivi/detail?key=1&jour={MON.isoformat()}").text
     assert "3 pointage(s)" in detail and "07:20:00" in detail and "T1" in detail
     xlsx = logged_client.get(f"/suivi/export.xlsx?date={MON.isoformat()}&statut=RETARD&statut=ABSENT")
@@ -204,6 +233,32 @@ def test_roles_and_audit(configured, client):
             "Échec de connexion"} <= actions
 
 
+def test_account_limited_to_team(configured, client):
+    from openpyxl import load_workbook
+
+    from app import auth
+
+    with SessionLocal() as db:
+        db.query(User).filter(User.username.in_(["chef", "perdu"])).delete()
+        db.add_all([User(username="chef", role="lecteur", password_hash=auth.hash_password("motdepasse4"),
+                         emp_matricule="E003", scope="equipe"),
+                    User(username="perdu", role="manager", password_hash=auth.hash_password("motdepasse5"),
+                         emp_matricule="X999", scope="equipe")])
+        db.commit()
+    client.post("/login", data={"username": "chef", "password": "motdepasse4"})
+    page = client.get(f"/suivi?date={MON.isoformat()}").text
+    assert "équipe de <strong>Sow Fatou</strong>" in page
+    assert "E004</td>" in page and "E005</td>" in page and "E001</td>" not in page and "E002</td>" not in page
+    assert "E002</td>" not in client.get(f"/suivi?date={MON.isoformat()}&equipe=1").text  # hors périmètre : ignoré
+    assert "ne fait pas partie de votre équipe" in client.get(f"/suivi/detail?key=2&jour={MON.isoformat()}").text
+    assert "3 pointage(s)" not in client.get(f"/suivi/detail?key=1&jour={MON.isoformat()}").text
+    ws = load_workbook(io.BytesIO(client.get(f"/suivi/export.xlsx?date={MON.isoformat()}").content))["Suivi journalier"]
+    assert {ws.cell(r, 2).value for r in range(2, ws.max_row + 1)} == {"E003", "E004", "E005"}
+    client.post("/logout")
+    client.post("/login", data={"username": "perdu", "password": "motdepasse5"})
+    assert "rattaché à aucun employé" in client.get(f"/suivi?date={MON.isoformat()}").text
+
+
 def test_admin_users_and_params_pages(configured, logged_client):
     r = logged_client.post("/admin/users/save", data={"username": "nouveau", "full_name": "N. Ouveau",
                                                       "role": "manager", "password": "motdepasse3"},
@@ -211,11 +266,16 @@ def test_admin_users_and_params_pages(configured, logged_client):
     assert "« nouveau » enregistré" in r.text
     with SessionLocal() as db:
         uid = db.query(User).filter_by(username="nouveau").one().id
-    r = logged_client.post("/admin/users/save", data={"user_id": uid, "full_name": "X", "role": "lecteur"},
+    r = logged_client.post("/admin/users/save", data={"user_id": uid, "full_name": "X", "role": "lecteur",
+                                                      "emp_matricule": "E001", "scope": "equipe"},
                            follow_redirects=True)
     with SessionLocal() as db:
         u = db.get(User, uid)
-        assert u.role == "lecteur" and not u.active
+        assert u.role == "lecteur" and not u.active and u.team_only and u.emp_matricule == "E001"
+    r = logged_client.post("/admin/users/save", data={"user_id": uid, "role": "lecteur", "scope": "equipe"},
+                           follow_redirects=True)
+    assert "indiquez le matricule" in r.text
+    assert "Son équipe (E001)" in logged_client.get("/admin/users").text
     assert "au moins 8 caractères" in logged_client.post(f"/admin/users/{uid}/password", data={"password": "court"},
                                                          follow_redirects=True).text
     page = logged_client.get("/admin/parametres").text

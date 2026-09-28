@@ -235,6 +235,7 @@ fieldset.limits legend { font-weight: 600; padding: 0 .3rem; }
 fieldset.mode { border: 0; margin: 0; padding: 0 0 .45rem; display: flex; gap: .8rem; }
 .statut-row { align-items: center !important; }
 .statut-row .spacer { flex: 1; }
+.suivi-filters .row > label.directs { flex: 0 0 auto; padding-bottom: .5rem; }
 .statut-row > label.check { flex: 0 0 auto !important; }
 .chip-check { padding: .2rem .65rem; border-radius: 999px; font-size: .85rem; cursor: pointer; }
 .value.late { color: var(--late); }

@@ -39,7 +39,7 @@ STATUTS = {
 }
 
 SORTABLE = {
-    "jour": "jour", "matricule": "matricule", "nom": "nom", "service": "service",
+    "jour": "jour", "matricule": "matricule", "nom": "nom", "service": "service", "responsable": "responsable",
     "premier": "premier_pointage", "dernier": "dernier_pointage", "statut": "statut",
     "validee": "heure_validee", "effective": "duree_effective",
 }
@@ -100,6 +100,17 @@ class Mapping:
     service_label_col: str = ""
     emp_active_col: str = ""          # facultatif : seuls les employés actifs peuvent être « absents »
     emp_active_values: str = ""       # valeurs considérées comme actives (séparées par des virgules)
+    # Facultatif : nom et prénom dans une autre table (ex. Personnel), reliée à la table des employés.
+    person_table: str = ""
+    emp_person_col: str = ""          # colonne de la table des employés qui pointe vers person_table
+    person_key_col: str = ""          # identifiant dans person_table
+    person_nom_col: str = ""
+    person_prenom_col: str = ""
+    # Facultatif : hiérarchie (responsable N+1), dans la table des employés ou une table dédiée.
+    hier_table: str = ""
+    hier_emp_col: str = ""            # l'employé
+    hier_manager_col: str = ""        # son responsable
+    hier_ref: str = "key"             # ces deux colonnes contiennent la clé employé (« key ») ou le matricule
 
     @classmethod
     def from_json(cls, raw: Optional[str]) -> "Mapping":
@@ -118,11 +129,18 @@ class Mapping:
         required = {
             "punch_table": "table des pointages", "punch_emp_col": "colonne employé des pointages",
             "punch_ts_col": "colonne date/heure des pointages", "emp_table": "table des employés",
-            "emp_key_col": "colonne de correspondance des employés", "emp_nom_col": "colonne du nom",
+            "emp_key_col": "colonne de correspondance des employés",
         }
         out = [label for key, label in required.items() if not getattr(self, key)]
+        if self.person_table:
+            if not (self.emp_person_col and self.person_key_col and self.person_nom_col):
+                out.append("colonnes de liaison et du nom de la table des noms")
+        elif not self.emp_nom_col:
+            out.append("colonne du nom (ou table des noms)")
         if self.service_table and not (self.service_key_col and self.service_label_col):
             out.append("colonnes de la table des services")
+        if self.hier_table and not (self.hier_emp_col and self.hier_manager_col):
+            out.append("colonnes employé et responsable de la hiérarchie")
         return out
 
 
@@ -174,6 +192,13 @@ _GUESSES = {
     "emp_nom_col": [r"^nom$", r"^nom_", r"^lastname", r"^name$", r"nom"],
     "emp_prenom_col": [r"pr[ée]nom", r"firstname"],
     "emp_service_col": [r"service", r"d[ée]part", r"direction", r"^id_?serv"],
+    "emp_person_col": [r"^id_?person", r"person", r"^id_?ident", r"^id_?agent"],
+    "person_key_col": [r"^id_?person", r"^id$", r"person", r"^id"],
+    "person_nom_col": [r"^nom$", r"^nom_", r"^lastname", r"^name$", r"nom"],
+    "person_prenom_col": [r"pr[ée]nom", r"firstname"],
+    "hier_emp_col": [r"^id_?employ", r"employ", r"^id_?agent", r"collab", r"^id_?person", r"matric"],
+    "hier_manager_col": [r"respons", r"manager", r"sup[ée]rieur", r"^id_?chef", r"chef", r"n\+?1", r"valideur",
+                         r"hi[ée]rarch"],
 }
 
 
@@ -228,7 +253,7 @@ def _ts_expr(m: Mapping, types: dict[str, str]) -> str:
 
 
 def build_sql(m: Mapping, punch_types: dict[str, str], emp_types: dict[str, str]) -> dict[str, str]:
-    """SQL des objets PostgreSQL du module (tables de paramètres, fonction, vues)."""
+    """SQL des objets PostgreSQL du module (tables de paramètres, vue des employés, fonctions, vues)."""
     S = qi(m.objs)
     punch = qt(m.schema, m.punch_table)
     emp = qt(m.schema, m.emp_table)
@@ -237,8 +262,18 @@ def build_sql(m: Mapping, punch_types: dict[str, str], emp_types: dict[str, str]
     ekey = _as_text(f"e.{qi(m.emp_key_col)}", emp_types.get(m.emp_key_col, ""))
     mat = _as_text(f"e.{qi(m.emp_matricule_col or m.emp_key_col)}",
                    emp_types.get(m.emp_matricule_col or m.emp_key_col, ""))
-    nom = f"e.{qi(m.emp_nom_col)}::text"
-    prenom = f"e.{qi(m.emp_prenom_col)}::text" if m.emp_prenom_col else "NULL::text"
+    person_join, person_ref = "", "NULL::text"
+    if m.person_table:
+        # Nom et prénom dans une autre table (ex. Personnel), reliée par une colonne de la table des employés.
+        person_join = (f"LEFT JOIN {qt(m.schema, m.person_table)} pe ON "
+                       f"btrim(pe.{qi(m.person_key_col)}::text) = btrim(e.{qi(m.emp_person_col)}::text)")
+        person_ref = f"btrim(e.{qi(m.emp_person_col)}::text)"
+        nom = f"pe.{qi(m.person_nom_col)}::text"
+        prenom = (f"pe.{qi(m.person_prenom_col)}::text" if m.person_prenom_col
+                  else f"e.{qi(m.emp_prenom_col)}::text" if m.emp_prenom_col else "NULL::text")
+    else:
+        nom = f"e.{qi(m.emp_nom_col)}::text"
+        prenom = f"e.{qi(m.emp_prenom_col)}::text" if m.emp_prenom_col else "NULL::text"
     service_join = ""
     if m.emp_service_col and m.service_table:
         service = f"s.{qi(m.service_label_col)}::text"
@@ -254,6 +289,49 @@ def build_sql(m: Mapping, punch_types: dict[str, str], emp_types: dict[str, str]
     else:
         actif = "true"
 
+    # Hiérarchie : chaque employé a au plus un responsable (N+1), identifié par clé, matricule ou personne.
+    ref_col = {"matricule": "matricule", "person": "person_ref"}.get(m.hier_ref, "emp_key")
+    if m.hier_table:
+        hier_cte = f""",
+hier AS (
+    SELECT DISTINCT ON (1) btrim(h.{qi(m.hier_emp_col)}::text) AS emp_ref,
+           nullif(btrim(h.{qi(m.hier_manager_col)}::text), '') AS mgr_ref
+    FROM {qt(m.schema, m.hier_table)} h
+    WHERE h.{qi(m.hier_emp_col)} IS NOT NULL
+    ORDER BY 1, 2 NULLS LAST
+)"""
+        hier_select = ("r.emp_key AS responsable_key, nullif(concat_ws(' ', r.nom, r.prenom), '') AS responsable")
+        hier_join = (f"LEFT JOIN hier h ON h.emp_ref = b.{ref_col}\n"
+                     f"LEFT JOIN base r ON r.{ref_col} = h.mgr_ref AND r.emp_key <> b.emp_key")
+    else:
+        hier_cte, hier_join = "", ""
+        hier_select = "NULL::text AS responsable_key, NULL::text AS responsable"
+    employees_view = f"""CREATE VIEW {S}.v_pointage_employes AS
+WITH base AS (
+    SELECT DISTINCT ON (1) {ekey} AS emp_key, {mat} AS matricule, {nom} AS nom, {prenom} AS prenom,
+           {service} AS service, ({actif}) AS actif, {person_ref} AS person_ref
+    FROM {emp} e {person_join} {service_join}
+    WHERE e.{qi(m.emp_key_col)} IS NOT NULL
+    ORDER BY 1
+){hier_cte}
+SELECT b.emp_key, b.matricule, b.nom, b.prenom, b.service, b.actif, {hier_select}
+FROM base b
+{hier_join}"""
+    team_function = f"""
+CREATE FUNCTION {S}.f_pointage_equipe(p_racine text)
+RETURNS TABLE (emp_key text, niveau integer)
+LANGUAGE sql STABLE
+SET jit = off
+AS $fn$
+WITH RECURSIVE t(emp_key, niveau) AS (
+    SELECT p_racine, 0
+    UNION
+    SELECT e.emp_key, t.niveau + 1 FROM {S}.v_pointage_employes e JOIN t ON e.responsable_key = t.emp_key
+    WHERE t.niveau < 30
+)
+SELECT emp_key, min(niveau)::int FROM t GROUP BY 1
+$fn$"""
+
     def param(key: str, cast: str) -> str:
         return (f"COALESCE((SELECT x.valeur FROM {S}.pointage_parametres x WHERE x.cle = {lit(key)} "
                 f"AND x.date_effet <= d::date ORDER BY x.date_effet DESC, x.id DESC LIMIT 1), "
@@ -263,17 +341,17 @@ def build_sql(m: Mapping, punch_types: dict[str, str], emp_types: dict[str, str]
     function = f"""
 CREATE FUNCTION {S}.f_pointage_journalier(p_du date, p_au date)
 RETURNS TABLE (
-    emp_key text, matricule text, nom text, prenom text, service text, jour date, jour_ouvre boolean,
-    premier_pointage timestamp, dernier_pointage timestamp, nb_pointages integer,
+    emp_key text, matricule text, nom text, prenom text, service text, responsable_key text, responsable text,
+    jour date, jour_ouvre boolean, premier_pointage timestamp, dernier_pointage timestamp, nb_pointages integer,
     statut text, statut_libelle text, debut_valide time, fin_validee time, pause_deduite interval,
     heure_validee interval, duree_effective interval, heure_validee_min numeric, duree_effective_min numeric
 )
-LANGUAGE sql STABLE AS $fn$
+LANGUAGE sql STABLE
+-- La compilation JIT coûte plus d'une seconde par appel, pour aucun gain sur ce type de requête.
+SET jit = off
+AS $fn$
 WITH emp AS (
-    SELECT DISTINCT ON (1) {ekey} AS emp_key, {mat} AS matricule, {nom} AS nom, {prenom} AS prenom,
-           {service} AS service, ({actif}) AS actif
-    FROM {emp} e {service_join}
-    ORDER BY 1
+    SELECT * FROM {S}.v_pointage_employes
 ),
 pl AS (
     SELECT {pkey} AS emp_key, {ts} AS ts FROM {punch} p
@@ -301,7 +379,8 @@ base AS (
     SELECT a.emp_key, a.jour FROM agg a
 ),
 g AS (
-    SELECT b.emp_key, b.jour, e.matricule, e.nom, e.prenom, e.service, a.p1, a.p2, a.n,
+    SELECT b.emp_key, b.jour, e.matricule, e.nom, e.prenom, e.service, e.responsable_key, e.responsable,
+           a.p1, a.p2, a.n,
            p.debut_journee, p.debut_pause, p.fin_pause, p.fin_journee, p.seuil_retard, p.duree_pause,
            (NOT p.ferie AND extract(isodow FROM b.jour)::int = ANY (
                string_to_array(regexp_replace(p.jours_ouvres, '[^0-9,]', '', 'g'), ',')::int[])) AS jour_ouvre
@@ -326,7 +405,7 @@ c AS (
     FROM g
 )
 SELECT c.emp_key, COALESCE(c.matricule, c.emp_key), COALESCE(c.nom, '(employé inconnu)'), c.prenom, c.service,
-       c.jour, c.jour_ouvre, c.p1, c.p2, COALESCE(c.n, 0), c.statut, CASE c.statut {labels} END,
+       c.responsable_key, c.responsable, c.jour, c.jour_ouvre, c.p1, c.p2, COALESCE(c.n, 0), c.statut, CASE c.statut {labels} END,
        c.debut_valide, c.fin_validee, c.pause, v.hv, v.de,
        round((extract(epoch FROM v.hv) / 60)::numeric, 2), round((extract(epoch FROM v.de) / 60)::numeric, 2)
 FROM c
@@ -357,6 +436,10 @@ $fn$"""
         "drop_view": f"DROP VIEW IF EXISTS {S}.v_pointage_journalier",
         "drop_raw_view": f"DROP VIEW IF EXISTS {S}.v_pointage_brut",
         "drop_function": f"DROP FUNCTION IF EXISTS {S}.f_pointage_journalier(date, date)",
+        "drop_team_function": f"DROP FUNCTION IF EXISTS {S}.f_pointage_equipe(text)",
+        "drop_employees_view": f"DROP VIEW IF EXISTS {S}.v_pointage_employes",
+        "employees_view": employees_view,
+        "team_function": team_function,
         "function": function,
         "view": f"""CREATE VIEW {S}.v_pointage_journalier AS
 SELECT * FROM {S}.f_pointage_journalier(COALESCE({first_day}, current_date), current_date)""",
@@ -382,14 +465,28 @@ def install(engine: Engine, m: Mapping, author: str) -> None:
         if col and col not in punch_types:
             raise PointageError(f"Colonne « {col} » absente de {m.punch_table}.")
     for col in (m.emp_key_col, m.emp_matricule_col, m.emp_nom_col, m.emp_prenom_col, m.emp_service_col,
-                m.emp_active_col):
+                m.emp_active_col, m.emp_person_col):
         if col and col not in emp_types:
             raise PointageError(f"Colonne « {col} » absente de {m.emp_table}.")
+    for table, cols in ((m.person_table, (m.person_key_col, m.person_nom_col, m.person_prenom_col)),
+                        (m.service_table, (m.service_key_col, m.service_label_col)),
+                        (m.hier_table, (m.hier_emp_col, m.hier_manager_col))):
+        if not table:
+            continue
+        types = column_types(engine, m.schema, table)
+        if not types:
+            raise PointageError(f"Table {m.schema}.{table} introuvable.")
+        for col in cols:
+            if col and col not in types:
+                raise PointageError(f"Colonne « {col} » absente de {table}.")
+    if m.hier_ref == "person" and not m.person_table:
+        raise PointageError("La hiérarchie désigne les personnes : choisissez aussi la table des noms.")
     sql = build_sql(m, punch_types, emp_types)
     S = qi(m.objs)
     with engine.begin() as c:
         for key in ("schema", "params_table", "params_index", "holidays_table", "drop_view", "drop_raw_view",
-                    "drop_function", "function", "view", "raw_view", "comment"):
+                    "drop_function", "drop_team_function", "drop_employees_view", "employees_view",
+                    "team_function", "function", "view", "raw_view", "comment"):
             c.execute(text(sql[key]))
         for key, default in PARAM_DEFAULTS.items():
             c.execute(text(
@@ -478,10 +575,20 @@ class Filters:
     statuts: list[str] = field(default_factory=list)
     sort: str = "nom"
     desc: bool = False
+    team: str = ""                    # « Équipe de » : clé du responsable (toute sa hiérarchie)
+    directs: bool = False             # seulement ses collaborateurs directs (N-1)
+    scope_root: Optional[str] = None  # périmètre imposé par le compte (manager : son équipe)
 
 
-def _where(f: Filters) -> tuple[str, dict, list]:
+def _where(f: Filters, S: str = "") -> tuple[str, dict, list]:
     clauses, params, binds = [], {"du": f.du, "au": f.au}, []
+    if f.scope_root is not None:
+        clauses.append(f"emp_key IN (SELECT emp_key FROM {S}.f_pointage_equipe(:scope_root))")
+        params["scope_root"] = f.scope_root
+    if f.team:
+        levels = " WHERE niveau <= 1" if f.directs else ""
+        clauses.append(f"emp_key IN (SELECT emp_key FROM {S}.f_pointage_equipe(:team){levels})")
+        params["team"] = f.team
     if f.q:
         clauses.append("(matricule ILIKE :q OR nom ILIKE :q OR prenom ILIKE :q "
                        "OR concat_ws(' ', nom, prenom) ILIKE :q OR concat_ws(' ', prenom, nom) ILIKE :q)")
@@ -505,7 +612,7 @@ def _order(f: Filters) -> str:
 
 def daily(engine: Engine, m: Mapping, f: Filters, page: int = 1, size: int = 100) -> dict:
     S = qi(m.objs)
-    where, params, binds = _where(f)
+    where, params, binds = _where(f, S)
     source = f"(SELECT * FROM {S}.f_pointage_journalier(:du, :au)) t"
     kpi_sql = text(f"""SELECT count(*) AS lignes,
         count(*) FILTER (WHERE statut IN ('A_L_HEURE', 'RETARD', 'INCOMPLET')) AS presents,
@@ -527,21 +634,56 @@ def daily(engine: Engine, m: Mapping, f: Filters, page: int = 1, size: int = 100
 
 def export_rows(engine: Engine, m: Mapping, f: Filters, limit: int = 200_000):
     S = qi(m.objs)
-    where, params, binds = _where(f)
+    where, params, binds = _where(f, S)
     sql = text(f"SELECT * FROM (SELECT * FROM {S}.f_pointage_journalier(:du, :au)) t{where}{_order(f)} "
                f"LIMIT :lim").bindparams(*binds)
     with engine.connect() as c:
         return c.execute(sql, {**params, "lim": limit}).mappings().all()
 
 
-def services(engine: Engine, m: Mapping) -> list[str]:
-    """Services connus (employés actifs ou ayant pointé sur le dernier mois, jours ouvrés ou non)."""
+def _scope_sql(S: str, scope_root: Optional[str]) -> str:
+    return "" if scope_root is None else f" AND emp_key IN (SELECT emp_key FROM {S}.f_pointage_equipe(:root))"
+
+
+def services(engine: Engine, m: Mapping, scope_root: Optional[str] = None) -> list[str]:
     S = qi(m.objs)
-    today = date.today()
     with engine.connect() as c:
         return [s for s in c.execute(text(
-            f"SELECT DISTINCT service FROM {S}.f_pointage_journalier(:d1, :d2) WHERE service IS NOT NULL ORDER BY 1"),
-            {"d1": today - timedelta(days=31), "d2": today}).scalars()]
+            f"SELECT DISTINCT service FROM {S}.v_pointage_employes WHERE service IS NOT NULL"
+            f"{_scope_sql(S, scope_root)} ORDER BY 1"), {"root": scope_root}).scalars()]
+
+
+def managers(engine: Engine, m: Mapping, scope_root: Optional[str] = None) -> list[tuple[str, str, int]]:
+    """Responsables (employés qui encadrent au moins une personne) : (clé, libellé, nombre de collaborateurs directs)."""
+    if not m.hier_table:
+        return []
+    S = qi(m.objs)
+    scope = "" if scope_root is None else f"WHERE r.emp_key IN (SELECT emp_key FROM {S}.f_pointage_equipe(:root)) "
+    with engine.connect() as c:
+        rows = c.execute(text(
+            f"SELECT r.emp_key, concat_ws(' ', r.nom, r.prenom) || ' (' || r.matricule || ')', count(*) "
+            f"FROM {S}.v_pointage_employes e JOIN {S}.v_pointage_employes r ON r.emp_key = e.responsable_key "
+            f"{scope}GROUP BY 1, 2 ORDER BY 2"), {"root": scope_root}).all()
+    return [(k, label, n) for k, label, n in rows]
+
+
+def resolve_employee(engine: Engine, m: Mapping, ref: str) -> Optional[tuple[str, str]]:
+    """Employé désigné par son matricule ou sa clé : (clé, « Nom Prénom »)."""
+    S = qi(m.objs)
+    with engine.connect() as c:
+        row = c.execute(text(
+            f"SELECT emp_key, concat_ws(' ', nom, prenom) FROM {S}.v_pointage_employes "
+            f"WHERE matricule = :r OR emp_key = :r ORDER BY (matricule = :r) DESC LIMIT 1"), {"r": ref.strip()}).first()
+    return (row[0], row[1]) if row else None
+
+
+def in_scope(engine: Engine, m: Mapping, scope_root: Optional[str], emp_key: str) -> bool:
+    if scope_root is None:
+        return True
+    S = qi(m.objs)
+    with engine.connect() as c:
+        return bool(c.execute(text(f"SELECT 1 FROM {S}.f_pointage_equipe(:root) WHERE emp_key = :k"),
+                              {"root": scope_root, "k": emp_key}).first())
 
 
 def detail(engine: Engine, m: Mapping, emp_key: str, day: date) -> tuple[list[str], list]:

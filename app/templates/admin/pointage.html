@@ -55,8 +55,10 @@
     </div>
     <div class="row">
       <label>Matricule affiché {{ colselect('emp_matricule_col', emp_cols, m.emp_matricule_col, True) }}</label>
-      <label>Nom {{ colselect('emp_nom_col', emp_cols, m.emp_nom_col) }}</label>
+      {% if not m.person_table %}
+      <label>Nom {{ colselect('emp_nom_col', emp_cols, m.emp_nom_col, True) }}</label>
       <label>Prénom {{ colselect('emp_prenom_col', emp_cols, m.emp_prenom_col, True) }}</label>
+      {% endif %}
     </div>
     <div class="row">
       <label>Service / département {{ colselect('emp_service_col', emp_cols, m.emp_service_col, True) }}</label>
@@ -75,9 +77,51 @@
     </div>
   </fieldset>
 
+  <fieldset class="limits"><legend>Noms et prénoms <span class="muted small">(si ils sont dans une autre table, ex. Personnel)</span></legend>
+    <div class="row">
+      <label>Table des noms {{ tableselect('person_table', m.person_table, True) }}</label>
+      {% if m.person_table %}
+      <label>Colonne de la table des employés qui y renvoie {{ colselect('emp_person_col', emp_cols, m.emp_person_col) }}</label>
+      {% endif %}
+    </div>
+    {% if m.person_table %}
+    <div class="row">
+      <label>Identifiant dans {{ m.person_table }} {{ colselect('person_key_col', person_cols, m.person_key_col) }}</label>
+      <label>Nom {{ colselect('person_nom_col', person_cols, m.person_nom_col) }}</label>
+      <label>Prénom {{ colselect('person_prenom_col', person_cols, m.person_prenom_col, True) }}</label>
+    </div>
+    {% else %}
+    <p class="muted small">Laissez « aucune » si le nom et le prénom sont dans la table des employés.</p>
+    {% endif %}
+  </fieldset>
+
+  <fieldset class="limits"><legend>Hiérarchie <span class="muted small">(responsable N+1 de chaque employé)</span></legend>
+    <div class="row">
+      <label>Table de la hiérarchie <span class="muted small">(peut être la table des employés)</span>
+        {{ tableselect('hier_table', m.hier_table, True) }}</label>
+      {% if m.hier_table %}
+      <label>Les colonnes contiennent
+        <select name="hier_ref">
+          <option value="key" {{ 'selected' if m.hier_ref in ('key', '') }}>la clé employé ({{ m.emp_key_col or 'colonne de correspondance' }})</option>
+          <option value="matricule" {{ 'selected' if m.hier_ref == 'matricule' }}>le matricule</option>
+          <option value="person" {{ 'selected' if m.hier_ref == 'person' }}>l'identifiant de la table des noms</option>
+        </select></label>
+      {% endif %}
+    </div>
+    {% if m.hier_table %}
+    <div class="row">
+      <label>Colonne de l'employé {{ colselect('hier_emp_col', hier_cols, m.hier_emp_col) }}</label>
+      <label>Colonne de son responsable {{ colselect('hier_manager_col', hier_cols, m.hier_manager_col) }}</label>
+    </div>
+    <p class="muted small">Permet la colonne « Responsable », le filtre « Équipe de » (toute la hiérarchie ou les
+      directs) et de limiter un compte à son équipe (Administration → Utilisateurs).</p>
+    {% else %}<input type="hidden" name="hier_ref" value="key">{% endif %}
+  </fieldset>
+
   <p class="muted small">Enregistrer crée ou met à jour dans PostgreSQL : <code>pointage_parametres</code> (paramètres historisés),
-    <code>pointage_jours_feries</code>, la fonction <code>f_pointage_journalier(du, au)</code> et les vues
-    <code>v_pointage_journalier</code> et <code>v_pointage_brut</code> (utilisables dans Power BI).
+    <code>pointage_jours_feries</code>, les fonctions <code>f_pointage_journalier(du, au)</code> et
+    <code>f_pointage_equipe(responsable)</code>, et les vues <code>v_pointage_journalier</code>,
+    <code>v_pointage_employes</code> et <code>v_pointage_brut</code> (utilisables dans Power BI).
     Les calculs sont vérifiés sur le dernier mois avant validation.</p>
   <div class="form-actions">
     <button class="btn primary">Enregistrer et installer</button>

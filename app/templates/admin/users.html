@@ -4,18 +4,20 @@
 <div class="page-head">
   <div><h1>Utilisateurs et rôles</h1>
     <p class="muted">Lecteur : suivi journalier et export · Manager : + tableau de bord, jobs (consultation, lancement,
-      arrêt), exécutions, logs, données · Administrateur : tout, dont connexions, paramètres, utilisateurs et audit.</p></div>
+      arrêt), exécutions, logs, données · Administrateur : tout, dont connexions, paramètres, utilisateurs et audit.
+      Un lecteur ou un manager peut être limité au suivi de son équipe.</p></div>
   <a href="/admin" class="muted">← Administration</a>
 </div>
 
 <section class="card">
   <div class="table-wrap"><table>
-    <thead><tr><th>Identifiant</th><th>Nom</th><th>Rôle</th><th>État</th><th>Dernière connexion</th><th></th></tr></thead>
+    <thead><tr><th>Identifiant</th><th>Nom</th><th>Rôle</th><th>Périmètre du suivi</th><th>État</th><th>Dernière connexion</th><th></th></tr></thead>
     <tbody>
-      <tr class="muted"><td class="mono">{{ rescue }}</td><td>Compte de secours (fichier .env)</td><td>Administrateur</td><td>actif</td><td>—</td><td></td></tr>
+      <tr class="muted"><td class="mono">{{ rescue }}</td><td>Compte de secours (fichier .env)</td><td>Administrateur</td><td>Tout le personnel</td><td>actif</td><td>—</td><td></td></tr>
       {% for u in users %}
       <tr class="{{ 'disabled' if not u.active }}">
         <td class="mono">{{ u.username }}</td><td>{{ u.full_name or '—' }}</td><td>{{ u.role_label }}</td>
+        <td class="small">{% if u.team_only %}Son équipe ({{ u.emp_matricule }}){% else %}Tout le personnel{% if u.emp_matricule %} · matricule {{ u.emp_matricule }}{% endif %}{% endif %}</td>
         <td>{% if u.active %}<span class="badge ok">actif</span>{% else %}<span class="badge">désactivé</span>{% endif %}</td>
         <td class="small">{{ u.last_login_at | dt }}</td>
         <td class="actions">
@@ -24,6 +26,10 @@
               <input type="hidden" name="user_id" value="{{ u.id }}">
               <label>Nom complet <input name="full_name" value="{{ u.full_name }}"></label>
               <label>Rôle <select name="role">{% for k, l in roles.items() %}<option value="{{ k }}" {{ 'selected' if u.role == k }}>{{ l }}</option>{% endfor %}</select></label>
+              <label>Matricule de l'employé <input name="emp_matricule" value="{{ u.emp_matricule or '' }}"></label>
+              <label>Périmètre du suivi <select name="scope">
+                <option value="tous" {{ 'selected' if u.scope != 'equipe' }}>Tout le personnel</option>
+                <option value="equipe" {{ 'selected' if u.scope == 'equipe' }}>Son équipe (hiérarchie)</option></select></label>
               <label class="check"><input type="checkbox" name="active" value="true" {{ 'checked' if u.active }}> Compte actif</label>
               <button class="btn small primary">Enregistrer</button>
             </form></details>
@@ -51,6 +57,14 @@
     <label>Rôle <select name="role">{% for k, l in roles.items() %}<option value="{{ k }}" {{ 'selected' if k == 'lecteur' }}>{{ l }}</option>{% endfor %}</select></label>
     <label>Mot de passe <input type="password" name="password" minlength="8" required autocomplete="new-password"></label>
   </div>
+  <div class="row">
+    <label>Matricule de l'employé <span class="muted small">(facultatif)</span> <input name="emp_matricule"></label>
+    <label>Périmètre du suivi <select name="scope">
+      <option value="tous">Tout le personnel</option>
+      <option value="equipe">Son équipe (toute sa hiérarchie)</option></select></label>
+  </div>
+  <p class="muted small">« Son équipe » : le compte ne voit que l'employé correspondant au matricule et toutes les
+    personnes placées sous lui dans la hiérarchie (sans effet pour un administrateur).</p>
   <div class="form-actions"><button class="btn primary">Créer</button></div>
 </form>
 {% endblock %}

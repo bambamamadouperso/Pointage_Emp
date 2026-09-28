@@ -246,10 +246,17 @@ class User(Base):
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     last_login_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    # Rattachement à un employé (matricule) et périmètre du suivi : « tous » ou « equipe » (sa hiérarchie).
+    emp_matricule: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    scope: Mapped[Optional[str]] = mapped_column(String(20), nullable=True, default="tous")
 
     @property
     def role_label(self) -> str:
         return ROLES.get(self.role, self.role)
+
+    @property
+    def team_only(self) -> bool:
+        return self.scope == "equipe" and self.role != "admin"
 
 
 class AuditEntry(Base):

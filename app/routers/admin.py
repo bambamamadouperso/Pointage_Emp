@@ -66,6 +66,7 @@ def pointage_config(request: Request, db: Session = Depends(get_db)):
     connections = db.scalars(select(Connection).where(Connection.kind == "postgresql").order_by(Connection.name)).all()
     conn = db.get(Connection, conn_id) if conn_id else (connections[0] if connections else None)
     schemas, tables, punch_cols, emp_cols, service_cols, error, installed = [], [], {}, {}, {}, None, False
+    person_cols, hier_cols = {}, {}
     if conn is not None:
         engine = make_engine(conn)
         try:
@@ -79,6 +80,16 @@ def pointage_config(request: Request, db: Session = Depends(get_db)):
             punch_cols = pointage.column_types(engine, mapping.schema, mapping.punch_table)
             emp_cols = pointage.column_types(engine, mapping.schema, mapping.emp_table)
             service_cols = pointage.column_types(engine, mapping.schema, mapping.service_table)
+            person_cols = pointage.column_types(engine, mapping.schema, mapping.person_table)
+            hier_cols = pointage.column_types(engine, mapping.schema, mapping.hier_table)
+            # Colonnes des tables facultatives : proposées dès que la table est choisie.
+            for key, cols in (("person_key_col", person_cols), ("person_nom_col", person_cols),
+                              ("person_prenom_col", person_cols), ("hier_emp_col", hier_cols),
+                              ("hier_manager_col", hier_cols)):
+                if cols and not getattr(mapping, key):
+                    setattr(mapping, key, pointage.guess(key, list(cols)))
+            if person_cols and not mapping.emp_person_col:
+                mapping.emp_person_col = pointage.guess("emp_person_col", list(emp_cols))
             pc, ec = list(punch_cols), list(emp_cols)
             if not mapping.punch_emp_col:
                 mapping.punch_emp_col = pointage.guess("punch_emp_col", pc)
@@ -89,6 +100,13 @@ def pointage_config(request: Request, db: Session = Depends(get_db)):
                     setattr(mapping, key, pointage.guess(key, ec))
             if not mapping.emp_matricule_col and not exploring:
                 mapping.emp_matricule_col = pointage.guess("emp_matricule_col", ec)
+            if not exploring and cfg.installed_at is None and not mapping.hier_table:
+                # Première configuration : hiérarchie souvent dans la table des employés (colonne « responsable »).
+                boss = pointage.guess("hier_manager_col", ec)
+                if boss:
+                    mapping.hier_table, mapping.hier_manager_col = mapping.emp_table, boss
+                    mapping.hier_emp_col = mapping.emp_key_col
+                    hier_cols = emp_cols
             installed = cfg.installed_at is not None and pointage.is_installed(engine, mapping)
         except Exception as exc:
             error = friendly(exc)
@@ -97,6 +115,7 @@ def pointage_config(request: Request, db: Session = Depends(get_db)):
     return render(
         request, "admin/pointage.html", cfg=cfg, m=mapping, conn=conn, connections=connections, schemas=schemas,
         tables=tables, punch_cols=punch_cols, emp_cols=emp_cols, service_cols=service_cols, error=error,
+        person_cols=person_cols, hier_cols=hier_cols,
         installed=installed, exploring=exploring,
     )
 
@@ -251,11 +270,17 @@ def user_save(
     role: str = Form("lecteur"),
     active: bool = Form(False),
     password: str = Form(""),
+    emp_matricule: str = Form(""),
+    scope: str = Form("tous"),
     db: Session = Depends(get_db),
 ):
     me = request.session.get("user", "")
     if role not in ROLES:
         flash(request, "Rôle inconnu.", "err")
+        return redirect("/admin/users")
+    scope = scope if scope in ("tous", "equipe") else "tous"
+    if scope == "equipe" and not emp_matricule.strip():
+        flash(request, "Pour limiter un compte à son équipe, indiquez le matricule de l'employé correspondant.", "err")
         return redirect("/admin/users")
     user = db.get(User, user_id) if user_id else User()
     if user is None:
@@ -273,8 +298,13 @@ def user_save(
     elif user.username == me and (role != user.role or not active):
         flash(request, "Vous ne pouvez pas modifier votre propre rôle ni désactiver votre compte.", "err")
         return redirect("/admin/users")
-    before = f"rôle {user.role}, {'actif' if user.active else 'inactif'}" if user_id else "création"
+    def describe(u: User) -> str:
+        return (f"rôle {u.role}, {'actif' if u.active else 'inactif'}, matricule {u.emp_matricule or '—'}, "
+                f"périmètre {'équipe' if u.scope == 'equipe' else 'tous'}")
+
+    before = describe(user) if user_id else "création"
     user.full_name, user.role, user.active = full_name.strip(), role, active if user_id else True
+    user.emp_matricule, user.scope = emp_matricule.strip() or None, scope
     if not user_id:
         db.add(user)
     try:
@@ -284,7 +314,7 @@ def user_save(
         flash(request, f"L'identifiant « {username} » existe déjà.", "err")
         return redirect("/admin/users")
     auth.audit(request, "Utilisateur créé" if not user_id else "Utilisateur modifié", user.username,
-               f"{before} → rôle {user.role}, {'actif' if user.active else 'inactif'}")
+               f"{before} → {describe(user)}")
     flash(request, f"Utilisateur « {user.username} » enregistré.", "ok")
     return redirect("/admin/users")
 

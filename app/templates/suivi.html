@@ -46,6 +46,14 @@
         {% if f.service and f.service not in services %}<option value="{{ f.service }}" selected>{{ f.service }}</option>{% endif %}
       </select>
     </label>
+    {% if has_hierarchy %}
+    <label>Équipe de
+      <select name="equipe"><option value="">{{ 'Toute mon équipe' if scope_label else 'Tout le personnel' }}</option>
+        {% for key, label, n in managers %}<option value="{{ key }}" {{ 'selected' if f.team == key }}>{{ label }} · {{ n }} direct(s)</option>{% endfor %}
+      </select>
+    </label>
+    <label class="check small directs"><input type="checkbox" name="directs" value="1" {{ 'checked' if f.directs }}> Directs seulement (N-1)</label>
+    {% endif %}
   </div>
   <div class="row statut-row">
     <span class="muted small">Statut :</span>
@@ -61,6 +69,7 @@
   </div>
 </form>
 
+{% if scope_label %}<div class="flash info">Périmètre de votre compte : équipe de <strong>{{ scope_label }}</strong> (toute la hiérarchie).</div>{% endif %}
 {% if warning %}<div class="flash warn">{{ warning }}</div>{% endif %}
 {% if error %}<div class="flash err">{{ error }}</div>{% endif %}
 
@@ -89,6 +98,7 @@
     <thead><tr>
       {% if not single_day %}{{ th('jour', 'Date') }}{% endif %}
       {{ th('matricule', 'Matricule') }}{{ th('nom', 'Nom') }}{{ th('service', 'Service') }}
+      {% if has_hierarchy %}{{ th('responsable', 'Responsable') }}{% endif %}
       {{ th('premier', '1er pointage') }}{{ th('dernier', 'Dernier pointage') }}{{ th('statut', 'Statut') }}
       {{ th('validee', 'Heure validée', 'right') }}{{ th('effective', 'Durée effective', 'right') }}
     </tr></thead>
@@ -101,6 +111,7 @@
         <td class="mono">{{ r.matricule }}</td>
         <td>{{ r.nom }} {{ r.prenom or '' }}</td>
         <td>{{ r.service or '—' }}</td>
+        {% if has_hierarchy %}<td class="small">{{ r.responsable or '—' }}</td>{% endif %}
         <td>{{ hhmm(r.premier_pointage) }}</td>
         <td>{{ hhmm(r.dernier_pointage) if r.nb_pointages > 1 else '—' }}</td>
         <td><span class="badge {{ cls }}">{{ label }}</span>{% if not r.jour_ouvre %} <span class="muted small" title="Jour non ouvré ou férié">(non ouvré)</span>{% endif %}</td>

@@ -56,13 +56,19 @@ durées, à partir des tables copiées dans PostgreSQL (ex. `punchlog` et la tab
 
 **Mise en route (administrateur)** : *Administration → Source des pointages*. Choisissez la base PostgreSQL,
 le schéma, la table des pointages (colonne employé, date/heure — ou date + heure dans deux colonnes, formats
-HFSQL `AAAAMMJJ` / `HHMMSS` acceptés) et la table des employés (identifiant, matricule, nom, prénom, service,
-éventuellement une table des services et une colonne « actif »). « Enregistrer et installer » crée dans PostgreSQL :
+HFSQL `AAAAMMJJ` / `HHMMSS` acceptés) et la table des employés (identifiant, matricule, service, éventuellement
+une table des services et une colonne « actif »). Le **nom et le prénom** peuvent être dans la table des employés
+ou dans une **autre table** (ex. `Personnel`, reliée par une colonne de la table des employés). La **hiérarchie**
+(responsable N+1 de chaque employé) peut être dans la table des employés ou dans une table dédiée ; les colonnes
+employé / responsable peuvent contenir la clé employé, le matricule ou l'identifiant de la table des noms.
+« Enregistrer et installer » crée dans PostgreSQL :
 
 | Objet | Rôle |
 |---|---|
 | `f_pointage_journalier(du, au)` | Fonction de calcul (utilisée par l'application et l'export) |
 | `v_pointage_journalier` | Vue de tout l'historique, pour Power BI ou toute autre requête |
+| `v_pointage_employes` | Employés : matricule, nom, prénom, service, actif, responsable |
+| `f_pointage_equipe(responsable)` | Toute l'équipe d'un responsable (niveau 0 = lui, 1 = directs, 2…) |
 | `v_pointage_brut` | Pointages bruts normalisés (employé, horodatage, jour) |
 | `pointage_parametres` | Paramètres horaires historisés (valeur, date d'effet, auteur) |
 | `pointage_jours_feries` | Jours fériés et fermetures (personne n'y est absent) |
@@ -85,8 +91,12 @@ les jours antérieurs restent calculés avec les anciennes valeurs (une date d'e
 
 **Écran** : cartes (présents, retards, absents, taux de ponctualité, moyennes), tableau coloré (vert à l'heure,
 orange retard, rouge absent, gris incomplet), clic sur une ligne = tous les pointages bruts de la journée.
-Filtres (jour ou période, employé, service, statuts), tri par colonne, filtres conservés dans l'URL (lien
-partageable), **export Excel** de la vue filtrée.
+Filtres (jour ou période, employé, service, **équipe d'un responsable** — toute sa hiérarchie ou ses directs —,
+statuts), colonne « Responsable », tri par colonne, filtres conservés dans l'URL (lien partageable),
+**export Excel** de la vue filtrée.
+
+**Périmètre par compte** : un lecteur ou un manager peut être rattaché à un employé (matricule) et limité à
+**son équipe** : il ne voit (écran, détail, export) que lui-même et toutes les personnes placées sous lui.
 
 **Rôles** (*Administration → Utilisateurs*) :
 
