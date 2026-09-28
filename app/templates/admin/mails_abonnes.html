@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %}Abonnés · Mails de badge{% endblock %}
+{% block content %}
+{% include "admin/_mails_head.html" %}
+{% if error %}<div class="flash err">{{ error }}</div>{% endif %}
+{% if not has_email_col %}
+  <div class="flash info">Aucune colonne e-mail n'est configurée pour les employés : saisissez l'adresse de chaque abonné ci-dessous,
+    ou indiquez la colonne dans <a href="/admin/pointage">Administration → Source des pointages</a>.</div>
+{% endif %}
+
+<form method="post" action="/admin/mails/abonnes" class="card" id="subs_form">
+  <div class="card-head">
+    <div><h2>Employés abonnés</h2>
+      <p class="muted small">Cochez les employés qui recevront un mail à chaque pointage. Laissez l'adresse vide pour utiliser celle de la fiche employé.</p></div>
+    <div class="actions"><span class="muted small" id="sub_count"></span><button class="btn primary">Enregistrer la sélection</button></div>
+  </div>
+  <div class="sub-tools">
+    <input type="search" id="sub_q" placeholder="Rechercher : nom, matricule, e-mail…" aria-label="Rechercher">
+    <select id="sub_service" aria-label="Service"><option value="">Tous les services</option>
+      {% for sv in services %}<option value="{{ sv }}">{{ sv }}</option>{% endfor %}</select>
+    <select id="sub_show" aria-label="Afficher">
+      <option value="">Tous les employés</option><option value="on">Abonnés seulement</option>
+      <option value="off">Non abonnés</option><option value="nomail">Sans adresse e-mail</option></select>
+    <button type="button" class="btn small" id="check_visible">Cocher les employés affichés</button>
+    <button type="button" class="btn small ghost" id="uncheck_visible">Décocher les employés affichés</button>
+  </div>
+  <div class="table-wrap sub-table"><table>
+    <thead><tr><th class="check-col"></th><th>Matricule</th><th>Nom</th><th>Service</th><th>Catégorie</th><th>E-mail de la fiche</th><th>Adresse à utiliser</th></tr></thead>
+    <tbody>
+    {% for e in employees %}{% set sub = subs.get(e.emp_key) %}
+      <tr data-text="{{ (e.matricule ~ ' ' ~ (e.nom or '') ~ ' ' ~ (e.prenom or '') ~ ' ' ~ (e.email or '') ~ ' ' ~ (sub.email if sub else '')) | lower }}"
+          data-service="{{ e.service or '' }}" data-mail="{{ '1' if (e.email or (sub and sub.email)) else '0' }}" class="{{ 'on' if sub }}">
+        <td class="check-col"><input type="checkbox" name="sub" value="{{ e.emp_key }}" {{ 'checked' if sub }} aria-label="Abonner {{ e.nom }}"></td>
+        <td class="mono small">{{ e.matricule }}</td>
+        <td class="nowrap">{{ e.nom }} {{ e.prenom or '' }}</td>
+        <td class="small">{{ e.service or '—' }}</td>
+        <td class="small">{{ e.categorie or '—' }}</td>
+        <td class="small">{% if e.email %}{{ e.email }}{% else %}<span class="muted">—</span>{% endif %}</td>
+        <td><input type="email" name="email_{{ e.emp_key }}" value="{{ sub.email if sub else '' }}" class="compact"
+                   placeholder="{{ e.email or 'adresse obligatoire' }}" aria-label="Adresse de {{ e.nom }}"></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  <p class="muted small empty-filter" hidden>Aucun employé ne correspond à ces critères.</p>
+</form>
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  const rows = [...document.querySelectorAll('.sub-table tbody tr')];
+  const q = document.getElementById('sub_q'), sv = document.getElementById('sub_service'), show = document.getElementById('sub_show');
+  const count = document.getElementById('sub_count'), empty = document.querySelector('.empty-filter');
+  function refresh() {
+    const text = q.value.trim().toLowerCase();
+    let visible = 0;
+    rows.forEach(tr => {
+      const box = tr.querySelector('input[type=checkbox]');
+      tr.classList.toggle('on', box.checked);
+      const ok = (!text || tr.dataset.text.includes(text)) && (!sv.value || tr.dataset.service === sv.value)
+        && (!show.value || (show.value === 'on' && box.checked) || (show.value === 'off' && !box.checked)
+            || (show.value === 'nomail' && tr.dataset.mail === '0'));
+      tr.hidden = !ok; if (ok) visible++;
+    });
+    empty.hidden = visible > 0;
+    const n = rows.filter(tr => tr.querySelector('input[type=checkbox]').checked).length;
+    count.textContent = n + ' abonné(s) sur ' + rows.length;
+  }
+  [q, sv, show].forEach(el => el.addEventListener('input', refresh));
+  rows.forEach(tr => tr.querySelector('input[type=checkbox]').addEventListener('change', refresh));
+  document.getElementById('check_visible').addEventListener('click', () => { rows.forEach(tr => { if (!tr.hidden) tr.querySelector('input[type=checkbox]').checked = true; }); refresh(); });
+  document.getElementById('uncheck_visible').addEventListener('click', () => { rows.forEach(tr => { if (!tr.hidden) tr.querySelector('input[type=checkbox]').checked = false; }); refresh(); });
+  refresh();
+})();
+</script>
+{% endblock %}

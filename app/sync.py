@@ -1,4 +1,5 @@
 """Moteur de synchronisation MariaDB -> PostgreSQL."""
+import logging
 import socket
 import threading
 import time as _time
@@ -109,6 +110,9 @@ def is_running(job_id: int) -> bool:
 # schedule_retry(job_id, délai en minutes) et suspend_job(job_id).
 schedule_retry: Optional[Callable[[int, int], None]] = None
 suspend_job: Optional[Callable[[int], None]] = None
+logger = logging.getLogger("sync")
+# after_success(job_id) : appelé après chaque synchronisation réussie (ex. mails de confirmation de badge).
+after_success: Optional[Callable[[int], None]] = None
 
 
 def cancel_job(job_id: int, reason: str = "Arrêté à la demande.", wait: float = 20, auto: bool = False) -> str:
@@ -162,6 +166,11 @@ def after_run(job_id: int, trigger: str, status: str, auto_stopped: bool, manual
         if job is None:
             return
         if status in ("success", "partial"):
+            if after_success is not None:
+                try:
+                    after_success(job_id)
+                except Exception:  # noqa: BLE001 - ne jamais faire échouer la synchronisation
+                    logger.exception("Traitement après synchronisation impossible")
             if job.retry_count:
                 write_log("INFO", f"Exécution réussie après {job.retry_count} relance(s) automatique(s).",
                           job_id=job_id)

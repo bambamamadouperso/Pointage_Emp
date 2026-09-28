@@ -107,6 +107,14 @@ def purge_old_logs() -> None:
                           f"{settings.log_retention_days} jours supprimés.")
 
 
+def notify_after_sync(job_id: int) -> None:
+    """Mails de confirmation de badge : traités en arrière-plan après une synchronisation réussie."""
+    from . import mails
+
+    scheduler.add_job(mails.process, id="mails-badge", replace_existing=True, max_instances=1,
+                      misfire_grace_time=600)
+
+
 def start() -> None:
     if scheduler.running:
         return
@@ -122,6 +130,7 @@ def start() -> None:
     if n:
         write_log("WARNING", f"{n} exécution(s) interrompue(s) lors du dernier arrêt.")
     sync.schedule_retry, sync.suspend_job = schedule_retry, suspend
+    sync.after_success = notify_after_sync
     scheduler.start()
     for job in jobs:
         schedule_job(job)

@@ -581,3 +581,125 @@ def test_category_filter(configured, pg, logged_client):
     assert "Catégories" in wb.sheetnames
     admin = logged_client.get("/admin/pointage").text
     assert "Catégorie du personnel" in admin and "<code>Cadre</code>" in admin
+
+
+def test_badge_mails_test_mode_production_and_no_duplicates(configured, pg, logged_client, monkeypatch):
+    """Mails de badge : jamais d'envoi aux employés hors production, un seul mail par pointage, modèle et essai."""
+    from app import mails
+    from app.models import MailLog, MailSettings, MailSubscriber
+
+    now = datetime.now().replace(second=0, microsecond=0)
+
+    def punch(emp_id, when):
+        with pg.begin() as c:
+            c.execute(text(f"INSERT INTO {SCHEMA}.punchlog (employe_id, date_pointage, heure_pointage, terminal) "
+                           f"VALUES (:e, :d, :h, 'MAIL')"), {"e": emp_id, "d": when.date(), "h": when.strftime("%H%M%S")})
+
+    try:
+        # Activation refusée sans adresse de test ; production refusée sans confirmation explicite.
+        base = {"enabled": "1", "mode": "test", "smtp_host": "smtp.exemple.com", "smtp_port": "587",
+                "smtp_security": "starttls", "from_email": "pointage@exemple.com", "from_name": "Pointage",
+                "company": "Société <Test>", "max_per_run": "50"}
+        r = logged_client.post("/admin/mails/parametres", data=base, follow_redirects=True)
+        assert "au moins une adresse de test" in r.text
+        r = logged_client.post("/admin/mails/parametres", data={**base, "test_recipients": "rh@exemple.com"},
+                               follow_redirects=True)
+        assert "Paramètres des mails enregistrés" in r.text and "Mode test" in r.text
+        with SessionLocal() as db:
+            s = db.query(MailSettings).one()
+            assert s.enabled and s.mode == "test" and s.since is not None
+            s.since = now - timedelta(hours=3)  # pour le test : pointages des 3 dernières heures
+            db.commit()
+
+        # Abonnés : Awa (adresse saisie ici) et Moussa (sans adresse).
+        r = logged_client.post("/admin/mails/abonnes", data={"sub": ["1", "2"], "email_1": "awa@exemple.com",
+                                                               "email_2": ""}, follow_redirects=True)
+        assert "2 abonné(s) enregistré(s)" in r.text
+        assert "awa@exemple.com" in logged_client.get("/admin/mails/abonnes").text
+
+        punch(1, now - timedelta(hours=2))
+        punch(2, now - timedelta(hours=2, minutes=5))
+        punch(3, now - timedelta(hours=2))            # Fatou : non abonnée
+        punch(1, now - timedelta(hours=5))            # avant l'activation : jamais notifié
+        sent = []
+        result = mails.process(sender=sent.append)
+        assert result["sent"] == 2 and result["mode"] == "test"
+        # Mode test : tout part vers l'adresse de test, aucun mail vers un employé.
+        assert {m["To"] for m in sent} == {"rh@exemple.com"}
+        assert all(m["Subject"].startswith("[TEST] ") for m in sent)
+        awa = next(m for m in sent if "awa@exemple.com" in m.get_body(("html",)).get_content())
+        body = awa.get_body(("html",)).get_content()
+        assert "MODE TEST" in body and "Bonjour Awa" in body and "Société &lt;Test&gt;" in body
+        assert "awa@exemple.com" not in awa["To"]
+
+        # Deuxième passage : rien de nouveau, aucun doublon.
+        assert mails.process(sender=sent.append)["sent"] == 0 and len(sent) == 2
+
+        # Nouveau pointage d'Awa : un seul mail, avec ses pointages du jour (sauf changement de date).
+        punch(1, now - timedelta(minutes=30))
+        more = []
+        assert mails.process(sender=more.append)["sent"] == 1
+        assert "Awa" in more[0].get_body(("html",)).get_content()
+
+        # Passage en production : confirmation obligatoire, puis envoi réel à l'adresse de l'employé.
+        prod = {**base, "test_recipients": "rh@exemple.com", "mode": "production"}
+        r = logged_client.post("/admin/mails/parametres", data=prod, follow_redirects=True)
+        assert "cochez la confirmation" in r.text
+        r = logged_client.post("/admin/mails/parametres", data={**prod, "confirm_production": "1"}, follow_redirects=True)
+        assert "Mode PRODUCTION activé" in r.text
+        with SessionLocal() as db:
+            s = db.query(MailSettings).one()
+            assert s.mode == "production" and s.since >= now - timedelta(minutes=1)
+            s.since = now - timedelta(minutes=20)
+            db.commit()
+        punch(1, now - timedelta(minutes=10))
+        punch(2, now - timedelta(minutes=10))
+        real = []
+        result = mails.process(sender=real.append)
+        assert result["sent"] == 1 and result["skipped"] == 1  # Moussa : aucune adresse
+        assert real[0]["To"] == "awa@exemple.com" and not real[0]["Subject"].startswith("[TEST]")
+        with SessionLocal() as db:
+            skipped = db.query(MailLog).filter(MailLog.status == "skipped").one()
+            assert skipped.emp_key == "2" and "aucune adresse" in skipped.error
+        journal = logged_client.get("/admin/mails/journal").text
+        assert "awa@exemple.com" in journal and "production" in journal and "ignoré" in journal
+
+        # Modèle : aperçu avec valeurs échappées, enregistrement, modèle par défaut.
+        page = logged_client.get("/admin/mails/modele").text
+        assert "tpl_html" in page and "{{prenom}}" in page
+        prev = logged_client.post("/admin/mails/apercu", data={"html": "<p>Bonjour {{prenom}} ({{entreprise}})</p>"}).text
+        assert prev == "<p>Bonjour Aminata (Société &lt;Test&gt;)</p>"
+        r = logged_client.post("/admin/mails/modele", data={"subject": "Badge {{heure}}", "html": "<p>{{prenom}}</p>"},
+                               follow_redirects=True)
+        assert "Modèle enregistré" in r.text
+        r = logged_client.post("/admin/mails/modele", data={"reset": "1"}, follow_redirects=True)
+        assert "Modèle par défaut rétabli" in r.text
+
+        # Mail d'essai via le serveur SMTP (simulé).
+        delivered = []
+
+        class FakeSMTP:
+            def __init__(self, host, port, timeout=None):
+                self.host = host
+            def ehlo(self): pass
+            def starttls(self, context=None): pass
+            def login(self, user, pwd): pass
+            def send_message(self, msg): delivered.append(msg)
+            def quit(self): pass
+
+        monkeypatch.setattr(mails.smtplib, "SMTP", FakeSMTP)
+        r = logged_client.post("/admin/mails/essai", data={"to": "moi@exemple.com"}, follow_redirects=True)
+        assert "essai envoyé à moi@exemple.com" in r.text
+        assert delivered[0]["To"] == "moi@exemple.com"
+        assert delivered[0]["Subject"].startswith("[TEST] ")
+        assert "Mails de badge" in logged_client.get("/admin/mails").text
+    finally:
+        with pg.begin() as c:
+            c.execute(text(f"DELETE FROM {SCHEMA}.punchlog WHERE terminal = 'MAIL'"))
+        with SessionLocal() as db:
+            db.query(MailLog).delete()
+            db.query(MailSubscriber).delete()
+            s = db.query(MailSettings).first()
+            if s:
+                s.enabled, s.mode = False, "test"
+            db.commit()

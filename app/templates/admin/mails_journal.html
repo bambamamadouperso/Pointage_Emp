@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Journal · Mails de badge{% endblock %}
+{% block content %}
+{% include "admin/_mails_head.html" %}
+<section class="card">
+  <div class="card-head">
+    <div><h2>Derniers envois</h2><p class="muted small">Un pointage n'est jamais notifié deux fois ; un envoi en échec est retenté
+      aux synchronisations suivantes (3 tentatives au maximum).</p></div>
+    <div class="actions">
+      {% for code, label in [('', 'Tous'), ('sent', 'Envoyés'), ('failed', 'Échecs'), ('skipped', 'Ignorés')] %}
+        <a class="chip {{ 'selected' if statut == code }}" href="?statut={{ code }}">{{ label }}</a>{% endfor %}
+      <form method="post" action="/admin/mails/traiter"><button class="btn small">Traiter maintenant</button></form>
+    </div>
+  </div>
+  {% if not rows %}<p class="empty">Aucun envoi pour le moment.</p>{% else %}
+  <div class="table-wrap"><table>
+    <thead><tr><th>Traité le</th><th>Employé</th><th>Pointage</th><th>Mode</th><th>Envoyé à</th><th>Statut</th></tr></thead>
+    <tbody>{% for r in rows %}
+      <tr><td class="small nowrap">{{ r.created_at | dt }}</td>
+        <td><span class="mono small">{{ r.matricule }}</span> {{ r.name }}{% if r.intended %}<br><span class="muted small">{{ r.intended }}</span>{% endif %}</td>
+        <td class="nowrap">{{ r.punch_at.strftime('%d/%m/%Y %H:%M') }}</td>
+        <td>{% if r.mode == 'production' %}<span class="badge err">production</span>{% else %}<span class="badge warn">test</span>{% endif %}</td>
+        <td class="small">{{ r.recipient or '—' }}</td>
+        <td>{% if r.status == 'sent' %}<span class="badge ok">envoyé</span>
+            {% elif r.status == 'failed' %}<span class="badge err" title="{{ r.error }}">échec ({{ r.attempts }}/3)</span><br><span class="muted small">{{ r.error[:120] }}</span>
+            {% else %}<span class="badge">ignoré</span><br><span class="muted small">{{ r.error }}</span>{% endif %}</td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+  {% endif %}
+</section>
+{% endblock %}

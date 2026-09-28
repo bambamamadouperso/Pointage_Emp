@@ -2,7 +2,7 @@
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.engine import URL
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -286,3 +286,66 @@ class PointageConfig(Base):
     sql_version: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
     conn: Mapped[Optional[Connection]] = relationship()
+
+
+class MailSettings(Base):
+    """Mails de confirmation de badge : serveur SMTP, mode (test / production), modèle (une seule ligne)."""
+
+    __tablename__ = "mail_settings"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    # « test » : tous les mails partent vers test_recipients ; « production » : vers les employés abonnés.
+    mode: Mapped[str] = mapped_column(String(20), default="test")
+    test_recipients: Mapped[str] = mapped_column(Text, default="")
+    # Seuls les pointages postérieurs à cette date (heure locale) sont notifiés : jamais l'historique.
+    since: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    smtp_host: Mapped[str] = mapped_column(String(255), default="")
+    smtp_port: Mapped[int] = mapped_column(Integer, default=587)
+    smtp_security: Mapped[str] = mapped_column(String(20), default="starttls")  # starttls, ssl, none
+    smtp_user: Mapped[str] = mapped_column(String(255), default="")
+    smtp_password_enc: Mapped[str] = mapped_column(Text, default="")
+    from_email: Mapped[str] = mapped_column(String(255), default="")
+    from_name: Mapped[str] = mapped_column(String(255), default="Pointage")
+    reply_to: Mapped[str] = mapped_column(String(255), default="")
+    company: Mapped[str] = mapped_column(String(255), default="")
+    max_per_run: Mapped[int] = mapped_column(Integer, default=200)
+    subject: Mapped[str] = mapped_column(Text, default="")
+    html: Mapped[str] = mapped_column(Text, default="")
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    last_run_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    last_run_summary: Mapped[str] = mapped_column(Text, default="")
+
+
+class MailSubscriber(Base):
+    """Employé abonné aux mails de confirmation de badge (adresse de la fiche, ou adresse saisie ici)."""
+
+    __tablename__ = "mail_subscribers"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    emp_key: Mapped[str] = mapped_column(String(100), unique=True)
+    matricule: Mapped[str] = mapped_column(String(100), default="")
+    name: Mapped[str] = mapped_column(String(255), default="")
+    email: Mapped[str] = mapped_column(String(255), default="")  # vide : adresse de la fiche employé
+    added_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    added_by: Mapped[str] = mapped_column(String(100), default="")
+
+
+class MailLog(Base):
+    """Un pointage notifié (ou non) : empêche tout second envoi pour le même pointage."""
+
+    __tablename__ = "mail_log"
+    __table_args__ = (UniqueConstraint("emp_key", "punch_at", name="uq_mail_log_punch"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+    emp_key: Mapped[str] = mapped_column(String(100), index=True)
+    matricule: Mapped[str] = mapped_column(String(100), default="")
+    name: Mapped[str] = mapped_column(String(255), default="")
+    punch_at: Mapped[datetime] = mapped_column(DateTime)
+    mode: Mapped[str] = mapped_column(String(20), default="test")
+    recipient: Mapped[str] = mapped_column(Text, default="")        # adresse(s) réellement utilisée(s)
+    intended: Mapped[str] = mapped_column(String(255), default="")  # adresse de l'employé
+    status: Mapped[str] = mapped_column(String(20), default="sent")  # sent, failed, skipped
+    attempts: Mapped[int] = mapped_column(Integer, default=1)
+    error: Mapped[str] = mapped_column(Text, default="")

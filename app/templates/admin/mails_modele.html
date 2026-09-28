@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block title %}Modèle · Mails de badge{% endblock %}
+{% block main_class %}container wide{% endblock %}
+{% block content %}
+{% include "admin/_mails_head.html" %}
+
+<form method="post" action="/admin/mails/modele" id="tpl_form" class="editor">
+  <section class="card editor-pane">
+    <div class="card-head"><div><h2>Contenu</h2><p class="muted small">HTML du mail ; l'aperçu se met à jour pendant la saisie.</p></div>
+      <div class="actions">
+        <button class="btn ghost small" name="reset" value="1" formnovalidate data-confirm="Remplacer le modèle actuel par le modèle par défaut ?">Modèle par défaut</button>
+        <button class="btn primary">Enregistrer</button>
+      </div></div>
+    <label>Objet du mail <input name="subject" id="tpl_subject" value="{{ s.subject or default_subject }}" required></label>
+    <div class="var-bar" role="group" aria-label="Insérer une variable">
+      <span class="muted small">Insérer :</span>
+      {% for key, label, _ in variables %}<button type="button" class="chip var" data-insert="{{ '{{' ~ key ~ '}}' }}" title="{{ label }}">{{ label }}</button>{% endfor %}
+    </div>
+    <div class="var-bar" role="group" aria-label="Insérer un bloc">
+      <span class="muted small">Blocs :</span>
+      <button type="button" class="chip" data-block="title">Titre</button>
+      <button type="button" class="chip" data-block="text">Paragraphe</button>
+      <button type="button" class="chip" data-block="note">Encadré</button>
+      <button type="button" class="chip" data-block="button">Bouton</button>
+      <button type="button" class="chip" data-block="divider">Séparateur</button>
+    </div>
+    <textarea name="html" id="tpl_html" spellcheck="false" required>{{ s.html }}</textarea>
+  </section>
+
+  <section class="card preview-pane">
+    <div class="card-head"><div><h2>Aperçu</h2><p class="muted small">Avec des données d'exemple.</p></div>
+      <div class="seg" role="group" aria-label="Largeur d'aperçu">
+        <button type="button" class="on" data-width="100%">Ordinateur</button><button type="button" data-width="390px">Mobile</button>
+      </div></div>
+    <div class="mail-envelope">
+      <div><span class="muted small">De</span> {{ s.from_name or 'Pointage' }} &lt;{{ s.from_email or 'pointage@exemple.com' }}&gt;</div>
+      <div><span class="muted small">Objet</span> <strong id="subject_preview"></strong></div>
+    </div>
+    <div class="preview-frame"><iframe id="tpl_preview" title="Aperçu du mail" sandbox="allow-same-origin"></iframe></div>
+  </section>
+</form>
+
+<section class="card">
+  <div class="card-head"><div><h2>Essai</h2><p class="muted small">Enregistrez d'abord le modèle, puis envoyez-vous un exemple (marqué « TEST »).</p></div></div>
+  <form method="post" action="/admin/mails/essai" class="inline">
+    <input type="email" name="to" required placeholder="votre.adresse@exemple.com" value="{{ (s.test_recipients.split(',')[0] if s.test_recipients else '') | trim }}" aria-label="Adresse d'essai">
+    <button class="btn">Envoyer un mail d'essai</button>
+  </form>
+</section>
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  const sample = {{ sample | tojson }};
+  const area = document.getElementById('tpl_html'), subject = document.getElementById('tpl_subject');
+  const frame = document.getElementById('tpl_preview'), subjectOut = document.getElementById('subject_preview');
+  const blocks = {
+    title: '<h2 style="margin:24px 0 8px;font-family:\'Segoe UI\',Helvetica,Arial,sans-serif;font-size:18px;font-weight:700;color:#0b1a2b;">Titre</h2>\n',
+    text: '<p style="margin:0 0 14px;font-family:\'Segoe UI\',Helvetica,Arial,sans-serif;font-size:15px;line-height:1.6;color:#46566a;">Votre texte ici.</p>\n',
+    note: '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:10px 0;"><tr><td style="padding:14px 16px;background:#eef5fb;border-left:3px solid #1b4f8a;border-radius:8px;font-family:\'Segoe UI\',Helvetica,Arial,sans-serif;font-size:14px;line-height:1.55;color:#24476b;">Information importante.</td></tr></table>\n',
+    button: '<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:18px 0;"><tr><td style="background:#1b4f8a;border-radius:8px;"><a href="https://" style="display:inline-block;padding:12px 22px;font-family:\'Segoe UI\',Helvetica,Arial,sans-serif;font-size:14px;font-weight:600;color:#ffffff;text-decoration:none;">Consulter mes pointages</a></td></tr></table>\n',
+    divider: '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td style="padding:16px 0;"><div style="height:1px;background:#e6ecf3;font-size:0;line-height:0;">&nbsp;</div></td></tr></table>\n',
+  };
+  function insert(text) {
+    const start = area.selectionStart, end = area.selectionEnd;
+    area.setRangeText(text, start, end, 'end'); area.focus(); schedule();
+  }
+  document.querySelectorAll('[data-insert]').forEach(b => b.addEventListener('click', () => {
+    if (document.activeElement === subject || b.dataset.target === 'subject') return;
+    insert(b.dataset.insert);
+  }));
+  // Un clic sur une variable pendant la saisie de l'objet l'insère dans l'objet.
+  let lastFocus = area;
+  [area, subject].forEach(el => el.addEventListener('focus', () => { lastFocus = el; }));
+  document.querySelectorAll('[data-insert]').forEach(b => b.addEventListener('mousedown', e => {
+    if (lastFocus === subject) { e.preventDefault(); const s = subject.selectionStart, t = subject.selectionEnd;
+      subject.setRangeText(b.dataset.insert, s, t, 'end'); subject.focus(); renderSubject(); }
+  }));
+  document.querySelectorAll('[data-block]').forEach(b => b.addEventListener('click', () => insert(blocks[b.dataset.block])));
+  area.addEventListener('keydown', e => { if (e.key === 'Tab') { e.preventDefault(); insert('  '); } });
+  function renderSubject() {
+    subjectOut.textContent = subject.value.replace(/\{\{\s*([a-z_]+)\s*\}\}/g, (m, k) => sample[k] ?? '');
+  }
+  let timer = null;
+  function schedule() { clearTimeout(timer); timer = setTimeout(refresh, 350); }
+  async function refresh() {
+    const body = new URLSearchParams({ html: area.value });
+    const res = await fetch('/admin/mails/apercu', { method: 'POST', body });
+    frame.srcdoc = await res.text();
+  }
+  frame.addEventListener('load', () => {
+    try { frame.style.height = Math.max(frame.contentDocument.documentElement.scrollHeight, 420) + 'px'; } catch (e) {}
+  });
+  document.querySelectorAll('.seg button').forEach(b => b.addEventListener('click', () => {
+    document.querySelectorAll('.seg button').forEach(x => x.classList.toggle('on', x === b));
+    frame.style.width = b.dataset.width; setTimeout(() => frame.dispatchEvent(new Event('load')), 60);
+  }));
+  area.addEventListener('input', schedule);
+  subject.addEventListener('input', renderSubject);
+  renderSubject(); refresh();
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block title %}Mails de badge{% endblock %}
+{% block content %}
+{% include "admin/_mails_head.html" %}
+
+<section class="stats mail-stats">
+  <div class="stat c-sky"><span class="label">Abonnés</span><span class="value">{{ counts.abonnes | num }}</span>
+    <span class="hint"><a href="/admin/mails/abonnes">Choisir les employés →</a></span></div>
+  <div class="stat c-ok"><span class="label">Pointages notifiés</span><span class="value">{{ counts.envoyes | num }}</span>
+    <span class="hint">depuis la mise en service</span></div>
+  <div class="stat c-err"><span class="label">Échecs</span><span class="value">{{ counts.echecs | num }}</span>
+    <span class="hint">3 tentatives maximum par pointage</span></div>
+  <div class="stat c-teal"><span class="label">Dernier traitement</span>
+    <span class="value small">{{ s.last_run_at | dt if s.last_run_at else '—' }}</span>
+    <span class="hint">{{ s.last_run_summary or 'après chaque synchronisation réussie' }}</span></div>
+</section>
+
+<form method="post" action="/admin/mails/parametres" class="card form mail-form" autocomplete="off">
+  <fieldset class="limits mode-box">
+    <legend>Envoi et mode</legend>
+    <label class="check switch"><input type="checkbox" name="enabled" value="1" {{ 'checked' if s.enabled }}>
+      <span><strong>Activer l'envoi des mails après chaque synchronisation</strong><br>
+        <span class="muted small">Seuls les pointages postérieurs à l'activation sont notifiés, jamais l'historique.
+        {% if s.since %}Pointages pris en compte depuis le {{ s.since.strftime('%d/%m/%Y à %H:%M') }}.{% endif %}</span></span></label>
+    <div class="mode-choice">
+      <label class="mode-card {{ 'on' if s.mode != 'production' }}">
+        <input type="radio" name="mode" value="test" {{ 'checked' if s.mode != 'production' }}>
+        <span class="mode-title">Mode test <span class="badge warn">recommandé pour commencer</span></span>
+        <span class="muted small">Tous les mails partent vers les adresses de test ci-dessous, marqués « TEST » avec le
+          nom de l'employé concerné. <strong>Aucun employé ne reçoit de mail.</strong></span>
+      </label>
+      <label class="mode-card prod {{ 'on' if s.mode == 'production' }}">
+        <input type="radio" name="mode" value="production" {{ 'checked' if s.mode == 'production' }}>
+        <span class="mode-title">Mode production</span>
+        <span class="muted small">Chaque employé abonné reçoit un mail à chacun de ses nouveaux pointages.</span>
+      </label>
+    </div>
+    {% if s.mode != 'production' %}
+    <label class="check confirm-prod" hidden><input type="checkbox" name="confirm_production" value="1">
+      Je confirme le passage en production : les employés abonnés recevront réellement les mails.</label>
+    {% endif %}
+    <div class="row">
+      <label class="grow">Adresse(s) de test <span class="muted small">(séparées par des virgules)</span>
+        <input name="test_recipients" value="{{ s.test_recipients }}" placeholder="rh@exemple.com, informatique@exemple.com"></label>
+      <label class="narrow-l">Maximum par passage <input type="number" name="max_per_run" min="1" max="5000" value="{{ s.max_per_run }}"></label>
+    </div>
+  </fieldset>
+
+  <fieldset class="limits">
+    <legend>Serveur SMTP</legend>
+    <div class="row">
+      <label class="grow">Serveur <input name="smtp_host" value="{{ s.smtp_host }}" placeholder="smtp.office365.com"></label>
+      <label class="narrow-l">Port <input type="number" name="smtp_port" value="{{ s.smtp_port }}"></label>
+      <label>Sécurité <select name="smtp_security">{% for k, label in security.items() %}<option value="{{ k }}" {{ 'selected' if s.smtp_security == k }}>{{ label }}</option>{% endfor %}</select></label>
+    </div>
+    <div class="row">
+      <label>Utilisateur <span class="muted small">(vide : sans authentification)</span><input name="smtp_user" value="{{ s.smtp_user }}" autocomplete="off"></label>
+      <label>Mot de passe <input type="password" name="smtp_password" placeholder="{{ '•••••••• (inchangé)' if s.smtp_password_enc else '' }}" autocomplete="new-password"></label>
+    </div>
+    {% if s.smtp_password_enc %}<label class="check small"><input type="checkbox" name="clear_password" value="1"> Effacer le mot de passe enregistré</label>{% endif %}
+  </fieldset>
+
+  <fieldset class="limits">
+    <legend>Expéditeur</legend>
+    <div class="row">
+      <label>Adresse d'expédition <input name="from_email" value="{{ s.from_email }}" placeholder="pointage@exemple.com"></label>
+      <label>Nom affiché <input name="from_name" value="{{ s.from_name }}" placeholder="Pointage"></label>
+    </div>
+    <div class="row">
+      <label>Répondre à <span class="muted small">(facultatif)</span><input name="reply_to" value="{{ s.reply_to }}" placeholder="rh@exemple.com"></label>
+      <label>Nom de l'entreprise <span class="muted small">(affiché dans le mail)</span><input name="company" value="{{ s.company }}"></label>
+    </div>
+    <p class="muted small">Le mot de passe est chiffré dans la base de l'application.</p>
+  </fieldset>
+
+  <div class="form-actions"><button class="btn primary">Enregistrer</button></div>
+</form>
+
+<section class="card">
+  <div class="card-head"><div><h2>Vérifier la configuration</h2>
+    <p class="muted small">Un mail d'exemple (marqué « TEST ») part vers l'adresse indiquée, quel que soit le mode.</p></div></div>
+  <div class="inline-forms">
+    <form method="post" action="/admin/mails/essai" class="inline">
+      <input type="email" name="to" required placeholder="votre.adresse@exemple.com" value="{{ (s.test_recipients.split(',')[0] if s.test_recipients else '') | trim }}" aria-label="Adresse d'essai">
+      <button class="btn">Envoyer un mail d'essai</button>
+    </form>
+    <form method="post" action="/admin/mails/traiter" data-confirm="Traiter maintenant les nouveaux pointages des abonnés (mode {{ 'PRODUCTION : envois réels' if s.mode == 'production' else 'test' }}) ?">
+      <button class="btn">Traiter les nouveaux pointages maintenant</button>
+    </form>
+  </div>
+</section>
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  const confirm = document.querySelector('.confirm-prod');
+  document.querySelectorAll('input[name=mode]').forEach(r => r.addEventListener('change', () => {
+    document.querySelectorAll('.mode-card').forEach(c => c.classList.toggle('on', c.contains(r) ? r.checked : !r.checked));
+    if (confirm) { confirm.hidden = r.value !== 'production' || !r.checked; }
+  }));
+})();
+</script>
+{% endblock %}

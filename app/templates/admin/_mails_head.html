@@ -1,0 +1,17 @@
+<div class="page-head">
+  <div>
+    <h1>Mails de badge</h1>
+    <p class="muted">Un mail confirme à chaque employé abonné qu'il a bien badgé, après chaque synchronisation.</p>
+  </div>
+  <div class="mail-state">
+    {% if not s.enabled %}<span class="badge">Envoi désactivé</span>
+    {% elif s.mode == 'production' %}<span class="badge err" title="Les employés abonnés reçoivent les mails">Production — envois réels</span>
+    {% else %}<span class="badge warn" title="Tous les mails partent vers les adresses de test">Mode test</span>{% endif %}
+  </div>
+</div>
+<nav class="tabs" aria-label="Mails de badge">
+  <a href="/admin/mails" class="{{ 'active' if tab == 'parametres' }}">Paramètres</a>
+  <a href="/admin/mails/abonnes" class="{{ 'active' if tab == 'abonnes' }}">Abonnés <span class="count">{{ counts.abonnes }}</span></a>
+  <a href="/admin/mails/modele" class="{{ 'active' if tab == 'modele' }}">Modèle du mail</a>
+  <a href="/admin/mails/journal" class="{{ 'active' if tab == 'journal' }}">Journal{% if counts.echecs %} <span class="count err">{{ counts.echecs }}</span>{% endif %}</a>
+</nav>

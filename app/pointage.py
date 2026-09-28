@@ -47,7 +47,7 @@ STATUTS = {
 }
 CONGES = ("CONGE_ANNUEL", "CONGE_EXCEP")
 # Version des objets PostgreSQL : si elle change, ils sont réinstallés automatiquement.
-SQL_VERSION = 11
+SQL_VERSION = 12
 # Limites des requêtes lancées depuis les pages web : une attente de verrou ou une requête lente ne doit jamais
 # bloquer le site (au pire, la page affiche une erreur au bout de 2 minutes).
 WEB_LIMITS = {"lock_timeout_s": 15, "statement_timeout_s": 120}
@@ -127,6 +127,9 @@ class Mapping:
     cat_table: str = ""
     cat_key_col: str = ""
     cat_label_col: str = ""
+    # Facultatif : adresse e-mail des employés (mails de confirmation de badge).
+    email_col: str = ""
+    email_in: str = "person"          # « person » : table des noms ; « emp » : table des employés
     # Facultatif : hiérarchie (responsable N+1), dans la table des employés ou une table dédiée.
     hier_table: str = ""
     hier_emp_col: str = ""            # l'employé
@@ -159,7 +162,7 @@ class Mapping:
     def __post_init__(self) -> None:
         # Configuration enregistrée avant l'ajout des congés (ou champ laissé vide) : valeurs par défaut.
         for name in ("leave_state_values", "leave_annual_values", "leave_excep_values", "leave_ref",
-                     "tw_state_values", "tw_ref", "cat_in"):
+                     "tw_state_values", "tw_ref", "cat_in", "email_in"):
             if not getattr(self, name):
                 setattr(self, name, type(self).__dataclass_fields__[name].default)
 
@@ -259,6 +262,7 @@ _GUESSES = {
     "person_key_col": [r"^id_?person", r"^id$", r"person", r"^id"],
     "person_nom_col": [r"^nom$", r"^nom_", r"^lastname", r"^name$", r"nom"],
     "person_prenom_col": [r"pr[ée]nom", r"firstname"],
+    "email_col": [r"^e?-?mail", r"courriel", r"mail"],
     "cat_col": [r"^statut", r"cat[ée]gor", r"coll[èe]ge", r"^cadre", r"qualif"],
     "cat_key_col": [r"^id", r"code", r"statut", r"cat[ée]gor"],
     "cat_label_col": [r"libell", r"^nom", r"label", r"d[ée]sign", r"intitul"],
@@ -424,6 +428,11 @@ def build_sql(m: Mapping, punch_types: dict[str, str], emp_types: dict[str, str]
             categorie = f"nullif(btrim({src}.{qi(m.cat_col)}::text), '')"
     else:
         categorie = "NULL::text"
+    if m.email_col:
+        email_src = "pe" if m.email_in == "person" and m.person_table else "e"
+        email = f"nullif(lower(btrim({email_src}.{qi(m.email_col)}::text)), '')"
+    else:
+        email = "NULL::text"
     if m.emp_active_col:
         values = [v.strip().lower() for v in m.emp_active_values.split(",") if v.strip()] or ["1", "true", "t", "oui"]
         alias = "pe" if by_person else "e"  # la colonne « actif » appartient à la liste de référence
@@ -466,13 +475,13 @@ hier AS (
 WITH base AS (
     SELECT DISTINCT ON (1) {base_key} AS emp_key, {base_mat} AS matricule, {nom} AS nom, {prenom} AS prenom,
            {service} AS service, COALESCE({actif}, false) AS actif, {person_ref} AS person_ref,
-           {actif_raw} AS actif_valeur, {categorie} AS categorie
+           {actif_raw} AS actif_valeur, {categorie} AS categorie, {email} AS email
     {base_from}
     WHERE {base_where}
     ORDER BY 1, 6 DESC  -- plusieurs fiches pour une même personne : la fiche active l'emporte
 ){hier_cte}
 SELECT b.emp_key, b.matricule, b.nom, b.prenom, b.service, b.actif, {hier_select}, b.actif_valeur, b.person_ref,
-       b.categorie
+       b.categorie, b.email
 FROM base b
 {hier_join}"""
     team_function = f"""
@@ -673,6 +682,10 @@ def install(engine: Engine, m: Mapping, author: str) -> None:
                 None if by_person else m.emp_active_col, m.emp_person_col):
         if col and col not in emp_types:
             raise PointageError(f"Colonne « {col} » absente de {m.emp_table}.")
+    if m.email_col:
+        email_src = m.person_table if m.email_in == "person" and m.person_table else m.emp_table
+        if m.email_col not in column_types(engine, m.schema, email_src):
+            raise PointageError(f"Colonne « {m.email_col} » absente de {email_src}.")
     if m.cat_col:
         cat_src = m.person_table if m.cat_in == "person" and m.person_table else m.emp_table
         if m.cat_col not in column_types(engine, m.schema, cat_src):
@@ -820,6 +833,46 @@ def last_punch(engine: Engine, m: Mapping, use_cache: bool = True) -> Optional[d
             value = c.execute(text(f"SELECT max(horodatage) FROM {qi(m.objs)}.v_pointage_brut")).scalar()
     _last_punch_cache[key] = (_t.monotonic(), value)
     return value
+
+
+def punches_since(engine: Engine, m: Mapping, since: datetime, keys: list[str]) -> list[dict]:
+    """Pointages postérieurs à « since » des employés indiqués, avec leur rang dans la journée (1 = arrivée)
+    et la fiche de l'employé (nom, service, e-mail). Lecture limitée aux jours concernés grâce à la colonne date."""
+    if not keys:
+        return []
+    S = qi(m.objs)
+    types = column_types(engine, m.schema, m.punch_table)
+    raw = _raw_day_col(m, types)
+    ts = _ts_expr(m, types)
+    pkey = _as_text(f"p.{qi(m.punch_emp_col)}", types.get(m.punch_emp_col, ""))
+    prefilter = f" AND {raw} >= :jour - 1" if raw else ""
+    sql = text(f"""
+        WITH jour AS (
+            SELECT {pkey} AS emp_key, {ts} AS ts FROM {qt(m.schema, m.punch_table)} p
+            WHERE {pkey} IN :keys{prefilter}
+        ), rang AS (
+            SELECT DISTINCT emp_key, ts FROM jour WHERE ts >= CAST(:jour AS date)
+        ), numerote AS (
+            SELECT emp_key, ts, row_number() OVER (PARTITION BY emp_key, ts::date ORDER BY ts) AS rang,
+                   count(*) OVER (PARTITION BY emp_key, ts::date) AS nb_jour
+            FROM rang
+        )
+        SELECT n.emp_key, n.ts, n.rang, n.nb_jour, e.matricule, e.nom, e.prenom, e.service, e.email
+        FROM numerote n JOIN {S}.v_pointage_employes e ON e.emp_key = n.emp_key
+        WHERE n.ts >= :since AND n.ts <= :limite
+        ORDER BY n.emp_key, n.ts""").bindparams(bindparam("keys", expanding=True))
+    with engine.connect() as c:
+        return [dict(r) for r in c.execute(sql, {"keys": keys, "since": since, "jour": since.date(),
+                                                  "limite": datetime.now() + timedelta(days=1)}).mappings()]
+
+
+def employee_directory(engine: Engine, m: Mapping) -> list[dict]:
+    """Employés actifs de la liste (pour choisir les abonnés aux mails), avec leur e-mail éventuel."""
+    S = qi(m.objs)
+    with engine.connect() as c:
+        return [dict(r) for r in c.execute(text(
+            f"SELECT emp_key, matricule, nom, prenom, service, categorie, email FROM {S}.v_pointage_employes "
+            f"WHERE actif ORDER BY nom, prenom, matricule")).mappings()]
 
 
 def is_installed(engine: Engine, m: Mapping) -> bool:

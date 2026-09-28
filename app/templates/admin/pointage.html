@@ -111,6 +111,19 @@
     {% if cat_values %}<p class="muted small">Valeurs trouvées : {% for v in cat_values %}<code>{{ v }}</code>{{ ', ' if not loop.last }}{% endfor %}</p>{% endif %}
   </fieldset>
 
+  <fieldset class="limits"><legend>Adresse e-mail des employés <span class="muted small">(mails de confirmation de badge)</span></legend>
+    {% set email_person = m.email_in != 'emp' and m.person_table %}
+    <div class="row">
+      <label>Colonne de l'e-mail
+        <select name="email_in" data-reload>
+          <option value="person" {{ 'selected' if email_person }} {{ 'disabled' if not m.person_table }}>dans {{ m.person_table or 'la table des noms' }}</option>
+          <option value="emp" {{ 'selected' if not email_person }}>dans {{ m.emp_table or 'la table des employés' }}</option>
+        </select></label>
+      <label>&nbsp;{{ colselect('email_col', person_cols if email_person else emp_cols, m.email_col, True) }}</label>
+    </div>
+    <p class="muted small">Facultatif : sans cette colonne, saisissez l'adresse de chaque abonné dans Administration → Mails de badge.</p>
+  </fieldset>
+
   <fieldset class="limits"><legend>Qui doit pointer ? <span class="muted small">(chaque jour ouvré sans pointage = absent)</span></legend>
     {% set by_person = m.reference == 'person' and m.person_table %}
     <div class="row">
