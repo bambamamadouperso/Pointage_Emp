@@ -54,6 +54,7 @@ class RunControl:
         self.job_id = job_id
         self.run_id: Optional[int] = None
         self.started = _time.monotonic()
+        self.max_minutes = settings.max_run_minutes
         self.stop = threading.Event()
         self.reason = ""
         self.forced = False
@@ -131,15 +132,13 @@ def cancel_job(job_id: int, reason: str = "Arrêté à la demande.", wait: float
     return "forced"
 
 
-def cancel_overdue(max_minutes: int) -> None:
-    """Arrête les exécutions qui dépassent la durée maximale (appelé régulièrement par le planificateur)."""
-    if max_minutes <= 0:
-        return
+def cancel_overdue() -> None:
+    """Arrête les exécutions qui dépassent leur durée maximale (appelé chaque minute par le planificateur)."""
     with _active_guard:
         late = [c for c in _active.values()
-                if not c.stop.is_set() and _time.monotonic() - c.started > max_minutes * 60]
+                if c.max_minutes > 0 and not c.stop.is_set() and _time.monotonic() - c.started > c.max_minutes * 60]
     for c in late:
-        cancel_job(c.job_id, f"Durée maximale dépassée ({max_minutes} min).")
+        cancel_job(c.job_id, f"Arrêt automatique : durée maximale dépassée ({c.max_minutes} min).")
 
 
 def _close_run(run_id: Optional[int], job_id: int, message: str) -> None:
@@ -174,17 +173,19 @@ def _close_orphan_runs(job_id: int, reason: str) -> int:
 # --------------------------------------------------------------------------- connexions
 
 
-def make_engine(conn: Connection) -> Engine:
+def make_engine(conn: Connection, lock_wait_minutes: Optional[int] = None) -> Engine:
     kwargs: dict[str, Any] = {"pool_pre_ping": True}
     if conn.kind == "mariadb":
         kwargs["connect_args"] = {"connect_timeout": 10, "read_timeout": 3600}
     elif conn.kind == "postgresql":
         kwargs["connect_args"] = {
             "connect_timeout": 10, "application_name": "mariadb-pg-sync",
-            # Connexion coupée détectée en quelques minutes ; attente d'un verrou limitée à 10 min.
+            # Connexion coupée détectée en quelques minutes.
             "keepalives": 1, "keepalives_idle": 60, "keepalives_interval": 10, "keepalives_count": 5,
-            "options": "-c lock_timeout=600000",
         }
+        wait = settings.lock_wait_minutes if lock_wait_minutes is None else lock_wait_minutes
+        if wait > 0:  # attente d'un verrou limitée (sinon un job peut rester bloqué indéfiniment)
+            kwargs["connect_args"]["options"] = f"-c lock_timeout={wait * 60000}"
     return create_engine(conn.sqlalchemy_url(), **kwargs)
 
 
@@ -755,6 +756,7 @@ def _run_job_locked(
         db.add(run)
         db.commit()
         control.run_id = run.id
+        control.max_minutes = job.effective_max_run_minutes
         log = RunLogger(job.id, run.id)
         log.control = control
         started = _time.monotonic()
@@ -766,7 +768,7 @@ def _run_job_locked(
                 raise ValueError("La source doit être MariaDB, HFSQL ou Google Sheets et la cible PostgreSQL.")
             is_sheet = job.source.kind == "gsheet"
             is_odbc = job.source.kind == "hfsql"
-            dst_engine = control.watch(make_engine(job.target))
+            dst_engine = control.watch(make_engine(job.target, job.effective_lock_wait_minutes))
             checks = [("cible", dst_engine)]
             if is_odbc:
                 try:

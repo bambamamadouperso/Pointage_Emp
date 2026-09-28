@@ -39,6 +39,23 @@
       </span>
     </label>
   </div>
+  <fieldset class="limits">
+    <legend>Protections <span class="muted small">(vide = valeur par défaut, 0 = sans limite)</span></legend>
+    <div class="row">
+    <label>Arrêt automatique après
+      <span class="inline"><input name="max_run_minutes" type="number" min="0" class="narrow"
+        value="{{ job.max_run_minutes if job.max_run_minutes is not none else '' }}"
+        placeholder="{{ defaults.max_run_minutes }}"> minutes</span>
+      <span class="muted small">Une exécution plus longue est arrêtée (défaut : {{ defaults.max_run_minutes or 'sans limite' }}{{ ' min' if defaults.max_run_minutes }}).</span>
+    </label>
+    <label>Attente maximale d'un verrou PostgreSQL
+      <span class="inline"><input name="lock_wait_minutes" type="number" min="0" class="narrow"
+        value="{{ job.lock_wait_minutes if job.lock_wait_minutes is not none else '' }}"
+        placeholder="{{ defaults.lock_wait_minutes }}"> minutes</span>
+      <span class="muted small">Si une table cible reste verrouillée plus longtemps, son écriture échoue au lieu de bloquer le job (défaut : {{ defaults.lock_wait_minutes or 'sans limite' }}{{ ' min' if defaults.lock_wait_minutes }}).</span>
+    </label>
+    </div>
+  </fieldset>
   <label class="check"><input type="checkbox" name="enabled" value="true" {{ 'checked' if job.enabled }}> Job actif (exécuté automatiquement)</label>
   <p class="muted small">Le schéma et les tables cibles sont créés automatiquement s'ils n'existent pas. Les tables à copier se configurent après l'enregistrement.</p>
   <div class="form-actions">

@@ -102,12 +102,27 @@ class SyncJob(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     last_run_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     last_status: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    # Protections (minutes, 0 = sans limite, vide = valeur par défaut MAX_RUN_MINUTES / LOCK_WAIT_MINUTES).
+    max_run_minutes: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    lock_wait_minutes: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
     source: Mapped[Connection] = relationship(foreign_keys=[source_id])
     target: Mapped[Connection] = relationship(foreign_keys=[target_id])
     tables: Mapped[list["TableMapping"]] = relationship(
         back_populates="job", cascade="all, delete-orphan", order_by="TableMapping.id"
     )
+
+    @property
+    def effective_max_run_minutes(self) -> int:
+        from .config import settings
+
+        return settings.max_run_minutes if self.max_run_minutes is None else self.max_run_minutes
+
+    @property
+    def effective_lock_wait_minutes(self) -> int:
+        from .config import settings
+
+        return settings.lock_wait_minutes if self.lock_wait_minutes is None else self.lock_wait_minutes
 
     @property
     def interval_label(self) -> str:

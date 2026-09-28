@@ -6,6 +6,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .. import gsheet, scheduler
+from ..config import settings
 from ..database import get_db
 from ..joblog import write_log
 from ..models import MODE_FULL, MODE_INCREMENTAL, MODE_LABELS, SOURCE_KINDS, Connection, JobRun, SyncJob, TableMapping
@@ -59,6 +60,7 @@ def _form(request: Request, db: Session, job: SyncJob):
         targets=_connections(db, "postgresql"),
         interval_value=value,
         interval_unit=unit,
+        defaults=settings,
     )
 
 
@@ -86,6 +88,8 @@ def save_job(
     interval_value: int = Form(...),
     interval_unit: str = Form("minutes"),
     enabled: bool = Form(False),
+    max_run_minutes: str = Form(""),
+    lock_wait_minutes: str = Form(""),
     db: Session = Depends(get_db),
 ):
     job = _get_job(db, job_id) if job_id else SyncJob()
@@ -100,7 +104,17 @@ def save_job(
         flash(request, "L'intervalle minimum est de 10 secondes.", "err")
         return redirect(f"/jobs/{job_id}/edit" if job_id else "/jobs/new")
 
+    limits = {}
+    for field_name, raw, label in (("max_run_minutes", max_run_minutes, "La durée maximale"),
+                                   ("lock_wait_minutes", lock_wait_minutes, "L'attente maximale d'un verrou")):
+        raw = raw.strip()
+        if raw and (not raw.isdigit()):
+            flash(request, f"{label} doit être un nombre entier de minutes (0 = sans limite, vide = par défaut).", "err")
+            return redirect(f"/jobs/{job_id}/edit" if job_id else "/jobs/new")
+        limits[field_name] = int(raw) if raw else None
+
     job.name, job.source_id, job.target_id = name.strip(), source_id, target_id
+    job.max_run_minutes, job.lock_wait_minutes = limits["max_run_minutes"], limits["lock_wait_minutes"]
     job.target_schema = target_schema.strip() or "public"
     job.interval_seconds, job.enabled = seconds, enabled
     if not job_id:

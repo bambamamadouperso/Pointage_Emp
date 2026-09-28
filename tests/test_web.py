@@ -210,3 +210,55 @@ def test_stop_forced_and_orphan_runs(logged_client):
     with SessionLocal() as db:
         assert not db.query(JobRun).filter_by(job_id=job_id, status="running").count()
     assert "Arrêté" in logged_client.get("/runs").text
+
+
+def test_job_limits_form(logged_client):
+    """Durée maximale et attente de verrou réglables par job (vide = défaut, 0 = sans limite)."""
+    from app.config import settings
+    from app.database import SessionLocal
+    from app.models import Connection, SyncJob
+
+    with SessionLocal() as db:
+        s = Connection(name="lim-src", kind="mariadb", host="h", port=3306, database="d", username="u")
+        d = Connection(name="lim-dst", kind="postgresql", host="h", port=5432, database="d", username="u")
+        db.add_all([s, d])
+        db.commit()
+        sid, did = s.id, d.id
+    form = {"name": "lim-job", "source_id": sid, "target_id": did, "interval_value": 5, "interval_unit": "minutes",
+            "max_run_minutes": "45", "lock_wait_minutes": "0"}
+    assert "Protections" in logged_client.get("/jobs/new").text
+    logged_client.post("/jobs/save", data=form)
+    with SessionLocal() as db:
+        job = db.query(SyncJob).filter_by(name="lim-job").one()
+        assert (job.max_run_minutes, job.lock_wait_minutes) == (45, 0)
+        assert (job.effective_max_run_minutes, job.effective_lock_wait_minutes) == (45, 0)
+        job_id = job.id
+    assert "45 min / sans limite" in " ".join(logged_client.get(f"/jobs/{job_id}").text.split())
+    logged_client.post("/jobs/save", data={**form, "job_id": job_id, "max_run_minutes": "", "lock_wait_minutes": "x"})
+    with SessionLocal() as db:
+        assert db.get(SyncJob, job_id).max_run_minutes == 45  # saisie invalide refusée
+    logged_client.post("/jobs/save", data={**form, "job_id": job_id, "max_run_minutes": "", "lock_wait_minutes": ""})
+    with SessionLocal() as db:
+        job = db.get(SyncJob, job_id)
+        assert job.max_run_minutes is None and job.effective_max_run_minutes == settings.max_run_minutes
+        assert job.effective_lock_wait_minutes == settings.lock_wait_minutes
+
+
+def test_cancel_overdue_uses_job_limit():
+    import time
+
+    from app import sync
+
+    control = sync.RunControl(987654)
+    control.max_minutes = 1
+    control.started = time.monotonic() - 61
+    sync._active[987654] = control
+    sync.cancel_overdue()
+    assert control.stop.is_set() and "1 min" in control.reason and not sync.is_running(987654)
+    idle = sync.RunControl(987655)
+    idle.max_minutes = 0  # sans limite
+    idle.started = time.monotonic() - 10 ** 6
+    sync._active[987655] = idle
+    sync.cancel_overdue()
+    assert not idle.stop.is_set()
+    del sync._active[987655]

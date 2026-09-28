@@ -218,3 +218,5 @@ a.sort:hover, a.sort.active { color: var(--primary); }
 .popover p { margin: 0; }
 /* Un panneau ouvert dans un tableau ne doit pas être coupé par le défilement horizontal. */
 .table-wrap:has(details[open]) { overflow: visible; }
+fieldset.limits { border: 1px solid var(--border, #e2e8f0); border-radius: 8px; padding: .6rem .9rem .9rem; margin: 0; min-width: 0; }
+fieldset.limits legend { font-weight: 600; padding: 0 .3rem; }

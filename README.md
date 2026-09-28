@@ -39,7 +39,8 @@ avec historique et logs.
   en cours est annulée (PostgreSQL, MariaDB, pilote HFSQL) ; les lots déjà écrits en mode incrémental sont
   conservés, la table en cours en mode complet revient à son état précédent. L'exécution passe à l'état
   « Arrêté » et le job peut être relancé aussitôt. Une exécution qui dépasse `MAX_RUN_MINUTES` est arrêtée
-  automatiquement, et l'attente d'un verrou PostgreSQL est limitée à 10 minutes.
+  automatiquement, et l'attente d'un verrou PostgreSQL est limitée à `LOCK_WAIT_MINUTES`. Ces deux délais
+  se règlent aussi job par job (formulaire du job, rubrique « Protections »).
 
 > Le mode incrémental ne répercute pas les suppressions faites dans la source. Pour une table où des
 > lignes sont supprimées, utilisez le mode complet.
@@ -190,6 +191,7 @@ chaque worker exécuterait les jobs.
 | `BATCH_SIZE`            | `5000`                     | Lignes lues/écrites par lot |
 | `SCHEDULER_MAX_WORKERS` | `4`                        | Jobs exécutés en parallèle au maximum |
 | `MAX_RUN_MINUTES`       | `360`                      | Arrêt automatique d'une exécution plus longue (0 = sans limite) |
+| `LOCK_WAIT_MINUTES`     | `10`                       | Attente maximale d'un verrou PostgreSQL (0 = sans limite) |
 
 Si vous changez `SECRET_KEY` (ou `ENCRYPTION_KEY`), ressaisissez les mots de passe des connexions.
 

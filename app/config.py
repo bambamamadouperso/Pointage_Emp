@@ -30,6 +30,8 @@ class Settings:
     max_workers: int = field(default_factory=lambda: _int("SCHEDULER_MAX_WORKERS", 4))
     # Durée maximale d'une exécution (minutes) : au-delà, elle est arrêtée automatiquement (0 = sans limite).
     max_run_minutes: int = field(default_factory=lambda: _int("MAX_RUN_MINUTES", 360))
+    # Attente maximale d'un verrou PostgreSQL (minutes) avant d'abandonner l'écriture (0 = sans limite).
+    lock_wait_minutes: int = field(default_factory=lambda: _int("LOCK_WAIT_MINUTES", 10))
     # Fuseau horaire d'affichage des dates dans le tableau de bord.
     timezone: str = field(default_factory=lambda: os.getenv("APP_TIMEZONE", "UTC"))
     # Désactive le planificateur (utile pour les tests).

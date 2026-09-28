@@ -99,7 +99,7 @@ def start() -> None:
     scheduler.start()
     for job in jobs:
         schedule_job(job)
-    scheduler.add_job(cancel_overdue, IntervalTrigger(minutes=1), args=[settings.max_run_minutes],
+    scheduler.add_job(cancel_overdue, IntervalTrigger(minutes=1),
                       id="watchdog", executor="watchdog", replace_existing=True)
     scheduler.add_job(purge_old_logs, IntervalTrigger(hours=6), id="purge-logs", replace_existing=True,
                       next_run_time=datetime.now())

@@ -258,3 +258,21 @@ def test_stop_job_blocked_on_postgres_lock(job, engines):
         assert db.get(SyncJob, job).last_status == "cancelled"
     # Le job peut être relancé normalement.
     assert _run(job).status == "success"
+
+
+def test_lock_wait_limit_per_job(job, engines):
+    """L'attente maximale d'un verrou réglée sur le job est appliquée aux connexions PostgreSQL."""
+    from app.sync import make_engine
+
+    src, dst = engines
+    assert _run(job).status == "success"
+    with SessionLocal() as db:
+        conn = db.get(SyncJob, job).target
+        eng = make_engine(conn, 3)
+        with eng.connect() as c:
+            assert c.execute(text("SHOW lock_timeout")).scalar() == "3min"
+        eng.dispose()
+        eng = make_engine(conn, 0)
+        with eng.connect() as c:
+            assert c.execute(text("SHOW lock_timeout")).scalar() == "0"
+        eng.dispose()
