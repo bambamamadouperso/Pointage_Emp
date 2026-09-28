@@ -381,3 +381,36 @@ def audit_log(request: Request, user: str = "", q: str = "", du: str = "", au: s
     return render(request, "admin/audit.html", entries=entries, total=total, page=page,
                   pages=max((total + size - 1) // size, 1), usernames=usernames,
                   filters={"user": user, "q": q, "du": du, "au": au})
+
+
+# --------------------------------------------------------------------------- vérifier un employé
+
+
+@router.get("/verifier")
+def check_employee(request: Request, q: str = "", du: str = "", au: str = "", db: Session = Depends(get_db)):
+    """Explique, jour par jour, pourquoi un employé apparaît (ou non) absent."""
+    cfg, mapping = _mapping_ready(db)
+    today = date.today()
+    d_au = pointage.parse_day(au) or today
+    d_du = pointage.parse_day(du) or (d_au - timedelta(days=13))
+    if d_du > d_au:
+        d_du, d_au = d_au, d_du
+    d_du = max(d_du, d_au - timedelta(days=92))
+    context = dict(q=q, du=d_du, au=d_au, mapping=mapping, results=None, others=[], error=None, calendar=[],
+                   last=None, hhmm=pointage.hhmm, statuts=pointage.STATUTS)
+    if mapping is not None and q.strip():
+        engine = make_engine(cfg.conn)
+        try:
+            context["results"], context["others"] = pointage.inspect_employee(engine, mapping, q, d_du, d_au)
+            context["last"] = pointage.last_punch(engine, mapping)
+            context["workdays"] = pointage.params_at(engine, mapping, d_au)["jours_ouvres"].split(",")
+        except Exception as exc:
+            context["error"] = friendly(exc)
+        finally:
+            engine.dispose()
+        days, d = [], d_du
+        while d <= min(d_au, today):
+            days.append(d)
+            d += timedelta(days=1)
+        context["calendar"] = days
+    return render(request, "admin/verifier.html", **context)

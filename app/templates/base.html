@@ -57,6 +57,7 @@
     {{ nav('/admin', 'grid', "Vue d'ensemble", path == '/admin') }}
     {{ nav('/admin/parametres', 'sliders', 'Paramètres horaires', path.startswith('/admin/parametres')) }}
     {{ nav('/admin/pointage', 'link', 'Source des pointages', path.startswith('/admin/pointage')) }}
+    {{ nav('/admin/verifier', 'user', 'Vérifier un employé', path.startswith('/admin/verifier')) }}
     {{ nav('/admin/users', 'users', 'Utilisateurs', path.startswith('/admin/users')) }}
     {{ nav('/admin/audit', 'shield', "Journal d'audit", path.startswith('/admin/audit')) }}
     {% endif %}

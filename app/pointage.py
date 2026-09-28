@@ -39,7 +39,7 @@ STATUTS = {
     "NON_OUVRE": ("Jour non ouvré", "st-off"),
 }
 # Version des objets PostgreSQL : si elle change, ils sont réinstallés automatiquement.
-SQL_VERSION = 4
+SQL_VERSION = 5
 
 SORTABLE = {
     "jour": "jour", "matricule": "matricule", "nom": "nom", "service": "service", "responsable": "responsable",
@@ -296,8 +296,9 @@ def build_sql(m: Mapping, punch_types: dict[str, str], emp_types: dict[str, str]
         values = [v.strip().lower() for v in m.emp_active_values.split(",") if v.strip()] or ["1", "true", "t", "oui"]
         alias = "pe" if by_person else "e"  # la colonne « actif » appartient à la liste de référence
         actif = f"lower(btrim({alias}.{qi(m.emp_active_col)}::text)) IN ({', '.join(lit(v) for v in values)})"
+        actif_raw = f"btrim({alias}.{qi(m.emp_active_col)}::text)"
     else:
-        actif = "true"
+        actif, actif_raw = "true", "NULL::text"
     if by_person:
         # Tout le personnel est attendu : on part de la table des noms, reliée (si possible) à la table des employés.
         pkey_person = f"btrim(pe.{qi(m.person_key_col)}::text)"
@@ -332,12 +333,13 @@ hier AS (
     employees_view = f"""CREATE VIEW {S}.v_pointage_employes AS
 WITH base AS (
     SELECT DISTINCT ON (1) {base_key} AS emp_key, {base_mat} AS matricule, {nom} AS nom, {prenom} AS prenom,
-           {service} AS service, ({actif}) AS actif, {person_ref} AS person_ref
+           {service} AS service, COALESCE({actif}, false) AS actif, {person_ref} AS person_ref,
+           {actif_raw} AS actif_valeur
     {base_from}
     WHERE {base_where}
-    ORDER BY 1
+    ORDER BY 1, 6 DESC  -- plusieurs fiches pour une même personne : la fiche active l'emporte
 ){hier_cte}
-SELECT b.emp_key, b.matricule, b.nom, b.prenom, b.service, b.actif, {hier_select}
+SELECT b.emp_key, b.matricule, b.nom, b.prenom, b.service, b.actif, {hier_select}, b.actif_valeur
 FROM base b
 {hier_join}"""
     team_function = f"""
@@ -549,6 +551,34 @@ def diagnostics(engine: Engine, m: Mapping, days: int = 31) -> dict:
             {"d": since}).scalar()
     d["jours"] = days
     return d
+
+
+def inspect_employee(engine: Engine, m: Mapping, query: str, du: date, au: date) -> list[dict]:
+    """« Pourquoi cet employé n'apparaît pas absent ? » : fiche, statut actif, pointages et calcul jour par jour."""
+    S = qi(m.objs)
+    like = f"%{query.strip()}%"
+    with engine.connect() as c:
+        people = c.execute(text(
+            f"SELECT * FROM {S}.v_pointage_employes WHERE matricule ILIKE :q OR emp_key = :exact "
+            f"OR concat_ws(' ', nom, prenom) ILIKE :q OR concat_ws(' ', prenom, nom) ILIKE :q "
+            f"ORDER BY nom, prenom LIMIT 5"), {"q": like, "exact": query.strip()}).mappings().all()
+        out = []
+        for p in people:
+            days = c.execute(text(
+                f"SELECT jour, jour_ouvre, statut, statut_libelle, nb_pointages, premier_pointage, dernier_pointage "
+                f"FROM {S}.f_pointage_journalier(:du, :au) WHERE emp_key = :k ORDER BY jour"),
+                {"du": du, "au": au, "k": p["emp_key"]}).mappings().all()
+            punches = c.execute(text(
+                f"SELECT count(*), min(horodatage), max(horodatage) FROM {S}.v_pointage_brut WHERE emp_key = :k"),
+                {"k": p["emp_key"]}).one()
+            out.append({"emp": dict(p), "days": days, "punch_count": punches[0], "first_punch": punches[1],
+                        "last_punch": punches[2]})
+        # Badges du même numéro enregistrés sous une autre clé (mauvaise correspondance employé ↔ pointages).
+        others = c.execute(text(
+            f"SELECT emp_key, count(*) AS n, max(horodatage) AS dernier FROM {S}.v_pointage_brut "
+            f"WHERE emp_key ILIKE :q AND emp_key NOT IN (SELECT emp_key FROM {S}.v_pointage_employes) "
+            f"GROUP BY 1 ORDER BY 3 DESC LIMIT 5"), {"q": like}).mappings().all()
+    return out, others
 
 
 def last_punch(engine: Engine, m: Mapping) -> Optional[datetime]:

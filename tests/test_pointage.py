@@ -342,3 +342,17 @@ def test_reference_whole_personnel(configured, pg, logged_client):
     finally:
         restore = {**pointage.Mapping.from_json(original).__dict__, "conn_id": conn_id}
         assert "installées" in logged_client.post("/admin/pointage", data=restore, follow_redirects=True).text
+
+
+def test_check_employee_tool(configured, logged_client):
+    """« Vérifier un employé » explique jour par jour pourquoi une personne est (ou n'est pas) absente."""
+    period = f"&du={MON.isoformat()}&au={SAT.isoformat()}"
+    inactive = logged_client.get(f"/admin/verifier?q=E006{period}").text
+    assert "Gueye" in inactive and "Inactif : jamais compté absent" in inactive
+    assert "Actif = « 0 »" in inactive and "non affiché" in inactive
+    active = logged_client.get(f"/admin/verifier?q=Ba Khady{period}").text
+    assert "Actif : attendu chaque jour ouvré" in active and active.count(">Absent<") == 4  # lun., mar., jeu., ven.
+    assert "Jour non ouvré" in active  # mercredi férié, samedi
+    unknown = logged_client.get(f"/admin/verifier?q=99{period}").text
+    assert "Badges hors liste" in unknown and "Aucune personne" in unknown
+    assert "Vérifier un employé" in logged_client.get(f"/suivi?date={MON.isoformat()}").text

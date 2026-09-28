@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}Vérifier un employé{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Vérifier un employé</h1>
+    <p class="muted">Pourquoi une personne apparaît — ou n'apparaît pas — absente : fiche, statut actif, pointages reçus et calcul jour par jour.</p></div>
+  <a href="/suivi" class="muted">← Suivi journalier</a>
+</div>
+{% if mapping is none %}<div class="flash warn">Configurez d'abord la <a href="/admin/pointage">source des pointages</a>.</div>{% else %}
+<form method="get" class="card filters">
+  <label class="grow">Employé <input type="search" name="q" value="{{ q }}" placeholder="Matricule, nom ou prénom…" required autofocus></label>
+  <label>Du <input type="date" name="du" value="{{ du.isoformat() }}"></label>
+  <label>Au <input type="date" name="au" value="{{ au.isoformat() }}"></label>
+  <button class="btn primary">Vérifier</button>
+</form>
+{% if error %}<div class="flash err">{{ error }}</div>{% endif %}
+{% if results is not none %}
+  {% if last %}<p class="muted small">Dernier pointage reçu (toutes personnes confondues) : <strong>{{ last.strftime('%d/%m/%Y %H:%M') }}</strong>.
+    Les jours suivants, personne n'a de pointage : les employés actifs y sont absents.</p>{% endif %}
+  {% if not results %}
+    <div class="flash warn">Aucune personne « {{ q }} » dans la liste de référence
+      ({{ 'tout le personnel de ' ~ mapping.person_table if mapping.reference == 'person' and mapping.person_table else 'table ' ~ mapping.emp_table }}).
+      Elle ne peut donc pas être comptée absente. Vérifiez la liste de référence dans <a href="/admin/pointage">Source des pointages</a>.</div>
+  {% endif %}
+  {% for r in results %}
+  {% set e = r.emp %}
+  {% set shown = r.days | map(attribute='jour') | list %}
+  <section class="card">
+    <div class="card-head">
+      <h2>{{ e.nom }} {{ e.prenom or '' }} <span class="muted small mono">{{ e.matricule }}</span></h2>
+      {% if e.actif %}<span class="badge ok">Actif : attendu chaque jour ouvré</span>{% else %}<span class="badge err">Inactif : jamais compté absent</span>{% endif %}
+    </div>
+    <div class="stats">
+      <div class="stat c-violet"><span class="label">Clé employé</span><span class="value small mono">{{ e.emp_key }}</span></div>
+      <div class="stat {{ 'c-ok' if e.actif else 'c-err' }}"><span class="label">Colonne « actif »</span>
+        <span class="value small">{% if mapping.emp_active_col %}{{ mapping.emp_active_col }} = « {{ e.actif_valeur if e.actif_valeur is not none else 'vide' }} »{% else %}non utilisée{% endif %}</span>
+        {% if mapping.emp_active_col %}<span class="hint">valeurs actives : {{ mapping.emp_active_values or '1, true, t, oui' }}</span>{% endif %}</div>
+      <div class="stat c-sky"><span class="label">Pointages reçus (tout l'historique)</span><span class="value small">{{ r.punch_count | num }}</span>
+        {% if r.last_punch %}<span class="hint">dernier : {{ r.last_punch.strftime('%d/%m/%Y %H:%M') }}</span>{% endif %}</div>
+      <div class="stat c-teal"><span class="label">Service / responsable</span><span class="value small">{{ e.service or '—' }} · {{ e.responsable or '—' }}</span></div>
+    </div>
+    {% if not e.actif %}
+    <div class="flash err">Cette personne est <strong>inactive</strong> selon la colonne « {{ mapping.emp_active_col }} » (valeur « {{ e.actif_valeur if e.actif_valeur is not none else 'vide' }} »).
+      Elle n'apparaît que les jours où elle pointe. Pour qu'elle soit comptée absente, corrigez les « valeurs considérées actives »
+      ou retirez la colonne « actif » dans <a href="/admin/pointage">Source des pointages</a>.</div>
+    {% endif %}
+    {% if r.punch_count == 0 %}<div class="flash warn">Aucun pointage n'est rattaché à cette clé ({{ e.emp_key }}) : si la personne badge,
+      ses pointages arrivent sous un autre identifiant (voir « badges hors liste » ci-dessous).</div>{% endif %}
+    <div class="table-wrap"><table>
+      <thead><tr><th>Jour</th><th>Jour ouvré</th><th>Pointages</th><th>1er / dernier</th><th>Résultat dans le suivi</th></tr></thead>
+      <tbody>
+      {% for d in calendar %}
+        {% set row = (r.days | selectattr('jour', 'equalto', d) | list | first) if d in shown else none %}
+        <tr>
+          <td class="nowrap">{{ d | jour_fr(True) }}</td>
+          <td>{{ ('oui' if row.jour_ouvre else 'non') if row else ('oui' if (d.isoweekday() | string) in workdays else 'non') }}</td>
+          <td>{{ row.nb_pointages if row else 0 }}</td>
+          <td>{{ hhmm(row.premier_pointage) if row else '—' }} / {{ hhmm(row.dernier_pointage) if row and row.nb_pointages > 1 else '—' }}</td>
+          <td>{% if row %}<span class="badge {{ statuts[row.statut][1] }}">{{ row.statut_libelle }}</span>
+              {% else %}<span class="muted">non affiché — personne inactive sans pointage ce jour-là</span>{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+  </section>
+  {% endfor %}
+  {% if others %}
+  <section class="card">
+    <h2>Badges hors liste qui ressemblent à « {{ q }} »</h2>
+    <p class="muted small">Ces identifiants apparaissent dans les pointages mais ne correspondent à aucune personne de la liste :
+      la colonne de correspondance employé ↔ pointages est peut-être mal choisie.</p>
+    <div class="table-wrap"><table><thead><tr><th>Identifiant dans les pointages</th><th>Pointages</th><th>Dernier</th></tr></thead>
+      <tbody>{% for o in others %}<tr><td class="mono">{{ o.emp_key }}</td><td>{{ o.n | num }}</td><td>{{ o.dernier.strftime('%d/%m/%Y %H:%M') }}</td></tr>{% endfor %}</tbody></table></div>
+  </section>
+  {% endif %}
+{% endif %}
+{% endif %}
+{% endblock %}
