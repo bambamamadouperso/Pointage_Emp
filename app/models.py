@@ -282,5 +282,7 @@ class PointageConfig(Base):
     conn_id: Mapped[Optional[int]] = mapped_column(ForeignKey("connections.id", ondelete="SET NULL"), nullable=True)
     data: Mapped[str] = mapped_column(Text, default="{}")
     installed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    # Version des objets PostgreSQL installés (réinstallés automatiquement après une mise à jour).
+    sql_version: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
     conn: Mapped[Optional[Connection]] = relationship()

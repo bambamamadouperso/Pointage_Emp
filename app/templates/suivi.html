@@ -39,6 +39,7 @@
         <a class="btn ghost step" href="?{{ request.query_params | replace_param('date', (f.du - timedelta(days=1)).isoformat()) }}" title="Jour précédent" aria-label="Jour précédent">‹</a>
         <input type="date" id="f_date" name="date" value="{{ f.du.isoformat() }}">
         <a class="btn ghost step" href="?{{ request.query_params | replace_param('date', (f.du + timedelta(days=1)).isoformat()) }}" title="Jour suivant" aria-label="Jour suivant">›</a>
+        <a class="btn small" href="?{{ request.query_params | replace_param('date', today.isoformat()) }}">Aujourd'hui</a>
       </span>
     </div>
     <label data-mode="periode">Du <input type="date" name="du" value="{{ f.du.isoformat() }}"></label>
@@ -60,18 +61,26 @@
     </label>
     <label class="check directs"><input type="checkbox" name="directs" value="1" {{ 'checked' if f.directs }}> Collaborateurs directs seulement (N-1)</label>
     {% endif %}
+    <label>Personnes
+      <select name="pop">
+        <option value="">Toutes (liste + hors liste)</option>
+        <option value="liste" {{ 'selected' if f.population == 'liste' }}>Employés de la liste</option>
+        <option value="hors" {{ 'selected' if f.population == 'hors' }}>Hors liste (pointages sans fiche)</option>
+      </select>
+    </label>
   </div>
   <div class="row statut-row">
     <span class="muted small">Statut :</span>
     {% for code, (label, cls) in statuts.items() %}
       <label class="check chip-check {{ cls }}"><input type="checkbox" name="statut" value="{{ code }}" {{ 'checked' if code in f.statuts }}> {{ label }}</label>
     {% endfor %}
-    <span class="spacer"></span>
-    <label class="check small">Lignes
-      <select name="size" class="narrow">{% for s in page_sizes %}<option value="{{ s }}" {{ 'selected' if s == size }}>{{ s }}</option>{% endfor %}</select>
-    </label>
-    <button class="btn primary">Appliquer</button>
-    <a class="btn ghost" href="/suivi">Aujourd'hui</a>
+    <div class="filter-actions">
+      <label class="check small">Lignes
+        <select name="size" class="narrow">{% for s in page_sizes %}<option value="{{ s }}" {{ 'selected' if s == size }}>{{ s }}</option>{% endfor %}</select>
+      </label>
+      <a class="btn ghost" href="/suivi" title="Revenir à aujourd'hui sans filtre">Réinitialiser</a>
+      <button class="btn primary">Appliquer</button>
+    </div>
   </div>
 </form>
 
@@ -91,13 +100,17 @@
     <span class="label">Retards</span><span class="value">{{ k.retards | num }}</span><span class="hint">arrivée ≥ seuil</span></a>
   <a class="stat c-err {{ 'selected' if only == 'ABSENT' }}" href="?{{ request.query_params | set_statuts(['ABSENT']) }}" title="Afficher les absents">
     <span class="label">Absents</span><span class="value">{{ k.absents | num }}</span><span class="hint">jour ouvré sans pointage</span></a>
+  <a class="stat c-pink {{ 'selected' if f.population == 'hors' }}" href="?{{ request.query_params | with_param('pop', '' if f.population == 'hors' else 'hors') }}"
+     title="Personnes qui ont pointé mais ne figurent pas dans la liste des employés">
+    <span class="label">Hors liste</span><span class="value">{{ k.hors_liste | num }}</span><span class="hint">badge sans fiche employé</span></a>
   <div class="stat c-violet"><span class="label">Taux de ponctualité</span>
     <span class="value">{{ '%.1f'|format(k.taux_ponctualite) ~ ' %' if k.taux_ponctualite is not none else '—' }}</span>
     <span class="hint">à l'heure / (à l'heure + retards)</span></div>
-  <div class="stat c-sky"><span class="label">Moyenne heure validée</span><span class="value">{{ hhmm(k.moy_validee) }}</span></div>
+  <div class="stat c-sky"><span class="label">Moyenne durée validée</span><span class="value">{{ hhmm(k.moy_validee) }}</span></div>
   <div class="stat c-teal"><span class="label">Moyenne durée effective</span><span class="value">{{ hhmm(k.moy_effective) }}</span></div>
 </section>
-{% if not single_day %}<p class="muted small kpi-note">Sur une période, les compteurs portent sur des journées-employé ({{ k.employes | num }} employé(s)).</p>{% endif %}
+<p class="muted small kpi-note">{{ k.employes | num }} personne(s) affichée(s) : chaque employé de la liste apparaît chaque jour, qu'il ait pointé ou non.
+  {% if not single_day %}Sur une période, les compteurs portent sur des journées-employé.{% endif %}</p>
 
 <section class="card">
   {% if not data.rows %}
@@ -113,7 +126,7 @@
       {{ th('matricule', 'Matricule') }}{{ th('nom', 'Nom') }}{{ th('service', 'Service') }}
       {% if has_hierarchy %}{{ th('responsable', 'Responsable') }}{% endif %}
       {{ th('premier', '1er pointage') }}{{ th('dernier', 'Dernier pointage') }}{{ th('statut', 'Statut') }}
-      {{ th('validee', 'Heure validée', 'right') }}{{ th('effective', 'Durée effective', 'right') }}
+      {{ th('validee', 'Durée validée', 'right') }}{{ th('effective', 'Durée effective', 'right') }}
     </tr></thead>
     <tbody>
     {% for r in data.rows %}
@@ -122,13 +135,13 @@
           title="Cliquer pour voir tous les pointages de la journée">
         {% if not single_day %}<td class="nowrap">{{ r.jour | jour_fr(True) }}</td>{% endif %}
         <td class="mono">{{ r.matricule }}</td>
-        <td>{{ r.nom }} {{ r.prenom or '' }}</td>
+        <td class="nowrap">{% if r.hors_liste %}<span class="badge st-out" title="A pointé mais n'est pas dans la table des employés">Hors liste</span>{% else %}{{ r.nom }} {{ r.prenom or '' }}{% endif %}</td>
         <td>{{ r.service or '—' }}</td>
         {% if has_hierarchy %}<td class="small">{{ r.responsable or '—' }}</td>{% endif %}
         <td>{{ hhmm(r.premier_pointage) }}</td>
         <td>{{ hhmm(r.dernier_pointage) if r.nb_pointages > 1 else '—' }}</td>
-        <td><span class="badge {{ cls }}">{{ label }}</span>{% if not r.jour_ouvre %} <span class="muted small" title="Jour non ouvré ou férié">(non ouvré)</span>{% endif %}</td>
-        <td class="right">{{ hhmm(r.heure_validee) }}</td>
+        <td class="nowrap"><span class="badge {{ cls }}">{{ label }}</span>{% if not r.jour_ouvre and r.statut != 'NON_OUVRE' %} <span class="muted small" title="Jour non ouvré ou férié">(non ouvré)</span>{% endif %}</td>
+        <td class="right">{{ hhmm(r.duree_validee) }}</td>
         <td class="right">{{ hhmm(r.duree_effective) }}</td>
       </tr>
     {% endfor %}

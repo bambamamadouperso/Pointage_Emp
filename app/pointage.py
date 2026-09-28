@@ -36,12 +36,15 @@ STATUTS = {
     "RETARD": ("En retard", "st-late"),
     "ABSENT": ("Absent", "st-abs"),
     "INCOMPLET": ("Pointage incomplet", "st-inc"),
+    "NON_OUVRE": ("Jour non ouvré", "st-off"),
 }
+# Version des objets PostgreSQL : si elle change, ils sont réinstallés automatiquement.
+SQL_VERSION = 3
 
 SORTABLE = {
     "jour": "jour", "matricule": "matricule", "nom": "nom", "service": "service", "responsable": "responsable",
     "premier": "premier_pointage", "dernier": "dernier_pointage", "statut": "statut",
-    "validee": "heure_validee", "effective": "duree_effective",
+    "validee": "duree_validee", "effective": "duree_effective",
 }
 
 
@@ -344,7 +347,8 @@ RETURNS TABLE (
     emp_key text, matricule text, nom text, prenom text, service text, responsable_key text, responsable text,
     jour date, jour_ouvre boolean, premier_pointage timestamp, dernier_pointage timestamp, nb_pointages integer,
     statut text, statut_libelle text, debut_valide time, fin_validee time, pause_deduite interval,
-    heure_validee interval, duree_effective interval, heure_validee_min numeric, duree_effective_min numeric
+    duree_validee interval, duree_effective interval, duree_validee_min numeric, duree_effective_min numeric,
+    hors_liste boolean
 )
 LANGUAGE sql STABLE
 -- La compilation JIT coûte plus d'une seconde par appel, pour aucun gain sur ce type de requête.
@@ -380,7 +384,7 @@ base AS (
 ),
 g AS (
     SELECT b.emp_key, b.jour, e.matricule, e.nom, e.prenom, e.service, e.responsable_key, e.responsable,
-           a.p1, a.p2, a.n,
+           a.p1, a.p2, a.n, (e.emp_key IS NULL) AS hors_liste,
            p.debut_journee, p.debut_pause, p.fin_pause, p.fin_journee, p.seuil_retard, p.duree_pause,
            (NOT p.ferie AND extract(isodow FROM b.jour)::int = ANY (
                string_to_array(regexp_replace(p.jours_ouvres, '[^0-9,]', '', 'g'), ',')::int[])) AS jour_ouvre
@@ -391,7 +395,7 @@ g AS (
 ),
 c AS (
     SELECT g.*,
-        CASE WHEN g.n IS NULL THEN CASE WHEN g.jour_ouvre THEN 'ABSENT' END
+        CASE WHEN g.n IS NULL THEN CASE WHEN g.jour_ouvre THEN 'ABSENT' ELSE 'NON_OUVRE' END
              WHEN g.n < 2 THEN 'INCOMPLET'
              WHEN g.p1::time >= g.seuil_retard THEN 'RETARD'
              ELSE 'A_L_HEURE' END AS statut,
@@ -404,10 +408,11 @@ c AS (
         CASE WHEN g.n >= 2 THEN LEAST(g.p2::time, g.fin_journee) END AS fin_validee
     FROM g
 )
-SELECT c.emp_key, COALESCE(c.matricule, c.emp_key), COALESCE(c.nom, '(employé inconnu)'), c.prenom, c.service,
+SELECT c.emp_key, COALESCE(c.matricule, c.emp_key), COALESCE(c.nom, 'Hors liste'), c.prenom, c.service,
        c.responsable_key, c.responsable, c.jour, c.jour_ouvre, c.p1, c.p2, COALESCE(c.n, 0), c.statut, CASE c.statut {labels} END,
        c.debut_valide, c.fin_validee, c.pause, v.hv, v.de,
-       round((extract(epoch FROM v.hv) / 60)::numeric, 2), round((extract(epoch FROM v.de) / 60)::numeric, 2)
+       round((extract(epoch FROM v.hv) / 60)::numeric, 2), round((extract(epoch FROM v.de) / 60)::numeric, 2),
+       c.hors_liste
 FROM c
 CROSS JOIN LATERAL (
     SELECT CASE WHEN c.n >= 2 THEN GREATEST((c.fin_validee - c.debut_valide) - c.pause, interval '0') END AS hv,
@@ -446,7 +451,7 @@ SELECT * FROM {S}.f_pointage_journalier(COALESCE({first_day}, current_date), cur
         "raw_view": f"""CREATE VIEW {S}.v_pointage_brut AS
 SELECT {pkey} AS emp_key, {ts} AS horodatage, ({ts})::date AS jour FROM {punch} p""",
         "comment": f"COMMENT ON VIEW {S}.v_pointage_journalier IS "
-                   f"{lit('Suivi journalier des pointages (1er/dernier pointage, statut, heure validée, durée effective).')}",
+                   f"{lit('Suivi journalier des pointages (1er/dernier pointage, statut, durée validée, durée effective).')}",
     }
 
 
@@ -578,6 +583,7 @@ class Filters:
     team: str = ""                    # « Équipe de » : clé du responsable (toute sa hiérarchie)
     directs: bool = False             # seulement ses collaborateurs directs (N-1)
     scope_root: Optional[str] = None  # périmètre imposé par le compte (manager : son équipe)
+    population: str = ""              # « liste » : employés de la liste ; « hors » : badges hors liste
 
 
 def _where(f: Filters, S: str = "") -> tuple[str, dict, list]:
@@ -593,6 +599,10 @@ def _where(f: Filters, S: str = "") -> tuple[str, dict, list]:
         clauses.append("(matricule ILIKE :q OR nom ILIKE :q OR prenom ILIKE :q "
                        "OR concat_ws(' ', nom, prenom) ILIKE :q OR concat_ws(' ', prenom, nom) ILIKE :q)")
         params["q"] = f"%{f.q}%"
+    if f.population == "liste":
+        clauses.append("NOT hors_liste")
+    elif f.population == "hors":
+        clauses.append("hors_liste")
     if f.service:
         clauses.append("service = :service")
         params["service"] = f.service
@@ -620,7 +630,9 @@ def daily(engine: Engine, m: Mapping, f: Filters, page: int = 1, size: int = 100
         count(*) FILTER (WHERE statut = 'RETARD') AS retards,
         count(*) FILTER (WHERE statut = 'ABSENT') AS absents,
         count(*) FILTER (WHERE statut = 'INCOMPLET') AS incomplets,
-        avg(heure_validee) AS moy_validee, avg(duree_effective) AS moy_effective,
+        count(*) FILTER (WHERE statut = 'NON_OUVRE') AS non_ouvres,
+        count(DISTINCT emp_key) FILTER (WHERE hors_liste) AS hors_liste,
+        avg(duree_validee) AS moy_validee, avg(duree_effective) AS moy_effective,
         count(DISTINCT emp_key) AS employes
         FROM {source}{where}""").bindparams(*binds)
     rows_sql = text(f"SELECT * FROM {source}{where}{_order(f)} LIMIT :lim OFFSET :off").bindparams(*binds)

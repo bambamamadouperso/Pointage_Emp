@@ -124,23 +124,39 @@ def test_calculations_match_specification(configured, pg):
     r = rows(pg, MON)
     awa = r[("E001", MON)]
     assert awa.statut == "A_L_HEURE" and hm(awa.premier_pointage) == "07h20" and hm(awa.dernier_pointage) == "17h10"
-    assert hm(awa.heure_validee) == "7h30" and hm(awa.duree_effective) == "8h20" and awa.nb_pointages == 3
+    assert hm(awa.duree_validee) == "7h30" and hm(awa.duree_effective) == "8h20" and awa.nb_pointages == 3
     moussa = r[("E002", MON)]
-    assert moussa.statut == "RETARD" and hm(moussa.heure_validee) == "6h50" and hm(moussa.duree_effective) == "7h05"
+    assert moussa.statut == "RETARD" and hm(moussa.duree_validee) == "6h50" and hm(moussa.duree_effective) == "7h05"
     fatou = r[("E003", MON)]
-    assert fatou.statut == "A_L_HEURE" and hm(fatou.heure_validee) == "6h50" and hm(fatou.duree_effective) == "6h45"
+    assert fatou.statut == "A_L_HEURE" and hm(fatou.duree_validee) == "6h50" and hm(fatou.duree_effective) == "6h45"
     ibou = r[("E004", MON)]
-    assert ibou.statut == "INCOMPLET" and ibou.heure_validee is None and ibou.duree_effective is None
+    assert ibou.statut == "INCOMPLET" and ibou.duree_validee is None and ibou.duree_effective is None
     assert r[("E005", MON)].statut == "ABSENT" and r[("E005", MON)].service == "RH"
     assert ("E006", MON) not in r  # inactif : jamais absent
     aminata = r[("E007", MON)]  # 7h45 pile = retard ; départ 12h00 < fin de pause : pas de déduction
-    assert aminata.statut == "RETARD" and hm(aminata.heure_validee) == "4h15" and hm(aminata.duree_effective) == "4h15"
-    assert r[("99", MON)].nom == "(employé inconnu)"
+    assert aminata.statut == "RETARD" and hm(aminata.duree_validee) == "4h15" and hm(aminata.duree_effective) == "4h15"
+    assert r[("99", MON)].nom == "Hors liste" and r[("99", MON)].hors_liste
+    assert not awa.hors_liste
     assert r[("E001", MON)].service == "Production" and r[("E001", MON)].statut_libelle == "À l'heure"
     # Noms venant de la table Personnel, responsable venant de la table hierarchie.
     assert (awa.nom, awa.prenom, awa.responsable) == ("Diallo", "Awa", None)
     assert moussa.responsable == "Diallo Awa" and moussa.responsable_key == "1"
     assert r[("E004", MON)].responsable == "Sow Fatou" and aminata.responsable is None
+
+
+def test_automatic_upgrade_of_sql_objects(configured, pg, logged_client):
+    """Après une mise à jour de l'application, les fonctions PostgreSQL sont réinstallées d'elles-mêmes."""
+    with SessionLocal() as db:
+        cfg = db.query(PointageConfig).one()
+        cfg.sql_version = 1
+        db.commit()
+    with pg.begin() as c:  # ancienne version : sans la colonne hors_liste
+        c.execute(text(f"DROP VIEW {SCHEMA}.v_pointage_journalier"))
+        c.execute(text(f"DROP FUNCTION {SCHEMA}.f_pointage_journalier(date, date)"))
+    assert "Diallo" in logged_client.get(f"/suivi?date={MON.isoformat()}").text
+    with SessionLocal() as db:
+        assert db.query(PointageConfig).one().sql_version == pointage.SQL_VERSION
+        assert db.query(AuditEntry).filter(AuditEntry.action.like("Calculs du pointage mis à jour%")).count()
 
 
 def test_hierarchy_team_function(configured, pg):
@@ -157,8 +173,11 @@ def test_history_holidays_and_weekends(configured, pg):
     assert week[("E002", TUE)].statut == "A_L_HEURE"  # seuil 8h15 en vigueur depuis mardi
     assert week[("E002", MON)].statut == "RETARD"     # lundi : seuil 7h45 (valeur de l'époque)
     assert week[("E005", TUE)].statut == "ABSENT"
-    assert ("E005", WED) not in week                  # jour férié
-    assert ("E005", SAT) not in week                  # samedi non ouvré
+    # On part de la liste des employés : chacun apparaît chaque jour, même sans pointage.
+    assert week[("E005", WED)].statut == "NON_OUVRE"  # jour férié : pas d'absence
+    assert week[("E005", SAT)].statut == "NON_OUVRE"  # samedi non ouvré
+    assert week[("E005", SAT)].statut_libelle == "Jour non ouvré"
+    assert ("E006", MON) not in week                  # inactif sans pointage
     sat = week[("E001", SAT)]
     assert sat.jour_ouvre is False and sat.nb_pointages == 2
     with pg.connect() as c:  # la vue couvre tout l'historique
@@ -174,13 +193,17 @@ def test_screen_filters_detail_and_export(configured, logged_client):
     assert page.status_code == 200
     html = page.text
     assert "Diallo" in html and "st-late" in html and "Lundi 21/09/2026" in html
-    assert "Taux de ponctualité" in html and "Moyenne heure validée" in html
+    assert "Taux de ponctualité" in html and "Moyenne durée validée" in html
     only_late = logged_client.get(f"/suivi?date={MON.isoformat()}&statut=RETARD").text
     assert "E002</td>" in only_late and "E001</td>" not in only_late
     search = logged_client.get(f"/suivi?date={MON.isoformat()}&q=E003").text
     assert "E003</td>" in search and "E002</td>" not in search
     service = logged_client.get(f"/suivi?date={MON.isoformat()}&service=RH").text
     assert "E003</td>" in service and "E001</td>" not in service
+    hors = logged_client.get(f"/suivi?date={MON.isoformat()}&pop=hors").text
+    assert "99</td>" in hors and "E001</td>" not in hors and "Hors liste" in hors
+    liste = logged_client.get(f"/suivi?date={MON.isoformat()}&pop=liste").text
+    assert "99</td>" not in liste and "E005</td>" in liste
     period = logged_client.get(f"/suivi?du={MON.isoformat()}&au={SAT.isoformat()}&sort=validee&dir=desc").text
     assert "journées-employé" in period
     team = logged_client.get(f"/suivi?date={MON.isoformat()}&equipe=3").text
@@ -195,7 +218,7 @@ def test_screen_filters_detail_and_export(configured, logged_client):
     ws = load_workbook(io.BytesIO(xlsx.content))["Suivi journalier"]
     statuts = {ws.cell(r, 9).value for r in range(2, ws.max_row + 1)}
     assert statuts == {"En retard", "Absent"}
-    assert ws.cell(1, 10).value == "Heure validée"
+    assert ws.cell(1, 10).value == "Durée validée"
 
 
 def test_roles_and_audit(configured, client):

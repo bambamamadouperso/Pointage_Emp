@@ -28,10 +28,11 @@ def _config(db: Session) -> PointageConfig:
 
 
 def _mapping_ready(db: Session):
+    from .suivi import load_config
+
     cfg = _config(db)
-    if cfg.conn is None or cfg.installed_at is None:
-        return cfg, None
-    return cfg, pointage.Mapping.from_json(cfg.data)
+    _, mapping = load_config(db)  # réinstalle les calculs s'ils datent d'une version précédente
+    return cfg, mapping
 
 
 # --------------------------------------------------------------------------- accueil
@@ -143,6 +144,7 @@ async def pointage_save(request: Request, db: Session = Depends(get_db)):
     finally:
         engine.dispose()
     cfg.conn_id, cfg.data, cfg.installed_at = conn.id, mapping.to_json(), utcnow()
+    cfg.sql_version = pointage.SQL_VERSION
     db.commit()
     auth.audit(request, "Source des pointages configurée", f"{conn.name} · {mapping.schema}",
                f"avant : {before}\naprès : {cfg.data}")

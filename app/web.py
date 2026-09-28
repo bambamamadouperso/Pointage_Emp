@@ -121,7 +121,14 @@ def set_statuts(params, statuts: list) -> str:
     return urlencode(items + [("statut", s) for s in statuts])
 
 
+def with_param(params, key: str, value: str) -> str:
+    """Paramètres de l'URL actuelle avec une valeur remplacée (vide = retirée), retour à la page 1."""
+    items = [(k, v) for k, v in params.multi_items() if k not in (key, "page")]
+    return urlencode(items + ([(key, value)] if value else []))
+
+
 templates.env.filters["set_statuts"] = set_statuts
+templates.env.filters["with_param"] = with_param
 templates.env.filters["jour_fr"] = jour_fr
 templates.env.filters["replace_param"] = replace_param
 templates.env.globals["timedelta"] = __import__("datetime").timedelta
