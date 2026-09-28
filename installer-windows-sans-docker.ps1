@@ -78,13 +78,29 @@ function Write-Step([string]$Number, [string]$Message) {
 }
 function Write-Ok([string]$Message) { Write-Host "    OK  $Message" -ForegroundColor Green }
 function Write-Warn([string]$Message) { Write-Host "    !   $Message" -ForegroundColor Yellow }
-function Stop-Install([string]$Message) {
+function Stop-Install([string]$Message, [string]$Details = "") {
     Write-Host ""
     Write-Host "ERREUR : $Message" -ForegroundColor Red
-    Write-Host "Détails dans installation.log" -ForegroundColor Red
-    Stop-Transcript | Out-Null
+    if ($Details) { Write-Host $Details -ForegroundColor Red }
+    # Le message reste lisible même si la fenêtre est fermée : fichier ouvert dans le Bloc-notes.
+    $errorFile = Join-Path $PSScriptRoot "installation-erreur.txt"
+    try {
+        Set-Content -Path $errorFile -Encoding UTF8 -Value @(
+            "Erreur d'installation du $(Get-Date -Format 'dd/MM/yyyy HH:mm:ss')", "", $Message, "", $Details, "",
+            "Journal complet : installation.log")
+        Start-Process notepad.exe -ArgumentList "`"$errorFile`""
+    } catch { }
+    Write-Host "Message enregistré dans installation-erreur.txt (ouvert dans le Bloc-notes)" -ForegroundColor Red
+    try { Stop-Transcript | Out-Null } catch { }
     Read-Host "Appuyez sur Entrée pour fermer"
-    exit 1
+    exit 3
+}
+
+# Toute erreur imprévue : affichée, enregistrée, et la fenêtre attend avant de se fermer.
+trap {
+    $info = $_.InvocationInfo
+    $where = if ($info -and $info.ScriptLineNumber) { "Ligne $($info.ScriptLineNumber) : $($info.Line.Trim())" } else { "" }
+    Stop-Install "Erreur inattendue : $($_.Exception.Message)" $where
 }
 
 # Exécute une commande externe sans que sa sortie d'erreur interrompe le script.

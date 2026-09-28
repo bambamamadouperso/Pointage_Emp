@@ -7,3 +7,4 @@ data/*.db-*
 .pytest_cache/
 installation.log
 logs/
+installation-erreur.txt
