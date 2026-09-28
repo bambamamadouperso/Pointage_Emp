@@ -344,6 +344,8 @@ body.guest { min-height: 100vh; background:
 .db-chips { display: flex; flex-wrap: wrap; gap: .35rem; }
 .chip { font: inherit; font-size: .82rem; padding: .22rem .7rem; border-radius: 999px; cursor: pointer; border: 1px solid var(--border-strong); background: var(--surface); color: var(--text); }
 .chip:hover { border-color: var(--primary); color: var(--primary); }
+.active-filters { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem .5rem; margin: -.4rem 0 1rem; }
+.active-filters .chip { text-decoration: none; background: var(--primary-soft, var(--surface)); }
 .chip.selected { background: var(--primary); border-color: var(--primary); color: var(--primary-text); }
 .create-db { padding: .85rem; border: 1px dashed var(--border-strong); border-radius: var(--radius-sm); }
 .create-db p { margin: .4rem 0 0; }

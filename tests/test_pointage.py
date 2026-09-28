@@ -361,6 +361,20 @@ def test_population_warns_when_most_are_inactive(configured, pg, logged_client, 
     assert "jamais absentes" in page and "Valeurs considérées actives" in page
 
 
+def test_filter_bar_and_contradictory_filters(configured, logged_client):
+    """Filtres appliqués affichés (retirables), « directs » sans équipe ignoré, hors liste + service expliqué."""
+    page = logged_client.get("/suivi?date=2026-09-25&service=Production&statut=ABSENT&statut=RETARD").text
+    assert "Filtres appliqués" in page and "Service : Production" in page and "Statut : Absent, En retard" in page
+    assert "Tout retirer" in page
+
+    page = logged_client.get("/suivi?date=2026-09-25&directs=1").text
+    assert "directs (N-1)" not in page  # sans responsable choisi, la case n'a pas d'effet
+    assert "disabled" in page.split('name="directs"')[1].split(">")[0]
+
+    page = logged_client.get("/suivi?date=2026-09-25&service=Production&pop=hors").text
+    assert "Aucune ligne" in page and "n'ont ni service ni responsable" in page
+
+
 def test_reference_whole_personnel(configured, pg, logged_client):
     """Liste de référence = table Personnel, sans colonne « actif » : tout le personnel est attendu."""
     with SessionLocal() as db:

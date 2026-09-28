@@ -61,7 +61,7 @@
         {% for key, label, n in managers %}<option value="{{ key }}" {{ 'selected' if f.team == key }}>{{ label }} · {{ n }} direct(s)</option>{% endfor %}
       </select>
     </label>
-    <label class="check directs"><input type="checkbox" name="directs" value="1" {{ 'checked' if f.directs }}> Collaborateurs directs seulement (N-1)</label>
+    <label class="check directs" title="{{ 'Choisissez d\'abord un responsable dans « Équipe de »' if not f.team }}"><input type="checkbox" name="directs" value="1" {{ 'checked' if f.directs }} {{ 'disabled' if not f.team }}> Collaborateurs directs seulement (N-1)</label>
     {% endif %}
     <label>Personnes
       <select name="pop">
@@ -81,10 +81,25 @@
         <select name="size" class="narrow">{% for s in page_sizes %}<option value="{{ s }}" {{ 'selected' if s == size }}>{{ s }}</option>{% endfor %}</select>
       </label>
       <a class="btn ghost" href="/suivi" title="Revenir à aujourd'hui sans filtre">Réinitialiser</a>
-      <button class="btn primary">Appliquer</button>
+      <button class="btn primary" title="Les listes et cases s'appliquent immédiatement ; ce bouton sert à la recherche par nom">Appliquer</button>
     </div>
   </div>
 </form>
+
+{% set team_label = (managers | selectattr(0, 'equalto', f.team) | map(attribute=1) | first) if f.team else '' %}
+{% set active_filters = [] %}
+{% if f.q %}{% set _ = active_filters.append(('Employé : « ' ~ f.q ~ ' »', request.query_params | with_param('q', ''))) %}{% endif %}
+{% if f.service %}{% set _ = active_filters.append(('Service : ' ~ f.service, request.query_params | with_param('service', ''))) %}{% endif %}
+{% if f.team %}{% set _ = active_filters.append(('Équipe de ' ~ (team_label or f.team) ~ (' · directs (N-1)' if f.directs else ''), (request.query_params | with_param('equipe', '')) )) %}{% endif %}
+{% if f.population %}{% set _ = active_filters.append(('Personnes : ' ~ ('employés de la liste' if f.population == 'liste' else 'hors liste'), request.query_params | with_param('pop', ''))) %}{% endif %}
+{% if f.statuts %}{% set labels = [] %}{% for code in f.statuts %}{% set _ = labels.append(statuts[code][0]) %}{% endfor %}{% set _ = active_filters.append(('Statut : ' ~ labels | join(', '), request.query_params | set_statuts([]))) %}{% endif %}
+{% if active_filters %}
+<div class="active-filters">
+  <span class="muted small">Filtres appliqués :</span>
+  {% for label, url in active_filters %}<a class="chip" href="?{{ url }}" title="Retirer ce filtre">{{ label }} <span aria-hidden="true">×</span></a>{% endfor %}
+  {% if active_filters | length > 1 %}<a class="small" href="/suivi?{{ ('date=' ~ f.du.isoformat()) if single_day else ('du=' ~ f.du.isoformat() ~ '&au=' ~ f.au.isoformat()) }}">Tout retirer</a>{% endif %}
+</div>
+{% endif %}
 
 {% if scope_label %}<div class="flash info">Périmètre de votre compte : équipe de <strong>{{ scope_label }}</strong> (toute la hiérarchie).</div>{% endif %}
 {% if stale %}<div class="flash warn">Dernier pointage reçu le <strong>{{ last_punch.strftime('%d/%m/%Y à %H:%M') }}</strong> :
@@ -125,7 +140,11 @@
 
 <section class="card">
   {% if not data.rows %}
-    <p class="empty">Aucune ligne ne correspond aux filtres.</p>
+    <p class="empty">Aucune ligne ne correspond aux filtres.
+      {% if f.population == 'hors' and (f.service or f.team) %}<br>Les personnes <strong>hors liste</strong> n'ont pas de fiche employé :
+        elles n'ont ni service ni responsable. Retirez le filtre
+        {{ '« Service »' if f.service }}{{ ' et ' if f.service and f.team }}{{ '« Équipe de »' if f.team }} pour les voir.
+      {% elif active_filters %}<br>Retirez un des filtres appliqués ci-dessus.{% endif %}</p>
   {% else %}
   {% macro th(key, label, cls='') %}
     {% set active = f.sort == key %}
@@ -178,6 +197,12 @@
     };
     form.querySelectorAll('[name=_mode]').forEach(r => r.addEventListener('change', sync));
     form.addEventListener('submit', () => form.querySelectorAll('[name=_mode]').forEach(r => r.disabled = true));
+    // Listes, cases et dates : appliquées immédiatement (la recherche par nom reste validée par Entrée ou « Appliquer »).
+    form.querySelectorAll('select, input[type=checkbox], #f_date').forEach(el =>
+      el.addEventListener('change', () => {
+        if (el.name === 'equipe') { const d = form.querySelector('[name=directs]'); if (d && !el.value) d.checked = false; }
+        form.requestSubmit();
+      }));
     sync();
   }
   const cols = document.querySelector('table.suivi thead tr')?.children.length || 8;

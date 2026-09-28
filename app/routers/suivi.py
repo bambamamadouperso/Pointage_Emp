@@ -82,7 +82,7 @@ def _filters(request: Request) -> tuple[pointage.Filters, Optional[str]]:
         du=du, au=au, q=p.get("q", "").strip(), service=p.get("service", ""),
         statuts=[s for s in p.getlist("statut") if s in pointage.STATUTS],
         sort=p.get("sort", "nom") if p.get("sort", "nom") in pointage.SORTABLE else "nom",
-        desc=p.get("dir") == "desc", team=p.get("equipe", ""), directs=p.get("directs") == "1",
+        desc=p.get("dir") == "desc", team=p.get("equipe", ""), directs=p.get("directs") == "1" and bool(p.get("equipe")),
         population=p.get("pop", "") if p.get("pop") in ("liste", "hors") else "",
     ), warning
 
