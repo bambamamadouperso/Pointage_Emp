@@ -39,7 +39,10 @@ STATUTS = {
     "NON_OUVRE": ("Jour non ouvré", "st-off"),
 }
 # Version des objets PostgreSQL : si elle change, ils sont réinstallés automatiquement.
-SQL_VERSION = 5
+SQL_VERSION = 6
+# Limites des requêtes lancées depuis les pages web : une attente de verrou ou une requête lente ne doit jamais
+# bloquer le site (au pire, la page affiche une erreur au bout de 2 minutes).
+WEB_LIMITS = {"lock_timeout_s": 15, "statement_timeout_s": 120}
 
 SORTABLE = {
     "jour": "jour", "matricule": "matricule", "nom": "nom", "service": "service", "responsable": "responsable",
@@ -260,6 +263,13 @@ def _ts_expr(m: Mapping, types: dict[str, str]) -> str:
     return f"{col}::timestamp"
 
 
+def _raw_day_col(m: Mapping, types: dict[str, str]) -> Optional[str]:
+    """Colonne date/horodatage « native » des pointages : permet un filtre rapide (index) avant tout calcul."""
+    if types.get(m.punch_ts_col, "") in ("date", "timestamp without time zone", "timestamp with time zone"):
+        return f"p.{qi(m.punch_ts_col)}"
+    return None
+
+
 def build_sql(m: Mapping, punch_types: dict[str, str], emp_types: dict[str, str]) -> dict[str, str]:
     """SQL des objets PostgreSQL du module (tables de paramètres, vue des employés, fonctions, vues)."""
     S = qi(m.objs)
@@ -363,6 +373,9 @@ $fn$"""
                 f"{lit(PARAM_DEFAULTS[key])}){cast}")
 
     labels = " ".join(f"WHEN {lit(code)} THEN {lit(label)}" for code, (label, _) in STATUTS.items())
+    raw = _raw_day_col(m, punch_types)
+    # Seules les lignes de la période (± 1 jour) sont lues : indispensable sur une grosse table de pointages.
+    raw_filter = f"\n    WHERE {raw} >= p_du - 1 AND {raw} < p_au + 2" if raw else ""
     function = f"""
 CREATE FUNCTION {S}.f_pointage_journalier(p_du date, p_au date)
 RETURNS TABLE (
@@ -380,7 +393,7 @@ WITH emp AS (
     SELECT * FROM {S}.v_pointage_employes
 ),
 pl AS (
-    SELECT {pkey} AS emp_key, {ts} AS ts FROM {punch} p
+    SELECT {pkey} AS emp_key, {ts} AS ts FROM {punch} p{raw_filter}
 ),
 agg AS (
     SELECT emp_key, ts::date AS jour, min(ts) AS p1, max(ts) AS p2, count(DISTINCT ts)::int AS n
@@ -513,6 +526,15 @@ def install(engine: Engine, m: Mapping, author: str) -> None:
     sql = build_sql(m, punch_types, emp_types)
     S = qi(m.objs)
     with engine.begin() as c:
+        raw = _raw_day_col(m, punch_types)
+        if raw:  # index sur la date des pointages (lecture rapide d'une période) ; ignoré si pas les droits
+            name = f"ix_pointage_{m.punch_table}_{m.punch_ts_col}"[:63]
+            try:
+                with c.begin_nested():
+                    c.execute(text(f"CREATE INDEX IF NOT EXISTS {qi(name)} ON {qt(m.schema, m.punch_table)} "
+                                   f"({qi(m.punch_ts_col)})"))
+            except Exception:
+                pass
         for key in ("schema", "params_table", "params_index", "holidays_table", "drop_view", "drop_raw_view",
                     "drop_function", "drop_team_function", "drop_employees_view", "employees_view",
                     "team_function", "function", "view", "raw_view", "comment"):
@@ -534,12 +556,19 @@ def diagnostics(engine: Engine, m: Mapping, days: int = 31) -> dict:
     """Contrôle de la configuration : qui est attendu, qui est exclu, qui pointe sans fiche, dernier pointage."""
     S = qi(m.objs)
     since = date.today() - timedelta(days=days)
+    types = column_types(engine, m.schema, m.punch_table)
+    raw = _raw_day_col(m, types)
+    pkey = _as_text(f"p.{qi(m.punch_emp_col)}", types.get(m.punch_emp_col, ""))
+    if raw:  # lecture limitée à la période grâce à la colonne date (et à son index)
+        recent = (f"(SELECT DISTINCT {pkey} AS emp_key FROM {qt(m.schema, m.punch_table)} p "
+                  f"WHERE {raw} >= :d AND {pkey} IS NOT NULL)")
+    else:
+        recent = f"(SELECT DISTINCT emp_key FROM {S}.v_pointage_brut WHERE horodatage >= :d AND emp_key IS NOT NULL)"
+    d = {"dernier_pointage": last_punch(engine, m, use_cache=False)}
     with engine.connect() as c:
-        d = dict(c.execute(text(
+        d.update(c.execute(text(
             f"SELECT count(*) AS total, count(*) FILTER (WHERE actif) AS actifs, "
             f"count(*) FILTER (WHERE NOT actif) AS inactifs FROM {S}.v_pointage_employes")).mappings().one())
-        d["dernier_pointage"] = c.execute(text(f"SELECT max(horodatage) FROM {S}.v_pointage_brut")).scalar()
-        recent = f"(SELECT DISTINCT emp_key FROM {S}.v_pointage_brut WHERE horodatage >= :d AND emp_key IS NOT NULL)"
         d["sans_pointage"] = c.execute(text(
             f"SELECT count(*) FROM {S}.v_pointage_employes e WHERE actif AND e.emp_key NOT IN {recent}"),
             {"d": since}).scalar()
@@ -581,9 +610,28 @@ def inspect_employee(engine: Engine, m: Mapping, query: str, du: date, au: date)
     return out, others
 
 
-def last_punch(engine: Engine, m: Mapping) -> Optional[datetime]:
+_last_punch_cache: dict[str, tuple[float, Optional[datetime]]] = {}
+
+
+def last_punch(engine: Engine, m: Mapping, use_cache: bool = True) -> Optional[datetime]:
+    """Dernier pointage reçu (toutes personnes). Rapide avec une colonne date ; mis en cache 2 minutes."""
+    import time as _t
+
+    key = m.to_json()
+    cached = _last_punch_cache.get(key)
+    if use_cache and cached and _t.monotonic() - cached[0] < 120:
+        return cached[1]
+    types = column_types(engine, m.schema, m.punch_table)
+    raw, punch = _raw_day_col(m, types), qt(m.schema, m.punch_table)
+    ts = _ts_expr(m, types)
     with engine.connect() as c:
-        return c.execute(text(f"SELECT max(horodatage) FROM {qi(m.objs)}.v_pointage_brut")).scalar()
+        if raw:  # le plus grand jour d'abord (index), puis l'heure exacte sur ce seul jour
+            value = c.execute(text(f"SELECT max({ts}) FROM {punch} p WHERE {raw} >= "
+                                   f"(SELECT max({raw}) FROM {punch} p) - 1")).scalar()
+        else:
+            value = c.execute(text(f"SELECT max(horodatage) FROM {qi(m.objs)}.v_pointage_brut")).scalar()
+    _last_punch_cache[key] = (_t.monotonic(), value)
+    return value
 
 
 def is_installed(engine: Engine, m: Mapping) -> bool:

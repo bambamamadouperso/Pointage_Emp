@@ -69,7 +69,7 @@ def pointage_config(request: Request, db: Session = Depends(get_db)):
     schemas, tables, punch_cols, emp_cols, service_cols, error, installed = [], [], {}, {}, {}, None, False
     person_cols, hier_cols, diag, stale = {}, {}, None, False
     if conn is not None:
-        engine = make_engine(conn)
+        engine = make_engine(conn, **pointage.WEB_LIMITS)
         try:
             schemas = pointage.list_schemas(engine)
             if mapping.schema not in schemas and schemas:
@@ -136,7 +136,7 @@ async def pointage_save(request: Request, db: Session = Depends(get_db)):
         return redirect("/admin/pointage")
     mapping = pointage.Mapping(**{k: str(form.get(k, "")).strip() for k in _MAPPING_FIELDS})
     before = cfg.data
-    engine = make_engine(conn)
+    engine = make_engine(conn, **pointage.WEB_LIMITS)
     try:
         pointage.install(engine, mapping, request.session.get("user", ""))
     except pointage.PointageError as exc:
@@ -172,7 +172,7 @@ def params_page(request: Request, db: Session = Depends(get_db)):
     context = dict(mapping=mapping, params=pointage.PARAMS, weekdays=pointage.WEEKDAYS, today=date.today(),
                    values=dict(pointage.PARAM_DEFAULTS), history=[], holidays=[], error=None, upcoming=[])
     if mapping is not None:
-        engine = make_engine(cfg.conn)
+        engine = make_engine(cfg.conn, **pointage.WEB_LIMITS)
         try:
             context["values"] = pointage.params_at(engine, mapping, date.today())
             context["history"] = pointage.params_history(engine, mapping)
@@ -206,7 +206,7 @@ async def params_save(request: Request, db: Session = Depends(get_db)):
     except pointage.PointageError as exc:
         flash(request, str(exc), "err")
         return redirect("/admin/parametres")
-    engine = make_engine(cfg.conn)
+    engine = make_engine(cfg.conn, **pointage.WEB_LIMITS)
     try:
         changes = pointage.save_params(engine, mapping, values, effective, request.session.get("user", ""))
     except Exception as exc:
@@ -232,7 +232,7 @@ def holiday_add(request: Request, jour: str = Form(...), libelle: str = Form("")
     if mapping is None or day is None:
         flash(request, "Date invalide.", "err")
         return redirect("/admin/parametres")
-    engine = make_engine(cfg.conn)
+    engine = make_engine(cfg.conn, **pointage.WEB_LIMITS)
     try:
         pointage.add_holiday(engine, mapping, day, libelle.strip(), request.session.get("user", ""))
     finally:
@@ -248,7 +248,7 @@ def holiday_delete(request: Request, jour: str = Form(...), db: Session = Depend
     day = pointage.parse_day(jour)
     if mapping is None or day is None:
         return redirect("/admin/parametres")
-    engine = make_engine(cfg.conn)
+    engine = make_engine(cfg.conn, **pointage.WEB_LIMITS)
     try:
         pointage.delete_holiday(engine, mapping, day)
     finally:
@@ -399,7 +399,7 @@ def check_employee(request: Request, q: str = "", du: str = "", au: str = "", db
     context = dict(q=q, du=d_du, au=d_au, mapping=mapping, results=None, others=[], error=None, calendar=[],
                    last=None, hhmm=pointage.hhmm, statuts=pointage.STATUTS)
     if mapping is not None and q.strip():
-        engine = make_engine(cfg.conn)
+        engine = make_engine(cfg.conn, **pointage.WEB_LIMITS)
         try:
             context["results"], context["others"] = pointage.inspect_employee(engine, mapping, q, d_du, d_au)
             context["last"] = pointage.last_punch(engine, mapping)

@@ -230,7 +230,9 @@ def _close_orphan_runs(job_id: int, reason: str) -> int:
 # --------------------------------------------------------------------------- connexions
 
 
-def make_engine(conn: Connection, lock_wait_minutes: Optional[int] = None) -> Engine:
+def make_engine(conn: Connection, lock_wait_minutes: Optional[int] = None,
+                lock_timeout_s: Optional[int] = None, statement_timeout_s: Optional[int] = None) -> Engine:
+    """lock_timeout_s / statement_timeout_s : limites en secondes (pages web : une requête ne bloque jamais le site)."""
     kwargs: dict[str, Any] = {"pool_pre_ping": True}
     if conn.kind == "mariadb":
         kwargs["connect_args"] = {"connect_timeout": 10, "read_timeout": 3600}
@@ -240,9 +242,15 @@ def make_engine(conn: Connection, lock_wait_minutes: Optional[int] = None) -> En
             # Connexion coupée détectée en quelques minutes.
             "keepalives": 1, "keepalives_idle": 60, "keepalives_interval": 10, "keepalives_count": 5,
         }
-        wait = settings.lock_wait_minutes if lock_wait_minutes is None else lock_wait_minutes
-        if wait > 0:  # attente d'un verrou limitée (sinon un job peut rester bloqué indéfiniment)
-            kwargs["connect_args"]["options"] = f"-c lock_timeout={wait * 60000}"
+        wait_ms = (lock_timeout_s * 1000 if lock_timeout_s is not None
+                   else (settings.lock_wait_minutes if lock_wait_minutes is None else lock_wait_minutes) * 60000)
+        options = []
+        if wait_ms > 0:  # attente d'un verrou limitée (sinon un job peut rester bloqué indéfiniment)
+            options.append(f"-c lock_timeout={wait_ms}")
+        if statement_timeout_s:
+            options.append(f"-c statement_timeout={statement_timeout_s * 1000}")
+        if options:
+            kwargs["connect_args"]["options"] = " ".join(options)
     return create_engine(conn.sqlalchemy_url(), **kwargs)
 
 

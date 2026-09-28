@@ -1,5 +1,7 @@
 """Écran principal : suivi journalier des pointages (filtres dans l'URL, détail, export Excel)."""
 import io
+import threading
+import time
 from datetime import date, timedelta
 from typing import Optional
 
@@ -27,21 +29,38 @@ def load_config(db: Session) -> tuple[Optional[PointageConfig], Optional[pointag
     if cfg is None or cfg.conn is None or cfg.installed_at is None:
         return cfg, None
     mapping = pointage.Mapping.from_json(cfg.data)
-    if (cfg.sql_version or 0) < pointage.SQL_VERSION:
+    if (cfg.sql_version or 0) < pointage.SQL_VERSION and _upgrade_allowed():
         # Nouvelle version de l'application : fonctions et vues PostgreSQL réinstallées une fois.
-        engine = make_engine(cfg.conn)
+        # Une seule tentative à la fois (les autres pages continuent avec les objets actuels) ;
+        # après un échec, nouvel essai dans 10 minutes seulement.
         try:
-            pointage.install(engine, mapping, "mise à jour automatique")
-            cfg.sql_version = pointage.SQL_VERSION
-            db.commit()
-            audit(None, "Calculs du pointage mis à jour automatiquement", f"version {pointage.SQL_VERSION}",
-                  username="système")
-        except Exception as exc:
-            write_log("ERROR", f"Mise à jour automatique des calculs du pointage impossible : {friendly(exc)}. "
-                               "Réinstallez-les depuis Administration → Source des pointages.")
+            engine = make_engine(cfg.conn, **pointage.WEB_LIMITS)
+            try:
+                pointage.install(engine, mapping, "mise à jour automatique")
+                cfg.sql_version = pointage.SQL_VERSION
+                db.commit()
+                audit(None, "Calculs du pointage mis à jour automatiquement", f"version {pointage.SQL_VERSION}",
+                      username="système")
+            except Exception as exc:
+                _upgrade_state["failed_at"] = time.monotonic()
+                write_log("ERROR", f"Mise à jour automatique des calculs du pointage impossible : {friendly(exc)}. "
+                                   "Nouvel essai dans 10 minutes, ou réinstallez-les depuis Administration → "
+                                   "Source des pointages.")
+            finally:
+                engine.dispose()
         finally:
-            engine.dispose()
+            _upgrade_state["lock"].release()
     return cfg, mapping
+
+
+_upgrade_state = {"lock": threading.Lock(), "failed_at": None}
+
+
+def _upgrade_allowed() -> bool:
+    failed = _upgrade_state["failed_at"]
+    if failed is not None and time.monotonic() - failed < 600:
+        return False
+    return _upgrade_state["lock"].acquire(blocking=False)
 
 
 def _filters(request: Request) -> tuple[pointage.Filters, Optional[str]]:
@@ -109,7 +128,7 @@ def suivi(request: Request, db: Session = Depends(get_db)):
                    single_day=f.du == f.au, mode="jour" if f.du == f.au else "periode")
     if mapping is None:
         return render(request, "suivi.html", **context)
-    engine = make_engine(cfg.conn)
+    engine = make_engine(cfg.conn, **pointage.WEB_LIMITS)
     try:
         context["scope_label"] = apply_scope(request, db, engine, mapping, f)
         context["data"] = pointage.daily(engine, mapping, f, page, size)
@@ -136,7 +155,7 @@ def detail(request: Request, key: str, jour: str, db: Session = Depends(get_db))
     day = pointage.parse_day(jour)
     if mapping is None or day is None:
         return HTMLResponse('<p class="empty">Détail indisponible.</p>', status_code=400)
-    engine = make_engine(cfg.conn)
+    engine = make_engine(cfg.conn, **pointage.WEB_LIMITS)
     try:
         f = pointage.Filters(du=day, au=day)
         apply_scope(request, db, engine, mapping, f)
@@ -163,7 +182,7 @@ def export(request: Request, db: Session = Depends(get_db)):
     if mapping is None:
         return Response("Module de pointage non configuré.", status_code=400)
     f, _ = _filters(request)
-    engine = make_engine(cfg.conn)
+    engine = make_engine(cfg.conn, **pointage.WEB_LIMITS)
     try:
         apply_scope(request, db, engine, mapping, f)
         rows = pointage.export_rows(engine, mapping, f)

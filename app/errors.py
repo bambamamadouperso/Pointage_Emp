@@ -28,6 +28,12 @@ def _user(msg: str) -> str:
 
 def hint(msg: str) -> str:
     low = msg.lower()
+    if "statement timeout" in low or "délai d'attente de la requête" in low:
+        return ("La base PostgreSQL a mis trop de temps à répondre (plus de 2 minutes) : réduisez la période "
+                "ou les filtres, puis réessayez.")
+    if "lock timeout" in low or "canceling statement due to lock" in low or "verrou" in low:
+        return ("La base PostgreSQL est occupée (table verrouillée par une synchronisation ou un autre "
+                "programme) : réessayez dans quelques instants.")
     if "pg_hba.conf" in low:
         ip = _client_ip(msg)
         return (
