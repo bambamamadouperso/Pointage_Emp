@@ -90,6 +90,27 @@
     {% endif %}
   </fieldset>
 
+  <fieldset class="limits"><legend>Catégorie du personnel <span class="muted small">(cadre, non cadre… : filtre du suivi et des rapports)</span></legend>
+    {% set cat_person = m.cat_in != 'emp' and m.person_table %}
+    <div class="row">
+      <label>Colonne de la catégorie
+        <select name="cat_in" data-reload>
+          <option value="person" {{ 'selected' if cat_person }} {{ 'disabled' if not m.person_table }}>dans {{ m.person_table or 'la table des noms' }}</option>
+          <option value="emp" {{ 'selected' if not cat_person }}>dans {{ m.emp_table or 'la table des employés' }}</option>
+        </select></label>
+      <label>&nbsp;{{ colselect('cat_col', person_cols if cat_person else emp_cols, m.cat_col, True) }}</label>
+      <label>Table des libellés <span class="muted small">(si la colonne contient un code)</span>
+        {{ tableselect('cat_table', m.cat_table, True) }}</label>
+    </div>
+    {% if m.cat_table %}
+    <div class="row">
+      <label>Code dans {{ m.cat_table }} {{ colselect('cat_key_col', cat_cols, m.cat_key_col) }}</label>
+      <label>Libellé {{ colselect('cat_label_col', cat_cols, m.cat_label_col) }}</label>
+    </div>
+    {% endif %}
+    {% if cat_values %}<p class="muted small">Valeurs trouvées : {% for v in cat_values %}<code>{{ v }}</code>{{ ', ' if not loop.last }}{% endfor %}</p>{% endif %}
+  </fieldset>
+
   <fieldset class="limits"><legend>Qui doit pointer ? <span class="muted small">(chaque jour ouvré sans pointage = absent)</span></legend>
     {% set by_person = m.reference == 'person' and m.person_table %}
     <div class="row">

@@ -47,7 +47,7 @@ STATUTS = {
 }
 CONGES = ("CONGE_ANNUEL", "CONGE_EXCEP")
 # Version des objets PostgreSQL : si elle change, ils sont réinstallés automatiquement.
-SQL_VERSION = 10
+SQL_VERSION = 11
 # Limites des requêtes lancées depuis les pages web : une attente de verrou ou une requête lente ne doit jamais
 # bloquer le site (au pire, la page affiche une erreur au bout de 2 minutes).
 WEB_LIMITS = {"lock_timeout_s": 15, "statement_timeout_s": 120}
@@ -120,6 +120,13 @@ class Mapping:
     person_key_col: str = ""          # identifiant dans person_table
     person_nom_col: str = ""
     person_prenom_col: str = ""
+    # Facultatif : catégorie du personnel (cadre, non cadre…), dans la table des noms ou celle des employés,
+    # avec une table de libellés si la colonne contient un code.
+    cat_col: str = ""
+    cat_in: str = "person"            # « person » : table des noms (ex. Personnel) ; « emp » : table des employés
+    cat_table: str = ""
+    cat_key_col: str = ""
+    cat_label_col: str = ""
     # Facultatif : hiérarchie (responsable N+1), dans la table des employés ou une table dédiée.
     hier_table: str = ""
     hier_emp_col: str = ""            # l'employé
@@ -152,7 +159,7 @@ class Mapping:
     def __post_init__(self) -> None:
         # Configuration enregistrée avant l'ajout des congés (ou champ laissé vide) : valeurs par défaut.
         for name in ("leave_state_values", "leave_annual_values", "leave_excep_values", "leave_ref",
-                     "tw_state_values", "tw_ref"):
+                     "tw_state_values", "tw_ref", "cat_in"):
             if not getattr(self, name):
                 setattr(self, name, type(self).__dataclass_fields__[name].default)
 
@@ -185,6 +192,8 @@ class Mapping:
             out.append("table des noms (liste de référence choisie : table des noms)")
         if self.service_table and not (self.service_key_col and self.service_label_col):
             out.append("colonnes de la table des services")
+        if self.cat_table and not (self.cat_col and self.cat_key_col and self.cat_label_col):
+            out.append("colonnes de la table des catégories")
         if self.hier_table and not (self.hier_emp_col and self.hier_manager_col):
             out.append("colonnes employé et responsable de la hiérarchie")
         if self.leave_table and not (self.leave_emp_col and self.leave_start_col and self.leave_end_col):
@@ -250,6 +259,9 @@ _GUESSES = {
     "person_key_col": [r"^id_?person", r"^id$", r"person", r"^id"],
     "person_nom_col": [r"^nom$", r"^nom_", r"^lastname", r"^name$", r"nom"],
     "person_prenom_col": [r"pr[ée]nom", r"firstname"],
+    "cat_col": [r"^statut", r"cat[ée]gor", r"coll[èe]ge", r"^cadre", r"qualif"],
+    "cat_key_col": [r"^id", r"code", r"statut", r"cat[ée]gor"],
+    "cat_label_col": [r"libell", r"^nom", r"label", r"d[ée]sign", r"intitul"],
     "hier_emp_col": [r"^id_?employ", r"employ", r"^id_?agent", r"collab", r"^id_?person", r"matric"],
     "leave_table": [r"demande_?cong", r"cong[ée]", r"absence", r"leave"],
     "tw_table": [r"t[ée]l[ée]_?travail", r"remote", r"home_?office"],
@@ -401,6 +413,17 @@ def build_sql(m: Mapping, punch_types: dict[str, str], emp_types: dict[str, str]
     else:
         service = "NULL::text"
     by_person = m.reference == "person" and bool(m.person_table)
+    cat_join = ""
+    if m.cat_col:
+        src = "pe" if m.cat_in == "person" and m.person_table else "e"
+        if m.cat_table:
+            categorie = f"nullif(btrim(ct.{qi(m.cat_label_col)}::text), '')"
+            cat_join = (f" LEFT JOIN {qt(m.schema, m.cat_table)} ct ON "
+                        f"btrim(ct.{qi(m.cat_key_col)}::text) = btrim({src}.{qi(m.cat_col)}::text)")
+        else:
+            categorie = f"nullif(btrim({src}.{qi(m.cat_col)}::text), '')"
+    else:
+        categorie = "NULL::text"
     if m.emp_active_col:
         values = [v.strip().lower() for v in m.emp_active_values.split(",") if v.strip()] or ["1", "true", "t", "oui"]
         alias = "pe" if by_person else "e"  # la colonne « actif » appartient à la liste de référence
@@ -415,11 +438,11 @@ def build_sql(m: Mapping, punch_types: dict[str, str], emp_types: dict[str, str]
         base_mat = f"COALESCE({mat}, {pkey_person})"
         person_ref = pkey_person
         base_from = (f"FROM {qt(m.schema, m.person_table)} pe\n    LEFT JOIN {emp} e ON "
-                     f"btrim(e.{qi(m.emp_person_col)}::text) = {pkey_person} {service_join}")
+                     f"btrim(e.{qi(m.emp_person_col)}::text) = {pkey_person} {service_join}{cat_join}")
         base_where = f"pe.{qi(m.person_key_col)} IS NOT NULL"
     else:
         base_key, base_mat = ekey, mat
-        base_from = f"FROM {emp} e {person_join} {service_join}"
+        base_from = f"FROM {emp} e {person_join} {service_join}{cat_join}"
         base_where = f"e.{qi(m.emp_key_col)} IS NOT NULL"
 
     # Hiérarchie : chaque employé a au plus un responsable (N+1), identifié par clé, matricule ou personne.
@@ -443,12 +466,13 @@ hier AS (
 WITH base AS (
     SELECT DISTINCT ON (1) {base_key} AS emp_key, {base_mat} AS matricule, {nom} AS nom, {prenom} AS prenom,
            {service} AS service, COALESCE({actif}, false) AS actif, {person_ref} AS person_ref,
-           {actif_raw} AS actif_valeur
+           {actif_raw} AS actif_valeur, {categorie} AS categorie
     {base_from}
     WHERE {base_where}
     ORDER BY 1, 6 DESC  -- plusieurs fiches pour une même personne : la fiche active l'emporte
 ){hier_cte}
-SELECT b.emp_key, b.matricule, b.nom, b.prenom, b.service, b.actif, {hier_select}, b.actif_valeur, b.person_ref
+SELECT b.emp_key, b.matricule, b.nom, b.prenom, b.service, b.actif, {hier_select}, b.actif_valeur, b.person_ref,
+       b.categorie
 FROM base b
 {hier_join}"""
     team_function = f"""
@@ -482,7 +506,7 @@ RETURNS TABLE (
     jour date, jour_ouvre boolean, premier_pointage timestamp, dernier_pointage timestamp, nb_pointages integer,
     statut text, statut_libelle text, debut_valide time, fin_validee time, pause_deduite interval,
     duree_validee interval, duree_effective interval, duree_validee_min numeric, duree_effective_min numeric,
-    hors_liste boolean, terrain boolean, retard_min numeric
+    hors_liste boolean, terrain boolean, retard_min numeric, categorie text
 )
 LANGUAGE sql STABLE
 -- La compilation JIT coûte plus d'une seconde par appel, pour aucun gain sur ce type de requête.
@@ -532,7 +556,7 @@ base AS (
     SELECT a.emp_key, a.jour FROM agg a
 ),
 g AS (
-    SELECT b.emp_key, b.jour, e.matricule, e.nom, e.prenom, e.service, e.responsable_key, e.responsable,
+    SELECT b.emp_key, b.jour, e.matricule, e.nom, e.prenom, e.service, e.responsable_key, e.responsable, e.categorie,
            a.p1, a.p2, a.n, (e.emp_key IS NULL) AS hors_liste,
            p.debut_journee, p.debut_pause, p.fin_pause, p.fin_journee, p.seuil_retard, p.duree_pause,
            p.duree_conge, p.duree_teletravail, p.duree_terrain, k.statut AS conge, t.statut AS tele,
@@ -570,7 +594,8 @@ SELECT c.emp_key, COALESCE(c.matricule, c.emp_key), COALESCE(c.nom, 'Hors liste'
        c.debut_valide, c.fin_validee, c.pause, v.hv, v.de,
        round((extract(epoch FROM v.hv) / 60)::numeric, 2), round((extract(epoch FROM v.de) / 60)::numeric, 2),
        c.hors_liste, c.terrain,
-       CASE WHEN c.statut = 'RETARD' THEN round((extract(epoch FROM c.p1::time - c.debut_journee) / 60)::numeric, 0) END
+       CASE WHEN c.statut = 'RETARD' THEN round((extract(epoch FROM c.p1::time - c.debut_journee) / 60)::numeric, 0) END,
+       c.categorie
 FROM c
 CROSS JOIN LATERAL (
     SELECT CASE WHEN c.statut IN ('CONGE_ANNUEL', 'CONGE_EXCEP') THEN c.duree_conge
@@ -648,8 +673,13 @@ def install(engine: Engine, m: Mapping, author: str) -> None:
                 None if by_person else m.emp_active_col, m.emp_person_col):
         if col and col not in emp_types:
             raise PointageError(f"Colonne « {col} » absente de {m.emp_table}.")
+    if m.cat_col:
+        cat_src = m.person_table if m.cat_in == "person" and m.person_table else m.emp_table
+        if m.cat_col not in column_types(engine, m.schema, cat_src):
+            raise PointageError(f"Colonne « {m.cat_col} » absente de {cat_src}.")
     for table, cols in ((m.person_table, (m.person_key_col, m.person_nom_col, m.person_prenom_col,
                                           m.emp_active_col if by_person else None)),
+                        (m.cat_table, (m.cat_key_col, m.cat_label_col)),
                         (m.service_table, (m.service_key_col, m.service_label_col)),
                         (m.hier_table, (m.hier_emp_col, m.hier_manager_col)),
                         (m.leave_table, (m.leave_emp_col, m.leave_start_col, m.leave_end_col, m.leave_state_col,
@@ -905,6 +935,7 @@ class Filters:
     directs: bool = False             # seulement ses collaborateurs directs (N-1)
     scope_root: Optional[str] = None  # périmètre imposé par le compte (manager : son équipe)
     population: str = ""              # « liste » : employés de la liste ; « hors » : badges hors liste
+    categorie: str = ""               # catégorie du personnel (cadre, non cadre…)
 
 
 def _where(f: Filters, S: str = "") -> tuple[str, dict, list]:
@@ -927,6 +958,9 @@ def _where(f: Filters, S: str = "") -> tuple[str, dict, list]:
     if f.service:
         clauses.append("service = :service")
         params["service"] = f.service
+    if f.categorie:
+        clauses.append("categorie = :categorie")
+        params["categorie"] = f.categorie
     statuts = [s for s in f.statuts if s in STATUTS]
     if statuts:
         clauses.append("statut IN :statuts")
@@ -987,6 +1021,16 @@ def services(engine: Engine, m: Mapping, scope_root: Optional[str] = None) -> li
     with engine.connect() as c:
         return [s for s in c.execute(text(
             f"SELECT DISTINCT service FROM {S}.v_pointage_employes WHERE service IS NOT NULL"
+            f"{_scope_sql(S, scope_root)} ORDER BY 1"), {"root": scope_root}).scalars()]
+
+
+def categories(engine: Engine, m: Mapping, scope_root: Optional[str] = None) -> list[str]:
+    if not m.cat_col:
+        return []
+    S = qi(m.objs)
+    with engine.connect() as c:
+        return [s for s in c.execute(text(
+            f"SELECT DISTINCT categorie FROM {S}.v_pointage_employes WHERE categorie IS NOT NULL"
             f"{_scope_sql(S, scope_root)} ORDER BY 1"), {"root": scope_root}).scalars()]
 
 

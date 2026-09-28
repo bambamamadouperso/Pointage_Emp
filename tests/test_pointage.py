@@ -36,7 +36,10 @@ def pg():
         # Noms et prénoms dans une autre table (Personnel) ; hiérarchie dans une table dédiée (par matricule).
         c.execute(text(f"""CREATE TABLE {SCHEMA}."Employes" ("IDEmployes" int PRIMARY KEY, "Matricule" text,
                           "IDPersonnel" int, "IDService" int, "Actif" text)"""))
-        c.execute(text(f"""CREATE TABLE {SCHEMA}."Personnel" ("IDPersonnel" int PRIMARY KEY, "Nom" text, "Prenom" text)"""))
+        c.execute(text(f"""CREATE TABLE {SCHEMA}."Personnel" ("IDPersonnel" int PRIMARY KEY, "Nom" text, "Prenom" text,
+                          "IDStatut" int)"""))
+        c.execute(text(f"CREATE TABLE {SCHEMA}.statuts (id int PRIMARY KEY, libelle text)"))
+        c.execute(text(f"INSERT INTO {SCHEMA}.statuts VALUES (1, 'Cadre'), (2, 'Non cadre')"))
         c.execute(text(f"""CREATE TABLE {SCHEMA}.hierarchie (matricule_employe text, matricule_responsable text)"""))
         c.execute(text(f"CREATE TABLE {SCHEMA}.punchlog (id serial PRIMARY KEY, employe_id int, "
                        f"date_pointage date, heure_pointage text, terminal text)"))
@@ -45,9 +48,9 @@ def pg():
             (1, 'E001', 101, 1, '1'), (2, 'E002', 102, 1, '1'), (3, 'E003', 103, 2, '1'), (4, 'E004', 104, 2, '1'),
             (5, 'E005', 105, 2, '1'), (6, 'E006', 106, 1, '0'), (7, 'E007', 107, 1, '1')"""))
         c.execute(text(f"""INSERT INTO {SCHEMA}."Personnel" VALUES
-            (101, 'Diallo', 'Awa'), (102, 'Ndiaye', 'Moussa'), (103, 'Sow', 'Fatou'), (104, 'Fall', 'Ibou'),
-            (105, 'Ba', 'Khady'), (106, 'Gueye', 'Ousmane'), (107, 'Diop', 'Aminata'),
-            (108, 'Kane', 'Omar')"""))  # Kane : dans Personnel, sans fiche dans Employes
+            (101, 'Diallo', 'Awa', 1), (102, 'Ndiaye', 'Moussa', 2), (103, 'Sow', 'Fatou', 1), (104, 'Fall', 'Ibou', 2),
+            (105, 'Ba', 'Khady', 2), (106, 'Gueye', 'Ousmane', 2), (107, 'Diop', 'Aminata', 2),
+            (108, 'Kane', 'Omar', 2)"""))  # Kane : dans Personnel, sans fiche dans Employes
         # Diallo encadre Ndiaye, Sow et Gueye ; Sow encadre Fall et Ba ; Diop n'a pas de responsable.
         c.execute(text(f"""INSERT INTO {SCHEMA}.hierarchie VALUES
             ('E002', 'E001'), ('E003', 'E001'), ('E006', 'E001'), ('E004', 'E003'), ('E005', 'E003'), ('E007', NULL)"""))
@@ -99,6 +102,7 @@ def configured(pg):
             "person_nom_col": "Nom", "person_prenom_col": "Prenom",
             "hier_table": "hierarchie", "hier_emp_col": "matricule_employe",
             "hier_manager_col": "matricule_responsable", "hier_ref": "matricule",
+            "cat_in": "person", "cat_col": "IDStatut", "cat_table": "statuts", "cat_key_col": "id", "cat_label_col": "libelle",
         }, follow_redirects=True)
         assert "installées" in r.text, r.text[:3000]
         # Seuil de retard porté à 8h15 à partir du mardi ; mercredi férié.
@@ -217,9 +221,9 @@ def test_screen_filters_detail_and_export(configured, logged_client):
     xlsx = logged_client.get(f"/suivi/export.xlsx?date={MON.isoformat()}&statut=RETARD&statut=ABSENT")
     assert xlsx.status_code == 200
     ws = load_workbook(io.BytesIO(xlsx.content))["Suivi journalier"]
-    statuts = {ws.cell(r, 9).value for r in range(2, ws.max_row + 1)}
+    statuts = {ws.cell(r, 10).value for r in range(2, ws.max_row + 1)}
     assert statuts == {"En retard", "Absent"}
-    assert ws.cell(1, 10).value == "Durée validée"
+    assert ws.cell(1, 11).value == "Durée validée"
 
 
 def test_roles_and_audit(configured, client):
@@ -545,7 +549,35 @@ def test_reports_page_and_export(configured, logged_client):
     r = logged_client.get("/rapports/export.xlsx?" + url.split("?", 1)[1])
     assert r.status_code == 200
     wb = load_workbook(io.BytesIO(r.content))
-    assert wb.sheetnames[:4] == ["Employés", "Services", "Par jour", "Alertes"]
+    assert wb.sheetnames[:5] == ["Employés", "Services", "Catégories", "Par jour", "Alertes"]
     rows = {row[0]: row for row in wb["Employés"].iter_rows(min_row=2, values_only=True)}
-    assert rows["E005"][13] == 4  # Ba Khady : 4 absences (mercredi férié)
+    assert rows["E005"][14] == 4  # Ba Khady : 4 absences (mercredi férié)
     assert any(row[0] == "Absences répétées" for row in wb["Alertes"].iter_rows(min_row=2, values_only=True))
+
+
+def test_category_filter(configured, pg, logged_client):
+    """Catégorie du personnel (via une table de libellés) : colonne, filtre du suivi et des rapports, exports."""
+    import io
+
+    from openpyxl import load_workbook
+
+    r = rows(pg, MON)
+    assert r[("E001", MON)].categorie == "Cadre" and r[("E002", MON)].categorie == "Non cadre"
+    assert r[("99", MON)].categorie is None  # hors liste
+    with SessionLocal() as db:
+        m = pointage.Mapping.from_json(db.query(PointageConfig).one().data)
+    assert pointage.categories(pg, m) == ["Cadre", "Non cadre"]
+    page = logged_client.get(f"/suivi?date={MON.isoformat()}&categorie=Cadre").text
+    assert 'name="categorie"' in page and "Catégorie : Cadre" in page
+    assert "Diallo" in page and "Sow" in page and "Ndiaye" not in page
+    xlsx = load_workbook(io.BytesIO(logged_client.get(f"/suivi/export.xlsx?date={MON.isoformat()}&categorie=Cadre").content))
+    ws = xlsx.active
+    assert ws.cell(1, 6).value == "Catégorie" and {row[5] for row in ws.iter_rows(min_row=2, values_only=True)} == {"Cadre"}
+    url = f"/rapports?p=perso&du={MON.isoformat()}&au={(MON + timedelta(days=4)).isoformat()}"
+    rep = logged_client.get(url).text
+    assert "Par catégorie" in rep and "Non cadre" in rep
+    assert "Ba Khady" not in logged_client.get(url + "&categorie=Cadre").text
+    wb = load_workbook(io.BytesIO(logged_client.get("/rapports/export.xlsx?" + url.split("?", 1)[1]).content))
+    assert "Catégories" in wb.sheetnames
+    admin = logged_client.get("/admin/pointage").text
+    assert "Catégorie du personnel" in admin and "<code>Cadre</code>" in admin

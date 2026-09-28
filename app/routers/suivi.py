@@ -83,7 +83,7 @@ def _filters(request: Request) -> tuple[pointage.Filters, Optional[str]]:
         statuts=[s for s in p.getlist("statut") if s in pointage.STATUTS],
         sort=p.get("sort", "nom") if p.get("sort", "nom") in pointage.SORTABLE else "nom",
         desc=p.get("dir") == "desc", team=p.get("equipe", ""), directs=p.get("directs") == "1" and bool(p.get("equipe")),
-        population=p.get("pop", "") if p.get("pop") in ("liste", "hors") else "",
+        population=p.get("pop", "") if p.get("pop") in ("liste", "hors") else "", categorie=p.get("categorie", ""),
     ), warning
 
 
@@ -124,7 +124,7 @@ def suivi(request: Request, db: Session = Depends(get_db)):
     size = size if size in PAGE_SIZES else 100
     context = dict(f=f, warning=warning, today=date.today(), statuts=pointage.STATUTS, page=page, size=size, page_sizes=PAGE_SIZES,
                    hhmm=pointage.hhmm, configured=mapping is not None, data=None, error=None, services=[],
-                   managers=[], scope_label=None, population=None, last_punch=None, stale=False, has_hierarchy=bool(mapping and mapping.hier_table),
+                   managers=[], categories=[], scope_label=None, population=None, last_punch=None, stale=False, has_hierarchy=bool(mapping and mapping.hier_table),
                    single_day=f.du == f.au, mode="jour" if f.du == f.au else "periode")
     if mapping is None:
         return render(request, "suivi.html", **context)
@@ -134,6 +134,7 @@ def suivi(request: Request, db: Session = Depends(get_db)):
         context["data"] = pointage.daily(engine, mapping, f, page, size)
         context["services"] = pointage.services(engine, mapping, f.scope_root)
         context["managers"] = pointage.managers(engine, mapping, f.scope_root)
+        context["categories"] = pointage.categories(engine, mapping, f.scope_root)
         try:
             context["population"] = pointage.population(engine, mapping)
         except Exception as exc:  # contrôle facultatif : ne doit pas empêcher l'affichage
@@ -200,7 +201,7 @@ def export(request: Request, db: Session = Depends(get_db)):
     wb = Workbook()
     ws = wb.active
     ws.title = "Suivi journalier"
-    headers = ["Date", "Matricule", "Nom", "Prénom", "Service", "1er pointage", "Dernier pointage", "Nb pointages",
+    headers = ["Date", "Matricule", "Nom", "Prénom", "Service", "Catégorie", "1er pointage", "Dernier pointage", "Nb pointages",
                "Statut", "Durée validée", "Durée effective", "Durée validée (min)", "Durée effective (min)",
                "Responsable", "Dans la liste des employés"]
     ws.append(headers)
@@ -209,7 +210,7 @@ def export(request: Request, db: Session = Depends(get_db)):
              "TELETRAVAIL": "CDEEE7", "TERRAIN": "DBEAFE"}
     for r in rows:
         ws.append([
-            r["jour"], r["matricule"], r["nom"], r["prenom"], r["service"],
+            r["jour"], r["matricule"], r["nom"], r["prenom"], r["service"], r["categorie"],
             r["premier_pointage"].time() if r["premier_pointage"] else None,
             r["dernier_pointage"].time() if r["dernier_pointage"] else None,
             r["nb_pointages"], r["statut_libelle"], r["duree_validee"], r["duree_effective"],
@@ -219,24 +220,24 @@ def export(request: Request, db: Session = Depends(get_db)):
         ])
         row = ws.max_row
         ws.cell(row, 1).number_format = "DD/MM/YYYY"
-        for col in (6, 7):
+        for col in (7, 8):
             ws.cell(row, col).number_format = "HH:MM"
-        for col in (10, 11):
+        for col in (11, 12):
             ws.cell(row, col).number_format = "[H]:MM"
-        ws.cell(row, 9).fill = PatternFill("solid", fgColor=fills.get(r["statut"], "FFFFFF"))
+        ws.cell(row, 10).fill = PatternFill("solid", fgColor=fills.get(r["statut"], "FFFFFF"))
     for i, h in enumerate(headers, 1):
         ws.cell(1, i).font = Font(bold=True)
         ws.cell(1, i).alignment = Alignment(wrap_text=True, vertical="top")
         ws.column_dimensions[get_column_letter(i)].width = max(12, len(h) + 2)
     ws.column_dimensions["C"].width = 24
     ws.column_dimensions["E"].width = 22
-    ws.column_dimensions["N"].width = 26
+    ws.column_dimensions["O"].width = 26
     ws.freeze_panes = "A2"
     ws.auto_filter.ref = ws.dimensions
     info = wb.create_sheet("Filtres")
     for label, value in [
         ("Du", f.du.strftime("%d/%m/%Y")), ("Au", f.au.strftime("%d/%m/%Y")), ("Recherche", f.q or "—"),
-        ("Service", f.service or "Tous"),
+        ("Service", f.service or "Tous"), ("Catégorie", f.categorie or "Toutes"),
         ("Personnes", {"liste": "employés de la liste", "hors": "hors liste"}.get(f.population, "toutes")),
         ("Équipe", (f.team + (" (directs)" if f.directs else "")) if f.team else "Toutes"),
         ("Périmètre", "équipe du compte" if f.scope_root is not None else "tout le personnel"),

@@ -98,8 +98,29 @@ def _load(c, S: str, f: Filters) -> None:
                    f"(SELECT * FROM {S}.f_pointage_journalier(:du, :au)) t{where}").bindparams(*binds), params)
 
 
+def _group(c, expr: str) -> list[dict]:
+    """Indicateurs par groupe (service, catégorie…), du plus fort au plus faible absentéisme."""
+    rows = [_rates(dict(x)) for x in c.execute(text(f"""
+        SELECT {expr} AS groupe, count(DISTINCT emp_key) AS employes,
+            count(*) FILTER (WHERE {_DISPO}) AS disponibles,
+            count(*) FILTER (WHERE {_DISPO} AND {_PRESENT}) AS presents,
+            count(*) FILTER (WHERE statut = 'A_L_HEURE') AS a_l_heure,
+            count(*) FILTER (WHERE statut = 'RETARD') AS retards,
+            count(*) FILTER (WHERE statut = 'ABSENT') AS absences,
+            count(*) FILTER (WHERE statut = 'INCOMPLET' AND jour < current_date) AS incomplets,
+            COALESCE(sum(retard_min), 0) AS retard_min_total,
+            avg(duree_validee_min) FILTER (WHERE {_BUREAU}) / 60.0 AS heures_moy_bureau,
+            sum(duree_validee_min) / 60.0 AS heures_validees
+        FROM r GROUP BY 1""")).mappings()]
+    for row in rows:
+        row["service"] = row["groupe"]  # compatibilité des gabarits et de l'export
+    rows.sort(key=lambda g: (-(g["taux_absence"] or 0), g["groupe"]))
+    return rows
+
+
 def build(engine: Engine, m: Mapping, f: Filters, sort: str = "absences", compare: bool = True) -> dict:
     S = qi(m.objs)
+    has_categories = bool(m.cat_col)
     out: dict = {}
     with engine.begin() as c:
         _load(c, S, f)
@@ -139,23 +160,13 @@ def build(engine: Engine, m: Mapping, f: Filters, sort: str = "absences", compar
                     + (extract(minute FROM premier_pointage)::int / 15) * 15) AS minute, count(*) AS n
             FROM r WHERE {_BUREAU} GROUP BY 1 ORDER BY 1""")).mappings()]
 
-        out["services"] = [_rates(dict(x)) for x in c.execute(text(f"""
-            SELECT COALESCE(service, '(sans service)') AS service, count(DISTINCT emp_key) AS employes,
-                count(*) FILTER (WHERE {_DISPO}) AS disponibles,
-                count(*) FILTER (WHERE {_DISPO} AND {_PRESENT}) AS presents,
-                count(*) FILTER (WHERE statut = 'A_L_HEURE') AS a_l_heure,
-                count(*) FILTER (WHERE statut = 'RETARD') AS retards,
-                count(*) FILTER (WHERE statut = 'ABSENT') AS absences,
-                count(*) FILTER (WHERE statut = 'INCOMPLET' AND jour < current_date) AS incomplets,
-                COALESCE(sum(retard_min), 0) AS retard_min_total,
-                avg(duree_validee_min) FILTER (WHERE {_BUREAU}) / 60.0 AS heures_moy_bureau,
-                sum(duree_validee_min) / 60.0 AS heures_validees
-            FROM r GROUP BY 1""")).mappings()]
-        out["services"].sort(key=lambda s: (-(s["taux_absence"] or 0), s["service"]))
+        out["services"] = _group(c, "COALESCE(service, '(sans service)')")
+        out["categories"] = _group(c, "COALESCE(categorie, '(non renseignée)')") if has_categories else []
 
         employees = [_rates(dict(x)) for x in c.execute(text(f"""
             SELECT emp_key, max(matricule) AS matricule, max(nom) AS nom, max(prenom) AS prenom,
-                max(service) AS service, max(responsable) AS responsable, bool_or(terrain) AS terrain,
+                max(service) AS service, max(categorie) AS categorie, max(responsable) AS responsable,
+                bool_or(terrain) AS terrain,
                 count(*) FILTER (WHERE {_ATTENDU}) AS attendus,
                 count(*) FILTER (WHERE {_DISPO}) AS disponibles,
                 count(*) FILTER (WHERE {_DISPO} AND {_PRESENT}) AS presents,

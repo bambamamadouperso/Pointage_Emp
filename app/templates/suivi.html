@@ -55,6 +55,13 @@
         {% if f.service and f.service not in services %}<option value="{{ f.service }}" selected>{{ f.service }}</option>{% endif %}
       </select>
     </label>
+    {% if categories %}
+    <label>Catégorie
+      <select name="categorie"><option value="">Toutes</option>
+        {% for c in categories %}<option value="{{ c }}" {{ 'selected' if f.categorie == c }}>{{ c }}</option>{% endfor %}
+      </select>
+    </label>
+    {% endif %}
     {% if has_hierarchy %}
     <label>Équipe de
       <select name="equipe"><option value="">{{ 'Toute mon équipe' if scope_label else 'Tout le personnel' }}</option>
@@ -90,6 +97,7 @@
 {% set active_filters = [] %}
 {% if f.q %}{% set _ = active_filters.append(('Employé : « ' ~ f.q ~ ' »', request.query_params | with_param('q', ''))) %}{% endif %}
 {% if f.service %}{% set _ = active_filters.append(('Service : ' ~ f.service, request.query_params | with_param('service', ''))) %}{% endif %}
+{% if f.categorie %}{% set _ = active_filters.append(('Catégorie : ' ~ f.categorie, request.query_params | with_param('categorie', ''))) %}{% endif %}
 {% if f.team %}{% set _ = active_filters.append(('Équipe de ' ~ (team_label or f.team) ~ (' · directs (N-1)' if f.directs else ''), (request.query_params | with_param('equipe', '')) )) %}{% endif %}
 {% if f.population %}{% set _ = active_filters.append(('Personnes : ' ~ ('employés de la liste' if f.population == 'liste' else 'hors liste'), request.query_params | with_param('pop', ''))) %}{% endif %}
 {% if f.statuts %}{% set labels = [] %}{% for code in f.statuts %}{% set _ = labels.append(statuts[code][0]) %}{% endfor %}{% set _ = active_filters.append(('Statut : ' ~ labels | join(', '), request.query_params | set_statuts([]))) %}{% endif %}

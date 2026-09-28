@@ -10,6 +10,22 @@
     {%- endif -%}
   {%- endif -%}
 {% endmacro %}
+{% macro group_table(title, rows, param, first_col) %}
+<section class="card">
+  <div class="card-head"><div><h2>{{ title }}</h2><p class="muted small">Classés du plus fort au plus faible absentéisme.</p></div></div>
+  <div class="table-wrap"><table class="report-table">
+    <thead><tr><th>{{ first_col }}</th><th class="right">Employés</th><th>Présence</th><th>Absentéisme</th><th class="right">Ponctualité</th>
+      <th class="right">Retards</th><th class="right">Oublis de badge</th><th class="right">Moy. / jour au bureau</th></tr></thead>
+    <tbody>{% for s in rows %}
+      <tr><td><a href="?{{ request.query_params | with_param(param, s.groupe) }}">{{ s.groupe }}</a></td><td class="right">{{ s.employes }}</td>
+        <td class="nowrap"><span class="meter ok"><span style="width:{{ (s.taux_presence or 0) | round(1) }}%"></span></span> {{ pct(s.taux_presence) }}</td>
+        <td class="nowrap"><span class="meter err"><span style="width:{{ ([(s.taux_absence or 0) * 3, 100] | min) | round(1) }}%"></span></span> {{ pct(s.taux_absence) }}</td>
+        <td class="right">{{ pct(s.taux_ponctualite) }}</td><td class="right">{{ s.retards }}</td><td class="right">{{ s.incomplets }}</td>
+        <td class="right">{{ hhmm(timedelta(hours=s.heures_moy_bureau | float)) if s.heures_moy_bureau else '—' }}</td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+</section>
+{% endmacro %}
 {% block content %}
 <div class="page-head">
   <div>
@@ -35,6 +51,10 @@
     <input type="hidden" name="p" value="{{ preset }}">
     <label>Service <select name="service"><option value="">Tous</option>
       {% for s in services %}<option value="{{ s }}" {{ 'selected' if f.service == s }}>{{ s }}</option>{% endfor %}</select></label>
+    {% if categories %}
+    <label>Catégorie <select name="categorie"><option value="">Toutes</option>
+      {% for c in categories %}<option value="{{ c }}" {{ 'selected' if f.categorie == c }}>{{ c }}</option>{% endfor %}</select></label>
+    {% endif %}
     {% if has_hierarchy %}
     <label>Équipe de <select name="equipe"><option value="">{{ 'Toute mon équipe' if scope_label else 'Tout le personnel' }}</option>
       {% for key, label, n in managers %}<option value="{{ key }}" {{ 'selected' if f.team == key }}>{{ label }}</option>{% endfor %}</select></label>
@@ -134,20 +154,8 @@
   </section>
 </div>
 
-<section class="card">
-  <div class="card-head"><div><h2>Par service</h2><p class="muted small">Classés du plus fort au plus faible absentéisme.</p></div></div>
-  <div class="table-wrap"><table class="report-table">
-    <thead><tr><th>Service</th><th class="right">Employés</th><th>Présence</th><th>Absentéisme</th><th class="right">Ponctualité</th>
-      <th class="right">Retards</th><th class="right">Oublis de badge</th><th class="right">Moy. / jour au bureau</th></tr></thead>
-    <tbody>{% for s in data.services %}
-      <tr><td><a href="?{{ request.query_params | with_param('service', s.service) }}">{{ s.service }}</a></td><td class="right">{{ s.employes }}</td>
-        <td class="nowrap"><span class="meter ok"><span style="width:{{ (s.taux_presence or 0) | round(1) }}%"></span></span> {{ pct(s.taux_presence) }}</td>
-        <td class="nowrap"><span class="meter err"><span style="width:{{ ([(s.taux_absence or 0) * 3, 100] | min) | round(1) }}%"></span></span> {{ pct(s.taux_absence) }}</td>
-        <td class="right">{{ pct(s.taux_ponctualite) }}</td><td class="right">{{ s.retards }}</td><td class="right">{{ s.incomplets }}</td>
-        <td class="right">{{ hhmm(timedelta(hours=s.heures_moy_bureau | float)) if s.heures_moy_bureau else '—' }}</td></tr>
-    {% endfor %}</tbody>
-  </table></div>
-</section>
+{% if data.categories %}{{ group_table('Par catégorie', data.categories, 'categorie', 'Catégorie') }}{% endif %}
+{{ group_table('Par service', data.services, 'service', 'Service') }}
 
 <section class="card">
   <div class="card-head"><div><h2>À suivre</h2>
