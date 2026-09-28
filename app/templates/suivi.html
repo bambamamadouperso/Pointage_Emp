@@ -25,21 +25,27 @@
   <input type="hidden" name="sort" value="{{ f.sort }}">
   <input type="hidden" name="dir" value="{{ 'desc' if f.desc else 'asc' }}">
   <div class="row">
-    <fieldset class="mode">
-      <legend class="sr-only">Type de sélection</legend>
-      <label class="check"><input type="radio" name="_mode" value="jour" {{ 'checked' if mode == 'jour' }}> Jour</label>
-      <label class="check"><input type="radio" name="_mode" value="periode" {{ 'checked' if mode == 'periode' }}> Période</label>
-    </fieldset>
-    <label data-mode="jour">Date
+    <div class="field">
+      <span class="field-label">Période</span>
+      <fieldset class="mode">
+        <legend class="sr-only">Type de sélection</legend>
+        <label class="check"><input type="radio" name="_mode" value="jour" {{ 'checked' if mode == 'jour' }}> Jour</label>
+        <label class="check"><input type="radio" name="_mode" value="periode" {{ 'checked' if mode == 'periode' }}> Plusieurs jours</label>
+      </fieldset>
+    </div>
+    <div class="field day-nav" data-mode="jour">
+      <label for="f_date" class="field-label">Date</label>
       <span class="inline">
-        <a class="btn small ghost" href="?{{ request.query_params | replace_param('date', (f.du - timedelta(days=1)).isoformat()) }}" title="Jour précédent">←</a>
-        <input type="date" name="date" value="{{ f.du.isoformat() }}">
-        <a class="btn small ghost" href="?{{ request.query_params | replace_param('date', (f.du + timedelta(days=1)).isoformat()) }}" title="Jour suivant">→</a>
+        <a class="btn ghost step" href="?{{ request.query_params | replace_param('date', (f.du - timedelta(days=1)).isoformat()) }}" title="Jour précédent" aria-label="Jour précédent">‹</a>
+        <input type="date" id="f_date" name="date" value="{{ f.du.isoformat() }}">
+        <a class="btn ghost step" href="?{{ request.query_params | replace_param('date', (f.du + timedelta(days=1)).isoformat()) }}" title="Jour suivant" aria-label="Jour suivant">›</a>
       </span>
-    </label>
+    </div>
     <label data-mode="periode">Du <input type="date" name="du" value="{{ f.du.isoformat() }}"></label>
     <label data-mode="periode">Au <input type="date" name="au" value="{{ f.au.isoformat() }}"></label>
-    <label class="grow">Employé <input type="search" name="q" value="{{ f.q }}" placeholder="nom, prénom ou matricule"></label>
+    <label class="grow">Employé <input type="search" name="q" value="{{ f.q }}" placeholder="Nom, prénom ou matricule…"></label>
+  </div>
+  <div class="row">
     <label>Service
       <select name="service"><option value="">Tous</option>
         {% for s in services %}<option value="{{ s }}" {{ 'selected' if f.service == s }}>{{ s }}</option>{% endfor %}
@@ -52,7 +58,7 @@
         {% for key, label, n in managers %}<option value="{{ key }}" {{ 'selected' if f.team == key }}>{{ label }} · {{ n }} direct(s)</option>{% endfor %}
       </select>
     </label>
-    <label class="check small directs"><input type="checkbox" name="directs" value="1" {{ 'checked' if f.directs }}> Directs seulement (N-1)</label>
+    <label class="check directs"><input type="checkbox" name="directs" value="1" {{ 'checked' if f.directs }}> Collaborateurs directs seulement (N-1)</label>
     {% endif %}
   </div>
   <div class="row statut-row">
@@ -75,14 +81,21 @@
 
 {% if data %}
 {% set k = data.kpi %}
+{% set only = f.statuts[0] if f.statuts | length == 1 else '' %}
 <section class="stats kpis">
-  <div class="stat"><span class="label">Présents</span><span class="value ok">{{ k.presents | num }}</span>
-    {% if k.incomplets %}<span class="muted small">dont {{ k.incomplets }} incomplet(s)</span>{% endif %}</div>
-  <div class="stat"><span class="label">Retards</span><span class="value late">{{ k.retards | num }}</span></div>
-  <div class="stat"><span class="label">Absents</span><span class="value err">{{ k.absents | num }}</span></div>
-  <div class="stat"><span class="label">Taux de ponctualité</span><span class="value">{{ '%.1f'|format(k.taux_ponctualite) ~ ' %' if k.taux_ponctualite is not none else '—' }}</span></div>
-  <div class="stat"><span class="label">Moyenne heure validée</span><span class="value">{{ hhmm(k.moy_validee) }}</span></div>
-  <div class="stat"><span class="label">Moyenne durée effective</span><span class="value">{{ hhmm(k.moy_effective) }}</span></div>
+  <a class="stat c-ok {{ 'selected' if f.statuts == ['A_L_HEURE', 'RETARD', 'INCOMPLET'] }}"
+     href="?{{ request.query_params | set_statuts(['A_L_HEURE', 'RETARD', 'INCOMPLET']) }}" title="Afficher les présents">
+    <span class="label">Présents</span><span class="value">{{ k.presents | num }}</span>
+    <span class="hint">{% if k.incomplets %}dont {{ k.incomplets }} incomplet(s){% else %}cliquer pour filtrer{% endif %}</span></a>
+  <a class="stat c-late {{ 'selected' if only == 'RETARD' }}" href="?{{ request.query_params | set_statuts(['RETARD']) }}" title="Afficher les retards">
+    <span class="label">Retards</span><span class="value">{{ k.retards | num }}</span><span class="hint">arrivée ≥ seuil</span></a>
+  <a class="stat c-err {{ 'selected' if only == 'ABSENT' }}" href="?{{ request.query_params | set_statuts(['ABSENT']) }}" title="Afficher les absents">
+    <span class="label">Absents</span><span class="value">{{ k.absents | num }}</span><span class="hint">jour ouvré sans pointage</span></a>
+  <div class="stat c-violet"><span class="label">Taux de ponctualité</span>
+    <span class="value">{{ '%.1f'|format(k.taux_ponctualite) ~ ' %' if k.taux_ponctualite is not none else '—' }}</span>
+    <span class="hint">à l'heure / (à l'heure + retards)</span></div>
+  <div class="stat c-sky"><span class="label">Moyenne heure validée</span><span class="value">{{ hhmm(k.moy_validee) }}</span></div>
+  <div class="stat c-teal"><span class="label">Moyenne durée effective</span><span class="value">{{ hhmm(k.moy_effective) }}</span></div>
 </section>
 {% if not single_day %}<p class="muted small kpi-note">Sur une période, les compteurs portent sur des journées-employé ({{ k.employes | num }} employé(s)).</p>{% endif %}
 

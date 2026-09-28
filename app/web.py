@@ -115,6 +115,13 @@ def replace_param(params, key: str, value: str) -> str:
     return urlencode(items + [(key, value)])
 
 
+def set_statuts(params, statuts: list) -> str:
+    """Paramètres de l'URL actuelle avec ce filtre de statuts (un clic sur une carte KPI filtre le tableau)."""
+    items = [(k, v) for k, v in params.multi_items() if k not in ("statut", "page")]
+    return urlencode(items + [("statut", s) for s in statuts])
+
+
+templates.env.filters["set_statuts"] = set_statuts
 templates.env.filters["jour_fr"] = jour_fr
 templates.env.filters["replace_param"] = replace_param
 templates.env.globals["timedelta"] = __import__("datetime").timedelta

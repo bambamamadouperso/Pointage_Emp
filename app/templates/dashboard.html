@@ -9,12 +9,12 @@
 </div>
 
 <section class="stats">
-  <div class="stat"><span class="label">Jobs actifs</span><span class="value">{{ stats.jobs_enabled }}<small> / {{ stats.jobs }}</small></span></div>
-  <div class="stat"><span class="label">En cours</span><span class="value">{{ stats.running }}</span></div>
-  <div class="stat"><span class="label">Succès (24 h)</span><span class="value ok">{{ stats.runs_ok }}</span></div>
-  <div class="stat"><span class="label">Partiels (24 h)</span><span class="value warn">{{ stats.runs_partial }}</span></div>
-  <div class="stat"><span class="label">Erreurs (24 h)</span><span class="value err">{{ stats.runs_err }}</span></div>
-  <div class="stat"><span class="label">Lignes écrites (24 h)</span><span class="value">{{ stats.rows_24h | num }}</span></div>
+  <a class="stat c-violet" href="/jobs"><span class="label">Jobs actifs</span><span class="value">{{ stats.jobs_enabled }}<small> / {{ stats.jobs }}</small></span></a>
+  <a class="stat c-sky" href="/runs?status=running"><span class="label">En cours</span><span class="value">{{ stats.running }}</span></a>
+  <a class="stat" href="/runs?status=success"><span class="label">Succès (24 h)</span><span class="value ok">{{ stats.runs_ok }}</span></a>
+  <a class="stat" href="/runs?status=partial"><span class="label">Partiels (24 h)</span><span class="value warn">{{ stats.runs_partial }}</span></a>
+  <a class="stat" href="/runs?status=error"><span class="label">Erreurs (24 h)</span><span class="value err">{{ stats.runs_err }}</span></a>
+  <div class="stat c-teal"><span class="label">Lignes écrites (24 h)</span><span class="value">{{ stats.rows_24h | num }}</span></div>
 </section>
 
 <section class="card">

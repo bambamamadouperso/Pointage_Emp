@@ -3,9 +3,12 @@
 {% block main_class %}login{% endblock %}
 {% block content %}
 <form method="post" action="/login" class="card login-card">
-  <h1>⇄ Synchro</h1>
-  <p class="muted">Synchronisation MariaDB, HFSQL et Google Sheets → PostgreSQL</p>
-  <label>Utilisateur <input name="username" autocomplete="username" required autofocus></label>
+  <span class="brand-mark"><svg class="ico"><use href="#i-clock"/></svg></span>
+  <div>
+    <h1>Bienvenue</h1>
+    <p class="muted">Suivi des pointages et synchronisation des données</p>
+  </div>
+  <label>Identifiant <input name="username" autocomplete="username" required autofocus></label>
   <label>Mot de passe <input name="password" type="password" autocomplete="current-password" required></label>
   <button class="btn primary">Se connecter</button>
 </form>
