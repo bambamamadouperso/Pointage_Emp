@@ -375,7 +375,7 @@ def test_filter_bar_and_contradictory_filters(configured, logged_client):
     assert "Aucune ligne" in page and "n'ont ni service ni responsable" in page
 
 
-def test_approved_leave_replaces_absence(configured, pg, logged_client):
+def test_approved_leave_and_remote_work_replace_absence(configured, pg, logged_client):
     """Jour « Absent » couvert par un congé approuvé : « Congé Annuel » / « Congé exceptionnel », 8h validées et effectives."""
     import dataclasses
 
@@ -389,11 +389,21 @@ def test_approved_leave_replaces_absence(configured, pg, logged_client):
             ('E007', '2026-09-22 00:00', '2026-09-22', ' APPROUVEE ', 'conge  excep'),    -- casse et espaces ignorés
             ('E003', '2026-09-22 00:00', '2026-09-22', 'En attente', 'CONGE'),            -- non approuvé
             ('E001', '2026-09-22 00:00', '2026-09-22', 'Approuvée', 'MALADIE')            -- autre nature"""))
+        c.execute(text(f'DROP TABLE IF EXISTS {SCHEMA}."TdemandedeTeleTravail"'))
+        c.execute(text(f"""CREATE TABLE {SCHEMA}."TdemandedeTeleTravail" (matricule text, datedebut timestamp,
+                          "Datefin" timestamp, etat text)"""))
+        c.execute(text(f"""INSERT INTO {SCHEMA}."TdemandedeTeleTravail" VALUES
+            ('E003', '2026-09-22 00:00', '2026-09-22 00:00', 'Approuvée'),   -- télétravail
+            ('E005', '2026-09-22 00:00', '2026-09-22 00:00', 'Approuvée'),   -- aussi en congé : le congé l'emporte
+            ('E001', '2026-09-22 00:00', '2026-09-22 00:00', 'Refusée'),     -- non approuvé
+            ('E002', '2026-09-22 00:00', '2026-09-22 00:00', 'Approuvée')    -- a badgé : garde son statut"""))
     with SessionLocal() as db:
         m = pointage.Mapping.from_json(db.query(PointageConfig).one().data)
     m = dataclasses.replace(
         m, objects_schema="pt_test_conge", leave_table="demandeconge", leave_emp_col="matricule", leave_ref="matricule",
-        leave_start_col="datedebut", leave_end_col="Datefin", leave_state_col="etat", leave_type_col="Document")
+        leave_start_col="datedebut", leave_end_col="Datefin", leave_state_col="etat", leave_type_col="Document",
+        tw_table="TdemandedeTeleTravail", tw_emp_col="matricule", tw_ref="matricule", tw_start_col="datedebut",
+        tw_end_col="Datefin", tw_state_col="etat")
     assert (m.leave_state_values, m.leave_annual_values, m.leave_excep_values) == ("Approuvée", "CONGE", "CONGE EXCEP")
     with pg.begin() as c:
         c.execute(text("DROP SCHEMA IF EXISTS pt_test_conge CASCADE"))
@@ -410,7 +420,11 @@ def test_approved_leave_replaces_absence(configured, pg, logged_client):
     assert r[("E004", MON)].statut == "INCOMPLET"
     aminata = r[("E007", TUE)]
     assert (aminata.statut, aminata.statut_libelle) == ("CONGE_EXCEP", "Congé exceptionnel")
-    assert r[("E003", TUE)].statut == "ABSENT" and r[("E001", TUE)].statut == "ABSENT"
+    assert r[("E001", TUE)].statut == "ABSENT"
+    fatou = r[("E003", TUE)]  # congé non approuvé, mais télétravail approuvé
+    assert (fatou.statut, fatou.statut_libelle, hm(fatou.duree_validee), hm(fatou.duree_effective)) == (
+        "TELETRAVAIL", "Télétravail", "8h00", "8h00")
+    assert r[("E005", TUE)].statut == "CONGE_ANNUEL" and r[("E002", TUE)].statut in ("A_L_HEURE", "RETARD")
 
     # Écran : carte « En congé », badge vert clair, moyennes hors congés.
     from app.routers import suivi
@@ -423,11 +437,15 @@ def test_approved_leave_replaces_absence(configured, pg, logged_client):
     finally:
         suivi.load_config = monkey_cfg
     assert "En congé" in page and 'badge st-leave">Congé Annuel' in page and "Congé exceptionnel" in page
+    assert 'badge st-remote">Télétravail' in page
 
     # Administration : la section Congés propose les colonnes de la table choisie.
     admin = logged_client.get(f"/admin/pointage?conn_id={configured}&schema={SCHEMA}&punch_table=punchlog"
-                              f"&emp_table=Employes&leave_table=demandeconge&leave_state_values=Approuvée").text
+                              f"&emp_table=Employes&leave_table=demandeconge&leave_state_values=Approuvée"
+                              f"&tw_table=TdemandedeTeleTravail").text
     assert "Table des demandes de congé" in admin and "Datefin (text)" in admin and "Congé exceptionnel" in admin
+    tw_section = admin.split("Table des demandes de télétravail")[1]
+    assert 'name="tw_start_col"' in tw_section and '<option value="datedebut" selected' in tw_section
 
 
 def test_reference_whole_personnel(configured, pg, logged_client):

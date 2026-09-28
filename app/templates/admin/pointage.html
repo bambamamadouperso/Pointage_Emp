@@ -191,6 +191,39 @@
     {% endif %}
   </fieldset>
 
+  <fieldset class="limits"><legend>Télétravail <span class="muted small">(un jour « Absent » couvert par un télétravail approuvé devient « Télétravail »)</span></legend>
+    <div class="row">
+      <label>Table des demandes de télétravail
+        {{ tableselect('tw_table', m.tw_table, True) }}
+        {% if tw_guess %}<span class="muted small">Suggestion : <code>{{ tw_guess }}</code></span>{% endif %}</label>
+      {% if m.tw_table %}
+      <label>La colonne de l'employé contient
+        <select name="tw_ref">
+          <option value="key" {{ 'selected' if m.tw_ref in ('key', '') }}>la clé employé ({{ m.emp_key_col or 'colonne de correspondance' }})</option>
+          <option value="matricule" {{ 'selected' if m.tw_ref == 'matricule' }}>le matricule</option>
+          <option value="person" {{ 'selected' if m.tw_ref == 'person' }}>l'identifiant de la table des noms</option>
+        </select></label>
+      {% endif %}
+    </div>
+    {% if m.tw_table %}
+    <div class="row">
+      <label>Colonne de l'employé {{ colselect('tw_emp_col', tw_cols, m.tw_emp_col) }}</label>
+      <label>Date de début {{ colselect('tw_start_col', tw_cols, m.tw_start_col) }}</label>
+      <label>Date de fin {{ colselect('tw_end_col', tw_cols, m.tw_end_col) }}</label>
+    </div>
+    <div class="row">
+      <label>Colonne de l'état <span class="muted small">(facultatif)</span> {{ colselect('tw_state_col', tw_cols, m.tw_state_col, True) }}</label>
+      <label>Valeur(s) « approuvé » <input name="tw_state_values" value="{{ m.tw_state_values }}" placeholder="Approuvée"></label>
+    </div>
+    <p class="muted small">Chaque jour ouvré de télétravail reçoit la « Durée attribuée par jour de télétravail » (8h par défaut,
+      voir Paramètres horaires) en durée validée et en durée effective. Un congé approuvé le même jour l'emporte ;
+      un jour où la personne a badgé garde le statut calculé d'après ses pointages.</p>
+    {% else %}
+    <input type="hidden" name="tw_ref" value="{{ m.tw_ref or 'key' }}">
+    <input type="hidden" name="tw_state_values" value="{{ m.tw_state_values or 'Approuvée' }}">
+    {% endif %}
+  </fieldset>
+
   <p class="muted small">Enregistrer crée ou met à jour dans PostgreSQL : <code>pointage_parametres</code> (paramètres historisés),
     <code>pointage_jours_feries</code>, les fonctions <code>f_pointage_journalier(du, au)</code> et
     <code>f_pointage_equipe(responsable)</code>, et les vues <code>v_pointage_journalier</code>,

@@ -125,18 +125,20 @@
   <a class="stat c-late {{ 'selected' if only == 'RETARD' }}" href="?{{ request.query_params | set_statuts(['RETARD']) }}" title="Afficher les retards">
     <span class="label">Retards</span><span class="value">{{ k.retards | num }}</span><span class="hint">arrivée ≥ seuil</span></a>
   <a class="stat c-err {{ 'selected' if only == 'ABSENT' }}" href="?{{ request.query_params | set_statuts(['ABSENT']) }}" title="Afficher les absents">
-    <span class="label">Absents</span><span class="value">{{ k.absents | num }}</span><span class="hint">jour ouvré sans pointage ni congé</span></a>
+    <span class="label">Absents</span><span class="value">{{ k.absents | num }}</span><span class="hint">sans pointage ni demande approuvée</span></a>
   {% set only_conges = f.statuts | sort == ['CONGE_ANNUEL', 'CONGE_EXCEP'] %}
   <a class="stat c-leave {{ 'selected' if only_conges or only in ('CONGE_ANNUEL', 'CONGE_EXCEP') }}" href="?{{ request.query_params | set_statuts(['CONGE_ANNUEL', 'CONGE_EXCEP']) }}" title="Afficher les congés">
     <span class="label">En congé</span><span class="value">{{ k.conges | num }}</span><span class="hint">congé approuvé</span></a>
+  <a class="stat c-remote {{ 'selected' if only == 'TELETRAVAIL' }}" href="?{{ request.query_params | set_statuts(['TELETRAVAIL']) }}" title="Afficher le télétravail">
+    <span class="label">Télétravail</span><span class="value">{{ k.teletravail | num }}</span><span class="hint">télétravail approuvé</span></a>
   <a class="stat c-pink {{ 'selected' if f.population == 'hors' }}" href="?{{ request.query_params | with_param('pop', '' if f.population == 'hors' else 'hors') }}"
      title="Personnes qui ont pointé mais ne figurent pas dans la liste des employés">
     <span class="label">Hors liste</span><span class="value">{{ k.hors_liste | num }}</span><span class="hint">badge sans fiche employé</span></a>
   <div class="stat c-violet"><span class="label">Taux de ponctualité</span>
     <span class="value">{{ '%.1f'|format(k.taux_ponctualite) ~ ' %' if k.taux_ponctualite is not none else '—' }}</span>
     <span class="hint">à l'heure / (à l'heure + retards)</span></div>
-  <div class="stat c-sky"><span class="label">Moyenne durée validée</span><span class="value">{{ hhmm(k.moy_validee) }}</span><span class="hint">hors congés</span></div>
-  <div class="stat c-teal"><span class="label">Moyenne durée effective</span><span class="value">{{ hhmm(k.moy_effective) }}</span><span class="hint">hors congés</span></div>
+  <div class="stat c-sky"><span class="label">Moyenne durée validée</span><span class="value">{{ hhmm(k.moy_validee) }}</span><span class="hint">hors congés et télétravail</span></div>
+  <div class="stat c-teal"><span class="label">Moyenne durée effective</span><span class="value">{{ hhmm(k.moy_effective) }}</span><span class="hint">hors congés et télétravail</span></div>
 </section>
 <p class="muted small kpi-note">{{ k.employes | num }} personne(s) affichée(s) : chaque employé de la liste apparaît chaque jour, qu'il ait pointé ou non.
   {% if not single_day %}Sur une période, les compteurs portent sur des journées-employé.{% endif %}</p>
