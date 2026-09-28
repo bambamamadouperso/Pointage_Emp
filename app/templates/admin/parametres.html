@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}Paramètres horaires{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Paramètres horaires</h1>
+    <p class="muted">Valeurs en vigueur aujourd'hui. Chaque modification est historisée avec sa date d'effet : les jours
+      antérieurs restent calculés avec les valeurs de l'époque.</p></div>
+  <a href="/admin" class="muted">← Administration</a>
+</div>
+{% if mapping is none %}
+  <div class="flash warn">Configurez d'abord la <a href="/admin/pointage">source des pointages</a>.</div>
+{% else %}
+{% if error %}<div class="flash err">{{ error }}</div>{% endif %}
+{% if upcoming %}<div class="flash info">Changement(s) programmé(s) :
+  {% for h in upcoming %}{{ params | selectattr(0, 'equalto', h.cle) | map(attribute=1) | first }} = {{ h.valeur }} le {{ h.date_effet.strftime('%d/%m/%Y') }}{{ ', ' if not loop.last }}{% endfor %}.</div>{% endif %}
+
+<form method="post" action="/admin/parametres" class="card form" style="max-width:980px"
+      data-confirm="Enregistrer ces paramètres ? Ils s'appliqueront à partir de la date d'effet choisie.">
+  <div class="param-grid">
+    {% for key, label, kind, default in params if kind != 'days' %}
+      <label>{{ label }}
+        <input type="time" name="{{ key }}" value="{{ values[key] }}" required step="60">
+        <span class="muted small">{% if kind == 'duration' %}durée (heures:minutes){% endif %} défaut {{ default }}</span>
+      </label>
+    {% endfor %}
+  </div>
+  <fieldset class="limits"><legend>Jours ouvrés <span class="muted small">(un jour ouvré sans pointage = absent)</span></legend>
+    <div class="days">
+      {% set open_days = values.jours_ouvres.split(',') %}
+      {% for num, name in weekdays %}
+        <label class="check"><input type="checkbox" name="jours_ouvres" value="{{ num }}" {{ 'checked' if num|string in open_days }}> {{ name }}</label>
+      {% endfor %}
+    </div>
+  </fieldset>
+  <div class="row">
+    <label style="max-width:260px">Date d'effet <input type="date" name="date_effet" value="{{ today.isoformat() }}" required>
+      <span class="muted small">Une date passée recalcule les jours depuis cette date.</span></label>
+  </div>
+  <div class="form-actions"><button class="btn primary">Enregistrer</button></div>
+</form>
+
+<section class="card" id="feries">
+  <div class="card-head"><h2>Jours fériés et fermetures</h2></div>
+  <p class="muted small">Personne n'est compté absent ces jours-là ; les pointages éventuels restent calculés.</p>
+  <form method="post" action="/admin/feries" class="inline" style="max-width:640px; margin-bottom:.8rem">
+    <input type="date" name="jour" required aria-label="Date">
+    <input name="libelle" placeholder="Libellé (ex. Tabaski)" aria-label="Libellé">
+    <button class="btn">Ajouter</button>
+  </form>
+  {% if not holidays %}<p class="empty">Aucun jour férié enregistré.</p>{% else %}
+  <div class="table-wrap"><table>
+    <thead><tr><th>Date</th><th>Libellé</th><th>Ajouté par</th><th></th></tr></thead>
+    <tbody>{% for h in holidays %}
+      <tr><td>{{ h.jour | jour_fr }}</td><td>{{ h.libelle or '—' }}</td><td class="muted small">{{ h.auteur or '—' }}</td>
+        <td><form method="post" action="/admin/feries/delete" data-confirm="Supprimer ce jour férié ?">
+          <input type="hidden" name="jour" value="{{ h.jour.isoformat() }}"><button class="btn small danger">Supprimer</button></form></td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>Historique des modifications</h2>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Date d'effet</th><th>Paramètre</th><th>Valeur</th><th>Auteur</th><th>Modifié le</th></tr></thead>
+    <tbody>{% for h in history %}
+      <tr><td>{{ h.date_effet.strftime('%d/%m/%Y') if h.date_effet.year > 2000 else 'origine' }}</td>
+        <td>{{ params | selectattr(0, 'equalto', h.cle) | map(attribute=1) | first | default(h.cle) }}</td>
+        <td class="mono">{{ h.valeur }}</td><td>{{ h.auteur or '—' }}</td>
+        <td class="small muted">{{ h.modifie_le.strftime('%d/%m/%Y %H:%M') }}</td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+</section>
+{% endif %}
+{% endblock %}

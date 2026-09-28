@@ -10,18 +10,28 @@
 <body>
 {% if user %}
 <header class="topbar">
-  <a class="brand" href="/">⇄ Synchro <span>MariaDB · HFSQL · Google Sheets → PostgreSQL</span></a>
+  <a class="brand" href="{{ '/' if can(role, 'manager') else '/suivi' }}">⇄ Pointage <span>Synchro &amp; suivi des présences</span></a>
   <nav>
     {% set path = request.url.path %}
+    <a href="/suivi" class="{{ 'active' if path.startswith('/suivi') }}">Suivi journalier</a>
+    {% if can(role, 'manager') %}
     <a href="/" class="{{ 'active' if path == '/' }}">Tableau de bord</a>
     <a href="/jobs" class="{{ 'active' if path.startswith('/jobs') }}">Jobs</a>
     <a href="/data" class="{{ 'active' if path.startswith('/data') }}">Données</a>
+    {% endif %}
+    {% if can(role, 'admin') %}
     <a href="/connections" class="{{ 'active' if path.startswith('/connections') }}">Connexions</a>
+    {% endif %}
+    {% if can(role, 'manager') %}
     <a href="/runs" class="{{ 'active' if path.startswith('/runs') }}">Exécutions</a>
     <a href="/logs" class="{{ 'active' if path.startswith('/logs') }}">Logs</a>
+    {% endif %}
+    {% if can(role, 'admin') %}
+    <a href="/admin" class="{{ 'active' if path.startswith('/admin') }}">Administration</a>
+    {% endif %}
   </nav>
   <form method="post" action="/logout" class="logout">
-    <span class="muted">{{ user }}</span>
+    <a class="muted" href="/compte" title="Mon compte">{{ user }}{% if role %} · {{ {'admin': 'admin', 'manager': 'manager', 'lecteur': 'lecteur'}[role] }}{% endif %}</a>
     <button class="btn small ghost">Déconnexion</button>
   </form>
 </header>

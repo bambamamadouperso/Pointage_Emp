@@ -19,6 +19,7 @@
       <button class="btn danger">■ Arrêter</button></form>
     {% endif %}
     <form method="post" action="/jobs/{{ job.id }}/run"><button class="btn primary" {{ 'disabled' if running }}>▶ Lancer maintenant</button></form>
+    {% if can(role, 'admin') %}
     <form method="post" action="/jobs/{{ job.id }}/toggle"><button class="btn">{{ 'Désactiver' if job.enabled else 'Activer' }}</button></form>
     <details class="edit">
       <summary class="btn">⟲ Tout réimporter</summary>
@@ -33,11 +34,12 @@
     </details>
     <a class="btn" href="/jobs/{{ job.id }}/edit">Modifier</a>
     <form method="post" action="/jobs/{{ job.id }}/delete" data-confirm="Supprimer le job « {{ job.name }} » et son historique ? Les tables PostgreSQL ne sont pas supprimées."><button class="btn danger">Supprimer</button></form>
+    {% endif %}
   </div>
 </div>
 
 {% if job.suspended_reason %}<div class="flash err">{{ job.suspended_reason }}
-  <form method="post" action="/jobs/{{ job.id }}/toggle" class="inline-form"><button class="btn small">Réactiver le job</button></form></div>
+  {% if can(role, 'admin') %}<form method="post" action="/jobs/{{ job.id }}/toggle" class="inline-form"><button class="btn small">Réactiver le job</button></form>{% endif %}</div>
 {% elif job.retry_count %}<div class="flash warn">Relance automatique en cours : tentative {{ job.retry_count }} / {{ job.effective_retry_max }}.</div>{% endif %}
 <section class="stats">
   <div class="stat"><span class="label">Intervalle</span><span class="value">{{ job.interval_label }}</span></div>
@@ -54,7 +56,7 @@
 <section class="card">
   <div class="card-head">
     <h2>Tables synchronisées</h2>
-    {% if unmapped %}
+    {% if unmapped and can(role, 'admin') %}
     <form method="post" action="/jobs/{{ job.id }}/tables/add-all" data-confirm="Ajouter les {{ unmapped|length }} table(s) restantes en mode complet ?">
       <button class="btn small">+ Ajouter toutes les tables ({{ unmapped|length }})</button>
     </form>
@@ -77,6 +79,7 @@
         <td class="mono">{{ m.last_value_display or '—' }}</td>
         <td>{{ m.last_sync_at | dt }}{% if m.last_rows is not none %}<br><span class="muted small">{{ m.last_rows | num }} ligne(s)</span>{% endif %}</td>
         <td class="actions">
+          {% if can(role, 'admin') %}
           <details class="edit">
             <summary class="btn small ghost">Modifier</summary>
             <form method="post" action="/jobs/{{ job.id }}/tables/{{ m.id }}/update" class="form popover">
@@ -105,6 +108,7 @@
           <form method="post" action="/jobs/{{ job.id }}/tables/{{ m.id }}/reset" data-confirm="Réinitialiser le curseur ? Toute la table sera relue au prochain passage."><button class="btn small ghost">Réinit. curseur</button></form>
           {% endif %}
           <form method="post" action="/jobs/{{ job.id }}/tables/{{ m.id }}/delete" data-confirm="Retirer « {{ m.source_table }} » du job ?"><button class="btn small danger">Retirer</button></form>
+          {% endif %}
         </td>
       </tr>
     {% endfor %}
@@ -112,6 +116,7 @@
   </table></div>
   {% endif %}
 
+  {% if can(role, 'admin') %}
   <h3>Ajouter une table</h3>
   <form method="post" action="/jobs/{{ job.id }}/tables" class="form add-table">
     <div class="row">
@@ -136,6 +141,7 @@
     <p class="muted small" id="columns_info"></p>
     <div class="form-actions"><button class="btn primary">Ajouter</button></div>
   </form>
+  {% endif %}
   <div class="help muted small">
     {% if job.source.is_gsheet %}
     <p><strong>Google Sheets</strong> : le classeur est téléchargé à chaque exécution ; la première ligne de chaque onglet contient les en-têtes.
@@ -157,7 +163,7 @@
 <script>
   const input = document.getElementById('source_table');
   const info = document.getElementById('columns_info');
-  input.addEventListener('change', async () => {
+  if (input) input.addEventListener('change', async () => {
     const table = input.value.trim();
     if (!table) return;
     info.textContent = 'Chargement des colonnes…';

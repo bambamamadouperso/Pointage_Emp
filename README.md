@@ -49,6 +49,57 @@ avec historique et logs.
 > Le mode incrémental ne répercute pas les suppressions faites dans la source. Pour une table où des
 > lignes sont supprimées, utilisez le mode complet.
 
+## Suivi des pointages (présences et retards)
+
+Menu **« Suivi journalier »** : pour chaque employé et chaque jour, premier et dernier pointage, statut et
+durées, à partir des tables copiées dans PostgreSQL (ex. `punchlog` et la table des employés de HRSmart).
+
+**Mise en route (administrateur)** : *Administration → Source des pointages*. Choisissez la base PostgreSQL,
+le schéma, la table des pointages (colonne employé, date/heure — ou date + heure dans deux colonnes, formats
+HFSQL `AAAAMMJJ` / `HHMMSS` acceptés) et la table des employés (identifiant, matricule, nom, prénom, service,
+éventuellement une table des services et une colonne « actif »). « Enregistrer et installer » crée dans PostgreSQL :
+
+| Objet | Rôle |
+|---|---|
+| `f_pointage_journalier(du, au)` | Fonction de calcul (utilisée par l'application et l'export) |
+| `v_pointage_journalier` | Vue de tout l'historique, pour Power BI ou toute autre requête |
+| `v_pointage_brut` | Pointages bruts normalisés (employé, horodatage, jour) |
+| `pointage_parametres` | Paramètres horaires historisés (valeur, date d'effet, auteur) |
+| `pointage_jours_feries` | Jours fériés et fermetures (personne n'y est absent) |
+
+**Règles de calcul** (par employé et par jour, avec les paramètres en vigueur ce jour-là) :
+
+- P1 = premier pointage, P2 = dernier pointage (les pointages intermédiaires sont ignorés).
+- **En retard** si P1 ≥ seuil de retard (7h45 compris), sinon **à l'heure**.
+- **Heure validée** = (MIN(P2, fin de journée) − début validé) − pause déduite, où début validé = début de
+  journée (7h30) si P1 < seuil de retard, sinon P1.
+- **Durée effective** = (P2 − P1) − pause déduite.
+- La pause (1h30 par défaut) n'est déduite que si la présence couvre la plage de pause (P1 < début de pause et
+  P2 > fin de pause). Une durée n'est jamais négative.
+- Un seul pointage : **pointage incomplet** (durées non calculées). Aucun pointage un jour ouvré : **absent**.
+  Les jours non ouvrés et fériés ne génèrent pas d'absence.
+
+**Paramètres** (*Administration → Paramètres horaires*) : début/fin de journée, début/fin de pause, seuil de
+retard, pause déduite, jours ouvrés. Chaque modification est enregistrée avec sa **date d'effet** et son auteur :
+les jours antérieurs restent calculés avec les anciennes valeurs (une date d'effet passée recalcule depuis cette date).
+
+**Écran** : cartes (présents, retards, absents, taux de ponctualité, moyennes), tableau coloré (vert à l'heure,
+orange retard, rouge absent, gris incomplet), clic sur une ligne = tous les pointages bruts de la journée.
+Filtres (jour ou période, employé, service, statuts), tri par colonne, filtres conservés dans l'URL (lien
+partageable), **export Excel** de la vue filtrée.
+
+**Rôles** (*Administration → Utilisateurs*) :
+
+| Rôle | Accès |
+|---|---|
+| Lecteur | Suivi journalier et export Excel |
+| Manager | + tableau de bord, jobs (consultation, lancement, arrêt), exécutions, logs, données |
+| Administrateur | Tout : connexions, modification des jobs, paramètres, source des pointages, utilisateurs, audit |
+
+Le compte défini dans `.env` (`ADMIN_USERNAME` / `ADMIN_PASSWORD`) reste un administrateur de secours.
+Le **journal d'audit** (*Administration → Journal d'audit*) trace les connexions, les changements de
+paramètres, d'utilisateurs, de configuration, de connexions et de jobs (qui, quand, avant → après).
+
 ## Source HFSQL Client/Serveur
 
 La lecture passe par le **pilote ODBC HFSQL** de PC SOFT, à installer (gratuit) sur le serveur qui exécute

@@ -228,3 +228,52 @@ class LogEntry(Base):
     message: Mapped[str] = mapped_column(Text)
 
     job: Mapped[Optional[SyncJob]] = relationship()
+
+
+# --------------------------------------------------------------------------- utilisateurs, audit, pointage
+
+ROLES = {"admin": "Administrateur", "manager": "Manager", "lecteur": "Lecteur"}
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    username: Mapped[str] = mapped_column(String(100), unique=True)
+    full_name: Mapped[str] = mapped_column(String(200), default="")
+    role: Mapped[str] = mapped_column(String(20), default="lecteur")
+    password_hash: Mapped[str] = mapped_column(Text, default="")
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    last_login_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+    @property
+    def role_label(self) -> str:
+        return ROLES.get(self.role, self.role)
+
+
+class AuditEntry(Base):
+    """Journal d'audit : qui a modifié quoi, et quand."""
+
+    __tablename__ = "audit_log"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+    username: Mapped[str] = mapped_column(String(100), default="")
+    action: Mapped[str] = mapped_column(String(200))
+    target: Mapped[str] = mapped_column(String(300), default="")
+    details: Mapped[str] = mapped_column(Text, default="")
+    ip: Mapped[str] = mapped_column(String(64), default="")
+
+
+class PointageConfig(Base):
+    """Correspondance entre le module de pointage et les tables PostgreSQL (une seule ligne)."""
+
+    __tablename__ = "pointage_config"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    conn_id: Mapped[Optional[int]] = mapped_column(ForeignKey("connections.id", ondelete="SET NULL"), nullable=True)
+    data: Mapped[str] = mapped_column(Text, default="{}")
+    installed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+    conn: Mapped[Optional[Connection]] = relationship()

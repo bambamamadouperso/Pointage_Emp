@@ -1,0 +1,153 @@
+{% extends "base.html" %}
+{% block title %}Suivi journalier{% endblock %}
+{% block main_class %}container wide{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Suivi journalier</h1>
+    <p class="muted">{% if single_day %}{{ f.du | jour_fr }}{% else %}Du {{ f.du.strftime('%d/%m/%Y') }} au {{ f.au.strftime('%d/%m/%Y') }}{% endif %}
+      · premier et dernier pointage de chaque journée</p>
+  </div>
+  {% if configured and data %}
+  <div class="actions">
+    <a class="btn" href="/suivi/export.xlsx?{{ request.query_params }}">⬇ Export Excel ({{ data.total | num }} lignes)</a>
+  </div>
+  {% endif %}
+</div>
+
+{% if not configured %}
+  <div class="flash warn">Le module de pointage n'est pas encore configuré.
+    {% if can(role, 'admin') %}<a href="/admin/pointage">Configurer la source des pointages →</a>
+    {% else %}Un administrateur doit indiquer les tables des pointages et des employés.{% endif %}</div>
+{% else %}
+
+<form method="get" class="card suivi-filters" id="filters">
+  <input type="hidden" name="sort" value="{{ f.sort }}">
+  <input type="hidden" name="dir" value="{{ 'desc' if f.desc else 'asc' }}">
+  <div class="row">
+    <fieldset class="mode">
+      <legend class="sr-only">Type de sélection</legend>
+      <label class="check"><input type="radio" name="_mode" value="jour" {{ 'checked' if mode == 'jour' }}> Jour</label>
+      <label class="check"><input type="radio" name="_mode" value="periode" {{ 'checked' if mode == 'periode' }}> Période</label>
+    </fieldset>
+    <label data-mode="jour">Date
+      <span class="inline">
+        <a class="btn small ghost" href="?{{ request.query_params | replace_param('date', (f.du - timedelta(days=1)).isoformat()) }}" title="Jour précédent">←</a>
+        <input type="date" name="date" value="{{ f.du.isoformat() }}">
+        <a class="btn small ghost" href="?{{ request.query_params | replace_param('date', (f.du + timedelta(days=1)).isoformat()) }}" title="Jour suivant">→</a>
+      </span>
+    </label>
+    <label data-mode="periode">Du <input type="date" name="du" value="{{ f.du.isoformat() }}"></label>
+    <label data-mode="periode">Au <input type="date" name="au" value="{{ f.au.isoformat() }}"></label>
+    <label class="grow">Employé <input type="search" name="q" value="{{ f.q }}" placeholder="nom, prénom ou matricule"></label>
+    <label>Service
+      <select name="service"><option value="">Tous</option>
+        {% for s in services %}<option value="{{ s }}" {{ 'selected' if f.service == s }}>{{ s }}</option>{% endfor %}
+        {% if f.service and f.service not in services %}<option value="{{ f.service }}" selected>{{ f.service }}</option>{% endif %}
+      </select>
+    </label>
+  </div>
+  <div class="row statut-row">
+    <span class="muted small">Statut :</span>
+    {% for code, (label, cls) in statuts.items() %}
+      <label class="check chip-check {{ cls }}"><input type="checkbox" name="statut" value="{{ code }}" {{ 'checked' if code in f.statuts }}> {{ label }}</label>
+    {% endfor %}
+    <span class="spacer"></span>
+    <label class="check small">Lignes
+      <select name="size" class="narrow">{% for s in page_sizes %}<option value="{{ s }}" {{ 'selected' if s == size }}>{{ s }}</option>{% endfor %}</select>
+    </label>
+    <button class="btn primary">Appliquer</button>
+    <a class="btn ghost" href="/suivi">Aujourd'hui</a>
+  </div>
+</form>
+
+{% if warning %}<div class="flash warn">{{ warning }}</div>{% endif %}
+{% if error %}<div class="flash err">{{ error }}</div>{% endif %}
+
+{% if data %}
+{% set k = data.kpi %}
+<section class="stats kpis">
+  <div class="stat"><span class="label">Présents</span><span class="value ok">{{ k.presents | num }}</span>
+    {% if k.incomplets %}<span class="muted small">dont {{ k.incomplets }} incomplet(s)</span>{% endif %}</div>
+  <div class="stat"><span class="label">Retards</span><span class="value late">{{ k.retards | num }}</span></div>
+  <div class="stat"><span class="label">Absents</span><span class="value err">{{ k.absents | num }}</span></div>
+  <div class="stat"><span class="label">Taux de ponctualité</span><span class="value">{{ '%.1f'|format(k.taux_ponctualite) ~ ' %' if k.taux_ponctualite is not none else '—' }}</span></div>
+  <div class="stat"><span class="label">Moyenne heure validée</span><span class="value">{{ hhmm(k.moy_validee) }}</span></div>
+  <div class="stat"><span class="label">Moyenne durée effective</span><span class="value">{{ hhmm(k.moy_effective) }}</span></div>
+</section>
+{% if not single_day %}<p class="muted small kpi-note">Sur une période, les compteurs portent sur des journées-employé ({{ k.employes | num }} employé(s)).</p>{% endif %}
+
+<section class="card">
+  {% if not data.rows %}
+    <p class="empty">Aucune ligne ne correspond aux filtres.</p>
+  {% else %}
+  {% macro th(key, label, cls='') %}
+    {% set active = f.sort == key %}
+    <th class="{{ cls }}"><a class="sort {{ 'active' if active }}" href="{{ sort_url(request, key, 'asc' if active and f.desc else ('desc' if active else 'asc')) }}">{{ label }}{% if active %} {{ '▼' if f.desc else '▲' }}{% endif %}</a></th>
+  {% endmacro %}
+  <div class="table-wrap"><table class="suivi">
+    <thead><tr>
+      {% if not single_day %}{{ th('jour', 'Date') }}{% endif %}
+      {{ th('matricule', 'Matricule') }}{{ th('nom', 'Nom') }}{{ th('service', 'Service') }}
+      {{ th('premier', '1er pointage') }}{{ th('dernier', 'Dernier pointage') }}{{ th('statut', 'Statut') }}
+      {{ th('validee', 'Heure validée', 'right') }}{{ th('effective', 'Durée effective', 'right') }}
+    </tr></thead>
+    <tbody>
+    {% for r in data.rows %}
+      {% set label, cls = statuts[r.statut] %}
+      <tr class="st-row {{ cls }}" data-key="{{ r.emp_key }}" data-jour="{{ r.jour.isoformat() }}" tabindex="0"
+          title="Cliquer pour voir tous les pointages de la journée">
+        {% if not single_day %}<td class="nowrap">{{ r.jour | jour_fr(True) }}</td>{% endif %}
+        <td class="mono">{{ r.matricule }}</td>
+        <td>{{ r.nom }} {{ r.prenom or '' }}</td>
+        <td>{{ r.service or '—' }}</td>
+        <td>{{ hhmm(r.premier_pointage) }}</td>
+        <td>{{ hhmm(r.dernier_pointage) if r.nb_pointages > 1 else '—' }}</td>
+        <td><span class="badge {{ cls }}">{{ label }}</span>{% if not r.jour_ouvre %} <span class="muted small" title="Jour non ouvré ou férié">(non ouvré)</span>{% endif %}</td>
+        <td class="right">{{ hhmm(r.heure_validee) }}</td>
+        <td class="right">{{ hhmm(r.duree_effective) }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {% include "_pager.html" with context %}
+  {% endif %}
+</section>
+{% endif %}
+{% endif %}
+{% endblock %}
+{% block scripts %}
+<script>
+  const form = document.getElementById('filters');
+  if (form) {
+    const sync = () => {
+      const mode = form.querySelector('[name=_mode]:checked').value;
+      form.querySelectorAll('[data-mode]').forEach(el => {
+        const on = el.dataset.mode === mode;
+        el.hidden = !on;
+        el.querySelectorAll('input').forEach(i => i.disabled = !on);
+      });
+    };
+    form.querySelectorAll('[name=_mode]').forEach(r => r.addEventListener('change', sync));
+    form.addEventListener('submit', () => form.querySelectorAll('[name=_mode]').forEach(r => r.disabled = true));
+    sync();
+  }
+  const cols = document.querySelector('table.suivi thead tr')?.children.length || 8;
+  async function toggle(row) {
+    const next = row.nextElementSibling;
+    if (next && next.classList.contains('detail-row')) { next.remove(); row.classList.remove('open'); return; }
+    const tr = document.createElement('tr');
+    tr.className = 'detail-row';
+    tr.innerHTML = `<td colspan="${cols}"><p class="muted small">Chargement…</p></td>`;
+    row.after(tr);
+    row.classList.add('open');
+    const params = new URLSearchParams({key: row.dataset.key, jour: row.dataset.jour});
+    const res = await fetch('/suivi/detail?' + params);
+    tr.firstElementChild.innerHTML = await res.text();
+  }
+  document.querySelectorAll('tr.st-row').forEach(row => {
+    row.addEventListener('click', () => toggle(row));
+    row.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(row); } });
+  });
+</script>
+{% endblock %}

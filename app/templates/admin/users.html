@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}Utilisateurs{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Utilisateurs et rôles</h1>
+    <p class="muted">Lecteur : suivi journalier et export · Manager : + tableau de bord, jobs (consultation, lancement,
+      arrêt), exécutions, logs, données · Administrateur : tout, dont connexions, paramètres, utilisateurs et audit.</p></div>
+  <a href="/admin" class="muted">← Administration</a>
+</div>
+
+<section class="card">
+  <div class="table-wrap"><table>
+    <thead><tr><th>Identifiant</th><th>Nom</th><th>Rôle</th><th>État</th><th>Dernière connexion</th><th></th></tr></thead>
+    <tbody>
+      <tr class="muted"><td class="mono">{{ rescue }}</td><td>Compte de secours (fichier .env)</td><td>Administrateur</td><td>actif</td><td>—</td><td></td></tr>
+      {% for u in users %}
+      <tr class="{{ 'disabled' if not u.active }}">
+        <td class="mono">{{ u.username }}</td><td>{{ u.full_name or '—' }}</td><td>{{ u.role_label }}</td>
+        <td>{% if u.active %}<span class="badge ok">actif</span>{% else %}<span class="badge">désactivé</span>{% endif %}</td>
+        <td class="small">{{ u.last_login_at | dt }}</td>
+        <td class="actions">
+          <details class="edit"><summary class="btn small">Modifier</summary>
+            <form method="post" action="/admin/users/save" class="form popover">
+              <input type="hidden" name="user_id" value="{{ u.id }}">
+              <label>Nom complet <input name="full_name" value="{{ u.full_name }}"></label>
+              <label>Rôle <select name="role">{% for k, l in roles.items() %}<option value="{{ k }}" {{ 'selected' if u.role == k }}>{{ l }}</option>{% endfor %}</select></label>
+              <label class="check"><input type="checkbox" name="active" value="true" {{ 'checked' if u.active }}> Compte actif</label>
+              <button class="btn small primary">Enregistrer</button>
+            </form></details>
+          <details class="edit"><summary class="btn small">Mot de passe</summary>
+            <form method="post" action="/admin/users/{{ u.id }}/password" class="form popover">
+              <label>Nouveau mot de passe <input type="password" name="password" minlength="8" required autocomplete="new-password"></label>
+              <button class="btn small primary">Réinitialiser</button>
+            </form></details>
+          <form method="post" action="/admin/users/{{ u.id }}/delete" data-confirm="Supprimer l'utilisateur « {{ u.username }} » ?">
+            <button class="btn small danger">Supprimer</button></form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table></div>
+</section>
+
+<form method="post" action="/admin/users/save" class="card form">
+  <h2>Nouvel utilisateur</h2>
+  <div class="row">
+    <label>Identifiant <input name="username" required autocomplete="off"></label>
+    <label>Nom complet <input name="full_name"></label>
+  </div>
+  <div class="row">
+    <label>Rôle <select name="role">{% for k, l in roles.items() %}<option value="{{ k }}" {{ 'selected' if k == 'lecteur' }}>{{ l }}</option>{% endfor %}</select></label>
+    <label>Mot de passe <input type="password" name="password" minlength="8" required autocomplete="new-password"></label>
+  </div>
+  <div class="form-actions"><button class="btn primary">Créer</button></div>
+</form>
+{% endblock %}

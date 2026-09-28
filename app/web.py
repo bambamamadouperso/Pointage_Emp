@@ -88,7 +88,36 @@ templates.env.globals["sort_url"] = sort_url
 
 def render(request: Request, name: str, **context):
     context.setdefault("user", request.session.get("user"))
+    context.setdefault("role", request.session.get("role"))
     return templates.TemplateResponse(request, name, context)
+
+
+def _can(role, minimum: str) -> bool:
+    from .auth import has_role
+
+    return has_role(role, minimum)
+
+
+templates.env.globals["can"] = _can
+
+_JOURS = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
+
+
+def jour_fr(value, short: bool = False) -> str:
+    """« Lundi 06/10/2026 » (ou « lun. 06/10/2026 »)."""
+    name = _JOURS[value.weekday()]
+    return f"{name[:3]}. {value:%d/%m/%Y}" if short else f"{name.capitalize()} {value:%d/%m/%Y}"
+
+
+def replace_param(params, key: str, value: str) -> str:
+    """Paramètres de l'URL actuelle avec une valeur remplacée (et retour à la page 1)."""
+    items = [(k, v) for k, v in params.multi_items() if k not in (key, "page", "du", "au")]
+    return urlencode(items + [(key, value)])
+
+
+templates.env.filters["jour_fr"] = jour_fr
+templates.env.filters["replace_param"] = replace_param
+templates.env.globals["timedelta"] = __import__("datetime").timedelta
 
 
 def redirect(url: str) -> RedirectResponse:

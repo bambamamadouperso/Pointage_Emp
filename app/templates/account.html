@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Mon compte{% endblock %}
+{% block content %}
+<div class="page-head"><h1>Mon compte</h1></div>
+<section class="card form">
+  <p><strong>{{ user }}</strong> · rôle {{ {'admin': 'Administrateur', 'manager': 'Manager', 'lecteur': 'Lecteur'}.get(role, role) }}</p>
+  {% if rescue %}
+    <p class="muted small">Compte de secours défini dans le fichier <code>.env</code> (ADMIN_USERNAME / ADMIN_PASSWORD) :
+      son mot de passe se change dans ce fichier.</p>
+  {% else %}
+  <form method="post" action="/compte" class="form">
+    <label>Mot de passe actuel <input type="password" name="current" required autocomplete="current-password"></label>
+    <div class="row">
+      <label>Nouveau mot de passe <input type="password" name="new" required minlength="8" autocomplete="new-password"></label>
+      <label>Confirmation <input type="password" name="confirm" required minlength="8" autocomplete="new-password"></label>
+    </div>
+    <div class="form-actions"><button class="btn primary">Changer le mot de passe</button></div>
+  </form>
+  {% endif %}
+</section>
+{% endblock %}

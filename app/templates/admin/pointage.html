@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block title %}Source des pointages{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Source des pointages
+    {% if installed %}<span class="badge ok">installée</span>{% else %}<span class="badge warn">non installée</span>{% endif %}</h1>
+    <p class="muted">Tables PostgreSQL (copiées par les jobs) qui contiennent les pointages et les employés.</p></div>
+  <a href="/admin" class="muted">← Administration</a>
+</div>
+{% if error %}<div class="flash err">{{ error }}</div>{% endif %}
+{% if not connections %}<div class="flash warn">Aucune connexion PostgreSQL : <a href="/connections/new">créez-en une</a>.</div>{% endif %}
+
+{% macro colselect(name, cols, value, optional=False, hint='') %}
+  <select name="{{ name }}">
+    {% if optional or not cols %}<option value="">{{ '— aucune —' if optional else '— choisir —' }}</option>{% endif %}
+    {% for c, t in cols.items() %}<option value="{{ c }}" {{ 'selected' if value == c }}>{{ c }} ({{ t }})</option>{% endfor %}
+    {% if value and value not in cols %}<option value="{{ value }}" selected>{{ value }} (introuvable)</option>{% endif %}
+  </select>
+{% endmacro %}
+{% macro tableselect(name, value, optional=False) %}
+  <select name="{{ name }}" data-reload>
+    <option value="">{{ '— aucune —' if optional else '— choisir —' }}</option>
+    {% for t in tables %}<option value="{{ t }}" {{ 'selected' if value == t }}>{{ t }}</option>{% endfor %}
+  </select>
+{% endmacro %}
+
+<form method="post" action="/admin/pointage" class="card form" id="cfg" style="max-width:980px">
+  <div class="row">
+    <label>Base PostgreSQL
+      <select name="conn_id" data-reload>
+        {% for c in connections %}<option value="{{ c.id }}" {{ 'selected' if conn and conn.id == c.id }}>{{ c.name }} — {{ c.host }}/{{ c.database }}</option>{% endfor %}
+      </select></label>
+    <label>Schéma des tables
+      <select name="schema" data-reload>{% for s in schemas %}<option value="{{ s }}" {{ 'selected' if m.schema == s }}>{{ s }}</option>{% endfor %}</select></label>
+    <label>Schéma des calculs <span class="muted small">(fonction, vues, paramètres)</span>
+      <input name="objects_schema" value="{{ m.objects_schema }}" placeholder="{{ m.schema }} (identique)"></label>
+  </div>
+
+  <fieldset class="limits"><legend>Pointages (un enregistrement par badge)</legend>
+    <div class="row">
+      <label>Table des pointages {{ tableselect('punch_table', m.punch_table) }}</label>
+      <label>Colonne employé {{ colselect('punch_emp_col', punch_cols, m.punch_emp_col) }}</label>
+    </div>
+    <div class="row">
+      <label>Colonne date/heure du pointage {{ colselect('punch_ts_col', punch_cols, m.punch_ts_col) }}</label>
+      <label>Colonne heure séparée <span class="muted small">(si la date et l'heure sont dans 2 colonnes)</span>
+        {{ colselect('punch_time_col', punch_cols, m.punch_time_col, True) }}</label>
+    </div>
+  </fieldset>
+
+  <fieldset class="limits"><legend>Employés</legend>
+    <div class="row">
+      <label>Table des employés {{ tableselect('emp_table', m.emp_table) }}</label>
+      <label>Colonne correspondant à la colonne employé des pointages {{ colselect('emp_key_col', emp_cols, m.emp_key_col) }}</label>
+    </div>
+    <div class="row">
+      <label>Matricule affiché {{ colselect('emp_matricule_col', emp_cols, m.emp_matricule_col, True) }}</label>
+      <label>Nom {{ colselect('emp_nom_col', emp_cols, m.emp_nom_col) }}</label>
+      <label>Prénom {{ colselect('emp_prenom_col', emp_cols, m.emp_prenom_col, True) }}</label>
+    </div>
+    <div class="row">
+      <label>Service / département {{ colselect('emp_service_col', emp_cols, m.emp_service_col, True) }}</label>
+      <label>Table des services <span class="muted small">(si la colonne contient un identifiant)</span> {{ tableselect('service_table', m.service_table, True) }}</label>
+    </div>
+    {% if m.service_table %}
+    <div class="row">
+      <label>Identifiant du service {{ colselect('service_key_col', service_cols, m.service_key_col) }}</label>
+      <label>Libellé du service {{ colselect('service_label_col', service_cols, m.service_label_col) }}</label>
+    </div>
+    {% endif %}
+    <div class="row">
+      <label>Colonne « actif » <span class="muted small">(facultatif : seuls les actifs peuvent être absents)</span>
+        {{ colselect('emp_active_col', emp_cols, m.emp_active_col, True) }}</label>
+      <label>Valeurs considérées actives <input name="emp_active_values" value="{{ m.emp_active_values }}" placeholder="1, true, oui"></label>
+    </div>
+  </fieldset>
+
+  <p class="muted small">Enregistrer crée ou met à jour dans PostgreSQL : <code>pointage_parametres</code> (paramètres historisés),
+    <code>pointage_jours_feries</code>, la fonction <code>f_pointage_journalier(du, au)</code> et les vues
+    <code>v_pointage_journalier</code> et <code>v_pointage_brut</code> (utilisables dans Power BI).
+    Les calculs sont vérifiés sur le dernier mois avant validation.</p>
+  <div class="form-actions">
+    <button class="btn primary">Enregistrer et installer</button>
+    <button class="btn" formmethod="get" formaction="/admin/pointage">Actualiser les listes</button>
+  </div>
+</form>
+{% endblock %}
+{% block scripts %}
+<script>
+  const form = document.getElementById('cfg');
+  form.querySelectorAll('[data-reload]').forEach(el => el.addEventListener('change', () => {
+    form.method = 'get';
+    form.action = '/admin/pointage';
+    form.submit();
+  }));
+</script>
+{% endblock %}

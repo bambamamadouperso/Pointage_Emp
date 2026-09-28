@@ -1,0 +1,580 @@
+"""Module de pointage : calculs dans PostgreSQL (fonction + vue v_pointage_journalier) et requêtes de l'écran.
+
+Les calculs sont faits par PostgreSQL pour que l'application, les exports et Power BI donnent exactement
+les mêmes résultats. Les paramètres horaires sont historisés (valeur + date d'effet) dans la table
+pointage_parametres : chaque jour est calculé avec les paramètres en vigueur ce jour-là.
+"""
+import json
+import re
+from dataclasses import asdict, dataclass, field, fields
+from datetime import date, datetime, time, timedelta
+from typing import Any, Optional
+
+from sqlalchemy import bindparam, text
+from sqlalchemy.engine import Engine
+
+# --------------------------------------------------------------------------- paramètres et statuts
+
+# clé, libellé, type, valeur par défaut
+PARAMS = [
+    ("debut_journee", "Début de journée", "time", "07:30"),
+    ("debut_pause", "Début de pause", "time", "13:00"),
+    ("fin_pause", "Fin de pause", "time", "14:00"),
+    ("fin_journee", "Fin de journée", "time", "16:30"),
+    ("seuil_retard", "Seuil de retard (retard si arrivée ≥)", "time", "07:45"),
+    ("duree_pause_deduite", "Durée de pause déduite", "duration", "01:30"),
+    ("jours_ouvres", "Jours ouvrés", "days", "1,2,3,4,5"),
+]
+PARAM_LABELS = {k: label for k, label, _, _ in PARAMS}
+PARAM_TYPES = {k: kind for k, _, kind, _ in PARAMS}
+PARAM_DEFAULTS = {k: default for k, _, _, default in PARAMS}
+WEEKDAYS = [(1, "Lundi"), (2, "Mardi"), (3, "Mercredi"), (4, "Jeudi"), (5, "Vendredi"), (6, "Samedi"), (7, "Dimanche")]
+
+# code, libellé, classe CSS (vert, orange, rouge, gris)
+STATUTS = {
+    "A_L_HEURE": ("À l'heure", "st-ok"),
+    "RETARD": ("En retard", "st-late"),
+    "ABSENT": ("Absent", "st-abs"),
+    "INCOMPLET": ("Pointage incomplet", "st-inc"),
+}
+
+SORTABLE = {
+    "jour": "jour", "matricule": "matricule", "nom": "nom", "service": "service",
+    "premier": "premier_pointage", "dernier": "dernier_pointage", "statut": "statut",
+    "validee": "heure_validee", "effective": "duree_effective",
+}
+
+
+class PointageError(Exception):
+    pass
+
+
+def validate_param(key: str, raw: str) -> str:
+    """Normalise une valeur saisie (HH:MM, durée HH:MM, jours « 1,2,3 ») ou lève PointageError."""
+    kind = PARAM_TYPES[key]
+    raw = (raw or "").strip()
+    if kind == "days":
+        days = sorted({int(d) for d in re.split(r"[,\s]+", raw) if d.isdigit() and 1 <= int(d) <= 7})
+        if not days:
+            raise PointageError("Choisissez au moins un jour ouvré.")
+        return ",".join(str(d) for d in days)
+    m = re.fullmatch(r"(\d{1,2})\s*[:hH]\s*(\d{1,2})?", raw)
+    if not m:
+        raise PointageError(f"{PARAM_LABELS[key]} : format attendu HH:MM (ex. 07:30).")
+    hours, minutes = int(m.group(1)), int(m.group(2) or 0)
+    if minutes > 59 or (kind == "time" and hours > 23) or hours > 23:
+        raise PointageError(f"{PARAM_LABELS[key]} : valeur invalide ({raw}).")
+    return f"{hours:02d}:{minutes:02d}"
+
+
+def check_consistency(values: dict) -> Optional[str]:
+    t = {k: values[k] for k in values if PARAM_TYPES.get(k) == "time"}
+    if not (t["debut_journee"] <= t["seuil_retard"]):
+        return "Le seuil de retard doit être postérieur ou égal au début de journée."
+    if not (t["debut_journee"] < t["debut_pause"] < t["fin_pause"] < t["fin_journee"]):
+        return "Ordre attendu : début de journée < début de pause < fin de pause < fin de journée."
+    return None
+
+
+# --------------------------------------------------------------------------- correspondance des tables
+
+
+@dataclass
+class Mapping:
+    """Où trouver les pointages et les employés dans PostgreSQL (tables copiées par les jobs)."""
+
+    schema: str = "public"            # schéma des tables de pointage et d'employés
+    objects_schema: str = ""          # schéma de la fonction, de la vue et des paramètres (vide = schema)
+    punch_table: str = ""             # ex. punchlog
+    punch_emp_col: str = ""           # identifiant de l'employé dans les pointages
+    punch_ts_col: str = ""            # date/heure du pointage (ou date seule si punch_time_col)
+    punch_time_col: str = ""          # heure du pointage si elle est dans une colonne séparée
+    emp_table: str = ""               # table des employés
+    emp_key_col: str = ""             # colonne qui correspond à punch_emp_col
+    emp_matricule_col: str = ""       # matricule affiché (vide = emp_key_col)
+    emp_nom_col: str = ""
+    emp_prenom_col: str = ""
+    emp_service_col: str = ""
+    service_table: str = ""           # facultatif : table des services (si emp_service_col est un identifiant)
+    service_key_col: str = ""
+    service_label_col: str = ""
+    emp_active_col: str = ""          # facultatif : seuls les employés actifs peuvent être « absents »
+    emp_active_values: str = ""       # valeurs considérées comme actives (séparées par des virgules)
+
+    @classmethod
+    def from_json(cls, raw: Optional[str]) -> "Mapping":
+        data = json.loads(raw or "{}")
+        names = {f.name for f in fields(cls)}
+        return cls(**{k: str(v or "").strip() for k, v in data.items() if k in names})
+
+    def to_json(self) -> str:
+        return json.dumps(asdict(self), ensure_ascii=False)
+
+    @property
+    def objs(self) -> str:
+        return self.objects_schema or self.schema
+
+    def missing(self) -> list[str]:
+        required = {
+            "punch_table": "table des pointages", "punch_emp_col": "colonne employé des pointages",
+            "punch_ts_col": "colonne date/heure des pointages", "emp_table": "table des employés",
+            "emp_key_col": "colonne de correspondance des employés", "emp_nom_col": "colonne du nom",
+        }
+        out = [label for key, label in required.items() if not getattr(self, key)]
+        if self.service_table and not (self.service_key_col and self.service_label_col):
+            out.append("colonnes de la table des services")
+        return out
+
+
+def qi(name: str) -> str:
+    return '"' + name.replace('"', '""') + '"'
+
+
+def lit(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
+
+
+def qt(schema: str, table: str) -> str:
+    return f"{qi(schema)}.{qi(table)}"
+
+
+def list_schemas(engine: Engine) -> list[str]:
+    with engine.connect() as c:
+        return list(c.execute(text(
+            "SELECT schema_name FROM information_schema.schemata "
+            "WHERE schema_name NOT IN ('information_schema', 'pg_catalog', 'pg_toast') "
+            "AND schema_name NOT LIKE 'pg_temp%' AND schema_name NOT LIKE 'pg_toast_temp%' ORDER BY 1")).scalars())
+
+
+def list_tables(engine: Engine, schema: str) -> list[str]:
+    with engine.connect() as c:
+        return list(c.execute(text(
+            "SELECT table_name FROM information_schema.tables WHERE table_schema = :s "
+            "AND table_type IN ('BASE TABLE', 'VIEW') ORDER BY 1"), {"s": schema}).scalars())
+
+
+def column_types(engine: Engine, schema: str, table: str) -> dict[str, str]:
+    if not table:
+        return {}
+    with engine.connect() as c:
+        rows = c.execute(text(
+            "SELECT column_name, data_type FROM information_schema.columns "
+            "WHERE table_schema = :s AND table_name = :t ORDER BY ordinal_position"), {"s": schema, "t": table})
+        return {name: dtype for name, dtype in rows}
+
+
+_GUESSES = {
+    "punch_table": [r"^punch", r"pointage", r"badge", r"punch"],
+    "emp_table": [r"^employ", r"^personnel$", r"^agent", r"salari"],
+    "punch_emp_col": [r"^id_?employ", r"employ", r"matric", r"badge", r"^id_?pers", r"user"],
+    "punch_ts_col": [r"date_?heure", r"datetime", r"horodat", r"timestamp", r"^date", r"date", r"heure"],
+    "punch_time_col": [r"^heure", r"^time$"],
+    "emp_key_col": [r"^id_?employ", r"^id$", r"matric"],
+    "emp_matricule_col": [r"matric", r"^code", r"^id_?employ"],
+    "emp_nom_col": [r"^nom$", r"^nom_", r"^lastname", r"^name$", r"nom"],
+    "emp_prenom_col": [r"pr[ée]nom", r"firstname"],
+    "emp_service_col": [r"service", r"d[ée]part", r"direction", r"^id_?serv"],
+}
+
+
+def guess(kind: str, names: list[str], exclude: tuple = ()) -> str:
+    for pattern in _GUESSES.get(kind, []):
+        for name in names:
+            if name not in exclude and re.search(pattern, name, re.I):
+                return name
+    return ""
+
+
+# --------------------------------------------------------------------------- génération du SQL
+
+_TEXT = ("text", "character varying", "character", "varchar", "char")
+_NUM = ("integer", "bigint", "smallint", "numeric", "double precision", "real")
+
+
+def _as_text(expr: str, dtype: str) -> str:
+    return f"btrim({expr}::text)" if dtype in _TEXT or dtype in _NUM else f"{expr}::text"
+
+
+def _date_expr(expr: str, dtype: str) -> str:
+    if dtype in _TEXT or dtype in _NUM:
+        t = f"btrim({expr}::text)"
+        return f"(CASE WHEN {t} ~ '^\\d{{8}}' THEN to_date(substr({t}, 1, 8), 'YYYYMMDD') ELSE {t}::date END)"
+    return f"{expr}::date"
+
+
+def _time_expr(expr: str, dtype: str) -> str:
+    if dtype == "interval":
+        return f"(time '00:00' + {expr})"
+    if dtype in _TEXT or dtype in _NUM:
+        t = f"btrim({expr}::text)"
+        # HFSQL stocke souvent l'heure en « HHMMSS » ou « HHMMSSCC » (texte ou nombre).
+        digits = f"lpad({t}, CASE WHEN length({t}) > 6 THEN 8 ELSE 6 END, '0')"
+        return (f"(CASE WHEN {t} ~ '^\\d{{3,8}}$' THEN make_time(substr({digits}, 1, 2)::int, "
+                f"substr({digits}, 3, 2)::int, substr({digits}, 5, 2)::int) ELSE {t}::time END)")
+    return f"{expr}::time"
+
+
+def _ts_expr(m: Mapping, types: dict[str, str]) -> str:
+    col = f"p.{qi(m.punch_ts_col)}"
+    dtype = types.get(m.punch_ts_col, "")
+    if m.punch_time_col:
+        tcol = f"p.{qi(m.punch_time_col)}"
+        return f"({_date_expr(col, dtype)} + {_time_expr(tcol, types.get(m.punch_time_col, ''))})"
+    if dtype in _TEXT:
+        t = f"btrim({col}::text)"
+        return (f"(CASE WHEN {t} ~ '^\\d{{14}}' THEN to_timestamp(substr({t}, 1, 14), 'YYYYMMDDHH24MISS')::timestamp "
+                f"ELSE {t}::timestamp END)")
+    return f"{col}::timestamp"
+
+
+def build_sql(m: Mapping, punch_types: dict[str, str], emp_types: dict[str, str]) -> dict[str, str]:
+    """SQL des objets PostgreSQL du module (tables de paramètres, fonction, vues)."""
+    S = qi(m.objs)
+    punch = qt(m.schema, m.punch_table)
+    emp = qt(m.schema, m.emp_table)
+    ts = _ts_expr(m, punch_types)
+    pkey = _as_text(f"p.{qi(m.punch_emp_col)}", punch_types.get(m.punch_emp_col, ""))
+    ekey = _as_text(f"e.{qi(m.emp_key_col)}", emp_types.get(m.emp_key_col, ""))
+    mat = _as_text(f"e.{qi(m.emp_matricule_col or m.emp_key_col)}",
+                   emp_types.get(m.emp_matricule_col or m.emp_key_col, ""))
+    nom = f"e.{qi(m.emp_nom_col)}::text"
+    prenom = f"e.{qi(m.emp_prenom_col)}::text" if m.emp_prenom_col else "NULL::text"
+    service_join = ""
+    if m.emp_service_col and m.service_table:
+        service = f"s.{qi(m.service_label_col)}::text"
+        service_join = (f"LEFT JOIN {qt(m.schema, m.service_table)} s ON "
+                        f"btrim(s.{qi(m.service_key_col)}::text) = btrim(e.{qi(m.emp_service_col)}::text)")
+    elif m.emp_service_col:
+        service = f"e.{qi(m.emp_service_col)}::text"
+    else:
+        service = "NULL::text"
+    if m.emp_active_col:
+        values = [v.strip().lower() for v in m.emp_active_values.split(",") if v.strip()] or ["1", "true", "t", "oui"]
+        actif = f"lower(btrim(e.{qi(m.emp_active_col)}::text)) IN ({', '.join(lit(v) for v in values)})"
+    else:
+        actif = "true"
+
+    def param(key: str, cast: str) -> str:
+        return (f"COALESCE((SELECT x.valeur FROM {S}.pointage_parametres x WHERE x.cle = {lit(key)} "
+                f"AND x.date_effet <= d::date ORDER BY x.date_effet DESC, x.id DESC LIMIT 1), "
+                f"{lit(PARAM_DEFAULTS[key])}){cast}")
+
+    labels = " ".join(f"WHEN {lit(code)} THEN {lit(label)}" for code, (label, _) in STATUTS.items())
+    function = f"""
+CREATE FUNCTION {S}.f_pointage_journalier(p_du date, p_au date)
+RETURNS TABLE (
+    emp_key text, matricule text, nom text, prenom text, service text, jour date, jour_ouvre boolean,
+    premier_pointage timestamp, dernier_pointage timestamp, nb_pointages integer,
+    statut text, statut_libelle text, debut_valide time, fin_validee time, pause_deduite interval,
+    heure_validee interval, duree_effective interval, heure_validee_min numeric, duree_effective_min numeric
+)
+LANGUAGE sql STABLE AS $fn$
+WITH emp AS (
+    SELECT DISTINCT ON (1) {ekey} AS emp_key, {mat} AS matricule, {nom} AS nom, {prenom} AS prenom,
+           {service} AS service, ({actif}) AS actif
+    FROM {emp} e {service_join}
+    ORDER BY 1
+),
+pl AS (
+    SELECT {pkey} AS emp_key, {ts} AS ts FROM {punch} p
+),
+agg AS (
+    SELECT emp_key, ts::date AS jour, min(ts) AS p1, max(ts) AS p2, count(DISTINCT ts)::int AS n
+    FROM pl WHERE ts >= p_du AND ts < p_au + 1 AND emp_key IS NOT NULL
+    GROUP BY 1, 2
+),
+par AS (
+    SELECT d::date AS jour,
+        {param('debut_journee', '::time')} AS debut_journee,
+        {param('debut_pause', '::time')} AS debut_pause,
+        {param('fin_pause', '::time')} AS fin_pause,
+        {param('fin_journee', '::time')} AS fin_journee,
+        {param('seuil_retard', '::time')} AS seuil_retard,
+        {param('duree_pause_deduite', '::interval')} AS duree_pause,
+        {param('jours_ouvres', '')} AS jours_ouvres,
+        EXISTS (SELECT 1 FROM {S}.pointage_jours_feries f WHERE f.jour = d::date) AS ferie
+    FROM generate_series(p_du::timestamp, LEAST(p_au, current_date)::timestamp, interval '1 day') AS d
+),
+base AS (
+    SELECT e.emp_key, p.jour FROM emp e CROSS JOIN par p WHERE e.actif
+    UNION
+    SELECT a.emp_key, a.jour FROM agg a
+),
+g AS (
+    SELECT b.emp_key, b.jour, e.matricule, e.nom, e.prenom, e.service, a.p1, a.p2, a.n,
+           p.debut_journee, p.debut_pause, p.fin_pause, p.fin_journee, p.seuil_retard, p.duree_pause,
+           (NOT p.ferie AND extract(isodow FROM b.jour)::int = ANY (
+               string_to_array(regexp_replace(p.jours_ouvres, '[^0-9,]', '', 'g'), ',')::int[])) AS jour_ouvre
+    FROM base b
+    JOIN par p ON p.jour = b.jour
+    LEFT JOIN emp e ON e.emp_key = b.emp_key
+    LEFT JOIN agg a ON a.emp_key = b.emp_key AND a.jour = b.jour
+),
+c AS (
+    SELECT g.*,
+        CASE WHEN g.n IS NULL THEN CASE WHEN g.jour_ouvre THEN 'ABSENT' END
+             WHEN g.n < 2 THEN 'INCOMPLET'
+             WHEN g.p1::time >= g.seuil_retard THEN 'RETARD'
+             ELSE 'A_L_HEURE' END AS statut,
+        CASE WHEN g.n >= 2 THEN
+            CASE WHEN g.p1::time < g.debut_pause AND g.p2::time > g.fin_pause THEN g.duree_pause
+                 ELSE interval '0' END
+        END AS pause,
+        CASE WHEN g.n >= 2 THEN CASE WHEN g.p1::time < g.seuil_retard THEN g.debut_journee ELSE g.p1::time END END
+            AS debut_valide,
+        CASE WHEN g.n >= 2 THEN LEAST(g.p2::time, g.fin_journee) END AS fin_validee
+    FROM g
+)
+SELECT c.emp_key, COALESCE(c.matricule, c.emp_key), COALESCE(c.nom, '(employé inconnu)'), c.prenom, c.service,
+       c.jour, c.jour_ouvre, c.p1, c.p2, COALESCE(c.n, 0), c.statut, CASE c.statut {labels} END,
+       c.debut_valide, c.fin_validee, c.pause, v.hv, v.de,
+       round((extract(epoch FROM v.hv) / 60)::numeric, 2), round((extract(epoch FROM v.de) / 60)::numeric, 2)
+FROM c
+CROSS JOIN LATERAL (
+    SELECT CASE WHEN c.n >= 2 THEN GREATEST((c.fin_validee - c.debut_valide) - c.pause, interval '0') END AS hv,
+           CASE WHEN c.n >= 2 THEN GREATEST((c.p2 - c.p1) - c.pause, interval '0') END AS de
+) v
+WHERE c.statut IS NOT NULL
+$fn$"""
+    first_day = f"(SELECT min(({ts})::date) FROM {punch} p)"
+    return {
+        "schema": f"CREATE SCHEMA IF NOT EXISTS {S}",
+        "params_table": f"""CREATE TABLE IF NOT EXISTS {S}.pointage_parametres (
+    id serial PRIMARY KEY,
+    cle text NOT NULL,
+    valeur text NOT NULL,
+    date_effet date NOT NULL,
+    auteur text,
+    modifie_le timestamptz NOT NULL DEFAULT now()
+)""",
+        "params_index": f"CREATE INDEX IF NOT EXISTS pointage_parametres_cle_date ON {S}.pointage_parametres (cle, date_effet)",
+        "holidays_table": f"""CREATE TABLE IF NOT EXISTS {S}.pointage_jours_feries (
+    jour date PRIMARY KEY,
+    libelle text,
+    auteur text,
+    modifie_le timestamptz NOT NULL DEFAULT now()
+)""",
+        "drop_view": f"DROP VIEW IF EXISTS {S}.v_pointage_journalier",
+        "drop_raw_view": f"DROP VIEW IF EXISTS {S}.v_pointage_brut",
+        "drop_function": f"DROP FUNCTION IF EXISTS {S}.f_pointage_journalier(date, date)",
+        "function": function,
+        "view": f"""CREATE VIEW {S}.v_pointage_journalier AS
+SELECT * FROM {S}.f_pointage_journalier(COALESCE({first_day}, current_date), current_date)""",
+        "raw_view": f"""CREATE VIEW {S}.v_pointage_brut AS
+SELECT {pkey} AS emp_key, {ts} AS horodatage, ({ts})::date AS jour FROM {punch} p""",
+        "comment": f"COMMENT ON VIEW {S}.v_pointage_journalier IS "
+                   f"{lit('Suivi journalier des pointages (1er/dernier pointage, statut, heure validée, durée effective).')}",
+    }
+
+
+def install(engine: Engine, m: Mapping, author: str) -> None:
+    """Crée ou met à jour les objets PostgreSQL du module (transaction unique, contrôlée avant validation)."""
+    missing = m.missing()
+    if missing:
+        raise PointageError("Configuration incomplète : " + ", ".join(missing) + ".")
+    punch_types = column_types(engine, m.schema, m.punch_table)
+    emp_types = column_types(engine, m.schema, m.emp_table)
+    if not punch_types:
+        raise PointageError(f"Table {m.schema}.{m.punch_table} introuvable.")
+    if not emp_types:
+        raise PointageError(f"Table {m.schema}.{m.emp_table} introuvable.")
+    for col in (m.punch_emp_col, m.punch_ts_col, m.punch_time_col):
+        if col and col not in punch_types:
+            raise PointageError(f"Colonne « {col} » absente de {m.punch_table}.")
+    for col in (m.emp_key_col, m.emp_matricule_col, m.emp_nom_col, m.emp_prenom_col, m.emp_service_col,
+                m.emp_active_col):
+        if col and col not in emp_types:
+            raise PointageError(f"Colonne « {col} » absente de {m.emp_table}.")
+    sql = build_sql(m, punch_types, emp_types)
+    S = qi(m.objs)
+    with engine.begin() as c:
+        for key in ("schema", "params_table", "params_index", "holidays_table", "drop_view", "drop_raw_view",
+                    "drop_function", "function", "view", "raw_view", "comment"):
+            c.execute(text(sql[key]))
+        for key, default in PARAM_DEFAULTS.items():
+            c.execute(text(
+                f"INSERT INTO {S}.pointage_parametres (cle, valeur, date_effet, auteur) "
+                f"SELECT :k, :v, DATE '2000-01-01', :a WHERE NOT EXISTS "
+                f"(SELECT 1 FROM {S}.pointage_parametres WHERE cle = :k)"), {"k": key, "v": default, "a": author})
+        # Contrôle : la fonction doit s'exécuter sur les données réelles (conversion des dates, etc.).
+        try:
+            c.execute(text(f"SELECT count(*) FROM {S}.f_pointage_journalier(current_date - 31, current_date)"))
+        except Exception as exc:
+            raise PointageError(f"Les calculs échouent sur les données actuelles : {exc.__class__.__name__}: "
+                                f"{str(exc).splitlines()[0]}") from exc
+
+
+def is_installed(engine: Engine, m: Mapping) -> bool:
+    with engine.connect() as c:
+        return bool(c.execute(text(
+            "SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace "
+            "WHERE n.nspname = :s AND p.proname = 'f_pointage_journalier'"), {"s": m.objs}).first())
+
+
+# --------------------------------------------------------------------------- paramètres historisés
+
+
+def params_at(engine: Engine, m: Mapping, day: date) -> dict[str, str]:
+    S = qi(m.objs)
+    values = dict(PARAM_DEFAULTS)
+    with engine.connect() as c:
+        rows = c.execute(text(
+            f"SELECT DISTINCT ON (cle) cle, valeur FROM {S}.pointage_parametres WHERE date_effet <= :d "
+            f"ORDER BY cle, date_effet DESC, id DESC"), {"d": day})
+        values.update({k: v for k, v in rows if k in values})
+    return values
+
+
+def params_history(engine: Engine, m: Mapping, limit: int = 300) -> list:
+    S = qi(m.objs)
+    with engine.connect() as c:
+        return c.execute(text(
+            f"SELECT id, cle, valeur, date_effet, auteur, modifie_le FROM {S}.pointage_parametres "
+            f"ORDER BY date_effet DESC, id DESC LIMIT :n"), {"n": limit}).all()
+
+
+def save_params(engine: Engine, m: Mapping, values: dict[str, str], effective: date, author: str) -> dict:
+    """Enregistre les paramètres modifiés à partir de la date d'effet. Renvoie {clé: (avant, après)}."""
+    before = params_at(engine, m, effective)
+    changes = {k: (before[k], v) for k, v in values.items() if before.get(k) != v}
+    if not changes:
+        return {}
+    S = qi(m.objs)
+    with engine.begin() as c:
+        for key, (_, new) in changes.items():
+            c.execute(text(f"INSERT INTO {S}.pointage_parametres (cle, valeur, date_effet, auteur) "
+                           f"VALUES (:k, :v, :d, :a)"), {"k": key, "v": new, "d": effective, "a": author})
+    return changes
+
+
+def holidays(engine: Engine, m: Mapping) -> list:
+    with engine.connect() as c:
+        return c.execute(text(f"SELECT jour, libelle, auteur, modifie_le FROM {qi(m.objs)}.pointage_jours_feries "
+                              f"ORDER BY jour DESC")).all()
+
+
+def add_holiday(engine: Engine, m: Mapping, day: date, label: str, author: str) -> None:
+    with engine.begin() as c:
+        c.execute(text(
+            f"INSERT INTO {qi(m.objs)}.pointage_jours_feries (jour, libelle, auteur) VALUES (:j, :l, :a) "
+            f"ON CONFLICT (jour) DO UPDATE SET libelle = EXCLUDED.libelle, auteur = EXCLUDED.auteur, modifie_le = now()"),
+            {"j": day, "l": label, "a": author})
+
+
+def delete_holiday(engine: Engine, m: Mapping, day: date) -> None:
+    with engine.begin() as c:
+        c.execute(text(f"DELETE FROM {qi(m.objs)}.pointage_jours_feries WHERE jour = :j"), {"j": day})
+
+
+# --------------------------------------------------------------------------- écran de suivi
+
+
+@dataclass
+class Filters:
+    du: date
+    au: date
+    q: str = ""
+    service: str = ""
+    statuts: list[str] = field(default_factory=list)
+    sort: str = "nom"
+    desc: bool = False
+
+
+def _where(f: Filters) -> tuple[str, dict, list]:
+    clauses, params, binds = [], {"du": f.du, "au": f.au}, []
+    if f.q:
+        clauses.append("(matricule ILIKE :q OR nom ILIKE :q OR prenom ILIKE :q "
+                       "OR concat_ws(' ', nom, prenom) ILIKE :q OR concat_ws(' ', prenom, nom) ILIKE :q)")
+        params["q"] = f"%{f.q}%"
+    if f.service:
+        clauses.append("service = :service")
+        params["service"] = f.service
+    statuts = [s for s in f.statuts if s in STATUTS]
+    if statuts:
+        clauses.append("statut IN :statuts")
+        params["statuts"] = statuts
+        binds.append(bindparam("statuts", expanding=True))
+    return (" WHERE " + " AND ".join(clauses)) if clauses else "", params, binds
+
+
+def _order(f: Filters) -> str:
+    col = SORTABLE.get(f.sort, "nom")
+    direction = "DESC" if f.desc else "ASC"
+    return f" ORDER BY {col} {direction} NULLS LAST, jour, nom, matricule"
+
+
+def daily(engine: Engine, m: Mapping, f: Filters, page: int = 1, size: int = 100) -> dict:
+    S = qi(m.objs)
+    where, params, binds = _where(f)
+    source = f"(SELECT * FROM {S}.f_pointage_journalier(:du, :au)) t"
+    kpi_sql = text(f"""SELECT count(*) AS lignes,
+        count(*) FILTER (WHERE statut IN ('A_L_HEURE', 'RETARD', 'INCOMPLET')) AS presents,
+        count(*) FILTER (WHERE statut = 'A_L_HEURE') AS a_l_heure,
+        count(*) FILTER (WHERE statut = 'RETARD') AS retards,
+        count(*) FILTER (WHERE statut = 'ABSENT') AS absents,
+        count(*) FILTER (WHERE statut = 'INCOMPLET') AS incomplets,
+        avg(heure_validee) AS moy_validee, avg(duree_effective) AS moy_effective,
+        count(DISTINCT emp_key) AS employes
+        FROM {source}{where}""").bindparams(*binds)
+    rows_sql = text(f"SELECT * FROM {source}{where}{_order(f)} LIMIT :lim OFFSET :off").bindparams(*binds)
+    with engine.connect() as c:
+        kpi = dict(c.execute(kpi_sql, params).mappings().one())
+        rows = c.execute(rows_sql, {**params, "lim": size, "off": (page - 1) * size}).mappings().all()
+    ponctuels = kpi["a_l_heure"] + kpi["retards"]
+    kpi["taux_ponctualite"] = (kpi["a_l_heure"] * 100.0 / ponctuels) if ponctuels else None
+    return {"kpi": kpi, "rows": rows, "total": kpi["lignes"]}
+
+
+def export_rows(engine: Engine, m: Mapping, f: Filters, limit: int = 200_000):
+    S = qi(m.objs)
+    where, params, binds = _where(f)
+    sql = text(f"SELECT * FROM (SELECT * FROM {S}.f_pointage_journalier(:du, :au)) t{where}{_order(f)} "
+               f"LIMIT :lim").bindparams(*binds)
+    with engine.connect() as c:
+        return c.execute(sql, {**params, "lim": limit}).mappings().all()
+
+
+def services(engine: Engine, m: Mapping) -> list[str]:
+    """Services connus (employés actifs ou ayant pointé sur le dernier mois, jours ouvrés ou non)."""
+    S = qi(m.objs)
+    today = date.today()
+    with engine.connect() as c:
+        return [s for s in c.execute(text(
+            f"SELECT DISTINCT service FROM {S}.f_pointage_journalier(:d1, :d2) WHERE service IS NOT NULL ORDER BY 1"),
+            {"d1": today - timedelta(days=31), "d2": today}).scalars()]
+
+
+def detail(engine: Engine, m: Mapping, emp_key: str, day: date) -> tuple[list[str], list]:
+    """Tous les pointages bruts d'un employé pour une journée (toutes les colonnes de la table)."""
+    punch_types = column_types(engine, m.schema, m.punch_table)
+    ts = _ts_expr(m, punch_types)
+    pkey = _as_text(f"p.{qi(m.punch_emp_col)}", punch_types.get(m.punch_emp_col, ""))
+    sql = text(f"SELECT {ts} AS horodatage, p.* FROM {qt(m.schema, m.punch_table)} p "
+               f"WHERE {pkey} = :k AND {ts} >= :d AND {ts} < :d2 ORDER BY 1")
+    with engine.connect() as c:
+        result = c.execute(sql, {"k": emp_key, "d": day, "d2": day + timedelta(days=1)})
+        return list(result.keys()), result.all()
+
+
+# --------------------------------------------------------------------------- affichage
+
+
+def hhmm(value: Any) -> str:
+    """Durée ou heure en « 7h30 » (les secondes sont ignorées)."""
+    if value is None:
+        return "—"
+    if isinstance(value, timedelta):
+        minutes = int(value.total_seconds() // 60)
+        return f"{minutes // 60}h{minutes % 60:02d}"
+    if isinstance(value, datetime):
+        return value.strftime("%Hh%M")
+    if isinstance(value, time):
+        return value.strftime("%Hh%M")
+    return str(value)
+
+
+def parse_day(value: Optional[str]) -> Optional[date]:
+    try:
+        return date.fromisoformat(value) if value else None
+    except ValueError:
+        return None

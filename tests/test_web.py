@@ -4,7 +4,7 @@ from app.models import Connection, SyncJob
 
 
 def test_login_required(client):
-    for url in ("/", "/jobs", "/connections", "/logs", "/runs"):
+    for url in ("/", "/jobs", "/connections", "/logs", "/runs", "/suivi", "/admin", "/compte"):
         r = client.get(url, follow_redirects=False)
         assert r.status_code == 303 and r.headers["location"] == "/login", url
     assert client.get("/health").json()["status"] == "ok"
@@ -17,7 +17,8 @@ def test_bad_login(client):
 
 def test_pages_render(logged_client):
     for url in ("/", "/jobs", "/jobs/new", "/connections", "/connections/new", "/logs", "/runs",
-                "/logs?job_id=&level=WARNING&q=&table=", "/runs?job_id=&status="):
+                "/logs?job_id=&level=WARNING&q=&table=", "/runs?job_id=&status=", "/suivi", "/admin",
+                "/admin/users", "/admin/audit", "/admin/parametres", "/admin/pointage", "/compte"):
         r = logged_client.get(url)
         assert r.status_code == 200, url
 

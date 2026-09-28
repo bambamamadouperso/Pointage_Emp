@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}Administration{% endblock %}
+{% block content %}
+<div class="page-head"><div><h1>Administration</h1><p class="muted">Réservé au rôle administrateur.</p></div></div>
+
+<section class="admin-grid">
+  <a class="card" href="/admin/parametres"><h2>Paramètres horaires</h2>
+    <p class="muted small">Début / fin de journée, pause, seuil de retard, pause déduite, jours ouvrés et jours fériés.
+      Chaque changement est historisé avec sa date d'effet.</p></a>
+  <a class="card" href="/admin/pointage"><h2>Source des pointages</h2>
+    <p class="muted small">{% if cfg.installed_at %}Installée le {{ cfg.installed_at | dt(False) }} :
+      <code>{{ mapping.schema }}.{{ mapping.punch_table }}</code> + <code>{{ mapping.emp_table }}</code>
+      {% else %}<span class="warn-text">À configurer</span> : tables des pointages et des employés{% endif %}</p></a>
+  <a class="card" href="/admin/users"><h2>Utilisateurs et rôles</h2>
+    <p class="muted small">{{ users }} utilisateur(s) · rôles administrateur, manager, lecteur.</p></a>
+  <a class="card" href="/admin/audit"><h2>Journal d'audit</h2>
+    <p class="muted small">{{ audits | num }} entrée(s) : qui a modifié quoi, et quand.</p></a>
+</section>
+
+<section class="card" style="margin-top:1rem">
+  <div class="card-head">
+    <h2>Traitements planifiés (job flows)</h2>
+    <a class="btn small" href="/jobs">Gérer les jobs →</a>
+  </div>
+  <p class="muted small">Import / synchronisation des pointages et des employés depuis HFSQL, MariaDB ou Google Sheets.
+    Les calculs (<code>v_pointage_journalier</code>) sont faits en direct par PostgreSQL : aucun recalcul n'est nécessaire
+    après une synchronisation ou un changement de paramètre.</p>
+  {% if not jobs %}<p class="empty">Aucun job.</p>{% else %}
+  <div class="table-wrap"><table>
+    <thead><tr><th>Job</th><th>Source → cible</th><th>Intervalle</th><th>État</th><th>Dernière exécution</th><th>Prochaine</th><th></th></tr></thead>
+    <tbody>
+    {% for job in jobs %}
+      <tr class="{{ 'disabled' if not job.enabled }}">
+        <td><a href="/jobs/{{ job.id }}">{{ job.name }}</a>
+          {% if job.suspended_reason %}<span class="badge err" title="{{ job.suspended_reason }}">suspendu</span>{% elif not job.enabled %}<span class="badge">inactif</span>{% endif %}</td>
+        <td class="small">{{ job.source.name }} → {{ job.target.name }} · {{ job.tables | length }} table(s)</td>
+        <td>{{ job.interval_label }}</td>
+        <td>{% if running[job.id] %}{{ status_badge('running') }}{% else %}{{ status_badge(job.last_status) }}{% endif %}</td>
+        <td class="small">{{ job.last_run_at | dt }}</td>
+        <td class="small">{{ next_runs[job.id] | dt if job.enabled else '—' }}</td>
+        <td class="actions">
+          {% if running[job.id] %}
+          <form method="post" action="/jobs/{{ job.id }}/stop" data-confirm="Arrêter l'exécution en cours ?"><button class="btn small danger">■ Arrêter</button></form>
+          {% else %}
+          <form method="post" action="/jobs/{{ job.id }}/run"><button class="btn small">▶ Lancer</button></form>
+          {% endif %}
+          <a class="btn small ghost" href="/runs?job_id={{ job.id }}">Historique</a>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {% endif %}
+</section>
+{% endblock %}

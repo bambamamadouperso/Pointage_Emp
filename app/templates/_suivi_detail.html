@@ -1,0 +1,15 @@
+{% if error %}<p class="err-text small">{{ error }}</p>
+{% elif not rows %}<p class="empty">Aucun pointage ce jour-là.</p>
+{% else %}
+<div class="detail-box">
+  <p class="small"><strong>{{ rows | length }} pointage(s)</strong> le {{ day.strftime('%d/%m/%Y') }} — seuls le premier et le dernier sont utilisés pour les calculs.</p>
+  <div class="table-wrap data-grid"><table>
+    <thead><tr>{% for c in columns %}<th>{{ 'Heure' if c == 'horodatage' else c }}</th>{% endfor %}</tr></thead>
+    <tbody>
+    {% for row in rows %}
+      <tr class="{{ 'used' if loop.first or loop.last }}">{% for v in row %}<td>{% if loop.first %}<strong>{{ v.strftime('%H:%M:%S') if v else '—' }}</strong>{% else %}{{ '—' if v is none else v }}{% endif %}</td>{% endfor %}</tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+</div>
+{% endif %}
