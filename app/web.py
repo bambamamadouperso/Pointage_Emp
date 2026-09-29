@@ -134,6 +134,23 @@ templates.env.filters["replace_param"] = replace_param
 templates.env.globals["timedelta"] = __import__("datetime").timedelta
 
 
+def sick_pending_count(username: str, role: str) -> int:
+    """Nombre d'arrêts maladie dont l'étape en cours revient à cet utilisateur (pastille du menu)."""
+    if not username:
+        return 0
+    try:
+        from . import arrets
+        from .database import SessionLocal
+
+        with SessionLocal() as db:
+            return len(arrets.pending_for(db, arrets.get_user(db, username), role, username))
+    except Exception:  # noqa: BLE001 - la pastille ne doit jamais empêcher l'affichage d'une page
+        return 0
+
+
+templates.env.globals["sick_pending_count"] = sick_pending_count
+
+
 def redirect(url: str) -> RedirectResponse:
     return RedirectResponse(url, status_code=303)
 

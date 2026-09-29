@@ -8,3 +8,4 @@ data/*.db-*
 installation.log
 logs/
 installation-erreur.txt
+data/arrets/

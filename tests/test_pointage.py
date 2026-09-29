@@ -799,3 +799,118 @@ def test_average_punches_and_duration_colours(configured, logged_client):
     assert last[0] == "Moyenne" and last[6].strftime("%H:%M") == "07:42" and last[7].strftime("%H:%M") == "15:26"
     logged_client.post("/admin/parametres", data={**values, "objectif_duree": "08:00",
                        "jours_ouvres": ["1", "2", "3", "4", "5"], "date_effet": MON.isoformat()})
+
+
+def test_sick_leave_workflow_and_hr(configured, pg, logged_client):
+    """Arrêt maladie : déclaration par l'employé (justificatif obligatoire), validation N+1 puis RH, statut dans les
+    calculs ; saisie RH validée d'office ; refus, annulation, droits d'accès au justificatif, circuit paramétrable."""
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    from app.models import SickLeave, SickLeaveAction, User
+
+    THU, FRI = date(2026, 9, 24), date(2026, 9, 25)
+    pdf = b"%PDF-1.4 arret de travail"
+    for data in ({"username": "moussa", "role": "lecteur", "emp_matricule": "E002"},
+                 {"username": "awa", "role": "manager", "emp_matricule": "E001"},
+                 {"username": "rh1", "role": "lecteur", "sick_leave_hr": "true"},
+                 {"username": "fatou", "role": "lecteur", "emp_matricule": "E003"}):
+        r = logged_client.post("/admin/users/save", data={**data, "password": "motdepasse1"}, follow_redirects=True)
+        assert "enregistré" in r.text, r.text[:500]
+    r = logged_client.post("/admin/arrets", data={"type": ["responsable", "rh"], "user": ["", ""]}, follow_redirects=True)
+    assert "Responsable N+1 de l&#39;employé → Agent RH habilité" in r.text
+
+    def client(name):
+        c = TestClient(app)
+        c.post("/login", data={"username": name, "password": "motdepasse1"})
+        return c
+
+    try:
+        moussa, awa, rh1, fatou = client("moussa"), client("awa"), client("rh1"), client("fatou")
+        page = moussa.get("/arrets").text
+        assert "Déclarer un arrêt maladie" in page and "Responsable N+1 de l&#39;employé → Agent RH habilité" in page
+        r = moussa.post("/arrets", data={"du": THU.isoformat(), "au": FRI.isoformat()}, follow_redirects=True)
+        assert "Joignez le justificatif" in r.text
+        r = moussa.post("/arrets", data={"du": THU.isoformat(), "au": FRI.isoformat()},
+                        files={"justificatif": ("faux.pdf", b"pas un pdf")}, follow_redirects=True)
+        assert "ne correspond pas" in r.text
+        r = moussa.post("/arrets", data={"du": THU.isoformat(), "au": FRI.isoformat(), "matricule": "E005",
+                                         "commentaire": "Grippe"},
+                        files={"justificatif": ("arret.pdf", pdf)}, follow_redirects=True)
+        assert "transmis pour validation" in r.text and "Ndiaye Moussa" in r.text  # pour lui-même, pas E005
+        with SessionLocal() as db:
+            leave = db.query(SickLeave).one()
+            assert (leave.matricule, leave.manager_matricule, leave.status) == ("E002", "E001", "en_attente")
+            lid = leave.id
+        assert "Valider" not in moussa.get(f"/arrets/{lid}").text  # pas de validation de son propre arrêt
+        assert moussa.post(f"/arrets/{lid}/decision", data={"decision": "valider"}, follow_redirects=True).status_code == 200
+        assert rows(pg, THU)[("E002", THU)].statut == "ABSENT"  # en attente : pas encore d'effet
+
+        # Étape 1 : le responsable N+1 (Awa) ; étape 2 : les RH.
+        assert "À valider" in awa.get("/arrets").text and 'class="nav-badge"' in awa.get("/arrets").text
+        assert "À valider" not in rh1.get("/arrets").text
+        r = awa.post(f"/arrets/{lid}/decision", data={"decision": "valider", "commentaire": "OK"}, follow_redirects=True)
+        assert "passe à l&#39;étape suivante" in r.text
+        assert "À valider" in rh1.get("/arrets").text
+        r = rh1.post(f"/arrets/{lid}/decision", data={"decision": "valider"}, follow_redirects=True)
+        assert "Arrêt validé" in r.text
+        thu = rows(pg, THU)[("E002", THU)]
+        assert (thu.statut, thu.statut_libelle, hm(thu.duree_validee)) == ("ARRET_MALADIE", "Arrêt maladie", "8h00")
+        assert rows(pg, FRI)[("E002", FRI)].statut == "ARRET_MALADIE"
+        assert 'badge st-sick">Arrêt maladie' in logged_client.get(f"/suivi?date={THU.isoformat()}").text
+
+        # Justificatif : l'employé, son responsable et les RH ; pas un autre employé.
+        doc = moussa.get(f"/arrets/{lid}/justificatif")
+        assert doc.status_code == 200 and doc.content == pdf and doc.headers["content-type"] == "application/pdf"
+        assert awa.get(f"/arrets/{lid}/justificatif").status_code == 200
+        assert fatou.get(f"/arrets/{lid}/justificatif").status_code == 404
+        assert "Ndiaye" not in fatou.get("/arrets").text
+
+        # Chevauchement refusé ; refus motivé obligatoire.
+        r = moussa.post("/arrets", data={"du": FRI.isoformat(), "au": FRI.isoformat()},
+                        files={"justificatif": ("a.png", b"\x89PNG....")}, follow_redirects=True)
+        assert "couvre déjà" in r.text
+        r = moussa.post("/arrets", data={"du": "2026-10-05", "au": "2026-10-06"},
+                        files={"justificatif": ("b.jpg", b"\xff\xd8\xff....")}, follow_redirects=True)
+        with SessionLocal() as db:
+            second = db.query(SickLeave).filter(SickLeave.id != lid).one().id
+        assert "motif du refus" in awa.post(f"/arrets/{second}/decision", data={"decision": "refuser"},
+                                             follow_redirects=True).text
+        r = awa.post(f"/arrets/{second}/decision", data={"decision": "refuser", "commentaire": "Dates erronées"},
+                     follow_redirects=True)
+        assert "Arrêt refusé" in r.text and "Dates erronées" in r.text
+
+        # Saisie RH : n'importe quel employé, sans justificatif, validée d'office.
+        r = rh1.post("/arrets", data={"matricule": "E005", "du": THU.isoformat(), "au": THU.isoformat()},
+                     follow_redirects=True)
+        assert "enregistré et validé" in r.text and rows(pg, THU)[("E005", THU)].statut == "ARRET_MALADIE"
+
+        # Annulation d'un arrêt validé : RH seulement ; les jours redeviennent absents.
+        assert "RH" in moussa.post(f"/arrets/{lid}/annuler", data={}, follow_redirects=True).text
+        r = rh1.post(f"/arrets/{lid}/annuler", data={"commentaire": "Erreur"}, follow_redirects=True)
+        assert "Arrêt annulé" in r.text and rows(pg, THU)[("E002", THU)].statut == "ABSENT"
+        with SessionLocal() as db:
+            actions = [a.action for a in db.query(SickLeaveAction).filter(SickLeaveAction.leave_id == lid)
+                       .order_by(SickLeaveAction.id)]
+        assert actions == ["declare", "valide", "valide", "annule"]
+
+        # Circuit : un utilisateur désigné doit être choisi ; sans étape, validé dès la déclaration.
+        bad = logged_client.post("/admin/arrets", data={"type": ["utilisateur"], "user": [""]}, follow_redirects=True)
+        assert "Choisissez l&#39;utilisateur" in bad.text
+        r = logged_client.post("/admin/arrets", data={}, follow_redirects=True)
+        assert "aucune étape" in r.text
+        r = moussa.post("/arrets", data={"du": "2026-10-12", "au": "2026-10-12"},
+                        files={"justificatif": ("c.pdf", pdf)}, follow_redirects=True)
+        assert "Validé" in r.text
+        for c in (moussa, awa, rh1, fatou):
+            c.close()
+    finally:
+        S = pointage.qi(pointage.Mapping.from_json(_cfg_data()).objs)
+        with pg.begin() as c:
+            c.execute(text(f"DELETE FROM {S}.pointage_arrets_maladie"))
+        with SessionLocal() as db:
+            db.query(SickLeaveAction).delete()
+            db.query(SickLeave).delete()
+            db.query(User).filter(User.username.in_(["moussa", "awa", "rh1", "fatou"])).delete()
+            db.commit()
+        logged_client.post("/admin/arrets", data={"type": ["responsable", "rh"], "user": ["", ""]})

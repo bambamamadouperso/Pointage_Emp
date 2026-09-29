@@ -17,7 +17,7 @@
       {% for u in users %}
       <tr class="{{ 'disabled' if not u.active }}">
         <td class="mono">{{ u.username }}</td><td>{{ u.full_name or '—' }}</td><td>{{ u.role_label }}</td>
-        <td class="small">{% if u.team_only %}Son équipe ({{ u.emp_matricule }}){% else %}Tout le personnel{% if u.emp_matricule %} · matricule {{ u.emp_matricule }}{% endif %}{% endif %}</td>
+        <td class="small">{% if u.sick_leave_hr %}<span class="badge st-sick" title="Habilité aux arrêts maladie">RH arrêts</span> {% endif %}{% if u.team_only %}Son équipe ({{ u.emp_matricule }}){% else %}Tout le personnel{% if u.emp_matricule %} · matricule {{ u.emp_matricule }}{% endif %}{% endif %}</td>
         <td>{% if u.active %}<span class="badge ok">actif</span>{% else %}<span class="badge">désactivé</span>{% endif %}</td>
         <td class="small">{{ u.last_login_at | dt }}</td>
         <td class="actions">
@@ -30,6 +30,7 @@
               <label>Périmètre du suivi <select name="scope">
                 <option value="tous" {{ 'selected' if u.scope != 'equipe' }}>Tout le personnel</option>
                 <option value="equipe" {{ 'selected' if u.scope == 'equipe' }}>Son équipe (hiérarchie)</option></select></label>
+              <label class="check"><input type="checkbox" name="sick_leave_hr" value="true" {{ 'checked' if u.sick_leave_hr }}> Agent RH : arrêts maladie</label>
               <label class="check"><input type="checkbox" name="active" value="true" {{ 'checked' if u.active }}> Compte actif</label>
               <button class="btn small primary">Enregistrer</button>
             </form></details>
@@ -63,6 +64,8 @@
       <option value="tous">Tout le personnel</option>
       <option value="equipe">Son équipe (toute sa hiérarchie)</option></select></label>
   </div>
+  <label class="check"><input type="checkbox" name="sick_leave_hr" value="true"> Agent RH habilité aux arrêts maladie
+    <span class="muted small">(saisit des arrêts validés d'office pour tout employé et valide les étapes « RH »)</span></label>
   <p class="muted small">« Son équipe » : le compte ne voit que l'employé correspondant au matricule et toutes les
     personnes placées sous lui dans la hiérarchie (sans effet pour un administrateur).</p>
   <div class="form-actions"><button class="btn primary">Créer</button></div>

@@ -130,6 +130,7 @@
       <a class="{{ 'selected' if only_conges }}" href="?{{ request.query_params | set_statuts(['CONGE_ANNUEL', 'CONGE_EXCEP']) }}" title="Afficher les congés"><span class="dot st-leave"></span>Congé <b>{{ k.conges | num }}</b></a>
       <a class="{{ 'selected' if only == 'TELETRAVAIL' }}" href="?{{ request.query_params | set_statuts(['TELETRAVAIL']) }}" title="Afficher le télétravail"><span class="dot st-remote"></span>Télétravail <b>{{ k.teletravail | num }}</b></a>
       <a class="{{ 'selected' if only == 'TERRAIN' }}" href="?{{ request.query_params | set_statuts(['TERRAIN']) }}" title="Afficher les agents terrain"><span class="dot st-field"></span>Terrain <b>{{ k.terrain | num }}</b></a>
+      <a class="{{ 'selected' if only == 'ARRET_MALADIE' }}" href="?{{ request.query_params | set_statuts(['ARRET_MALADIE']) }}" title="Afficher les arrêts maladie"><span class="dot st-sick"></span>Maladie <b>{{ k.maladies | num }}</b></a>
     </span></div>
   <a class="kpi c-pink {{ 'selected' if f.population == 'hors' }}" href="?{{ request.query_params | with_param('pop', '' if f.population == 'hors' else 'hors') }}"
      title="Personnes qui ont pointé mais ne figurent pas dans la liste des employés">

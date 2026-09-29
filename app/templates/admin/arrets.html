@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block title %}Circuit des arrêts maladie{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Circuit des arrêts maladie</h1>
+    <p class="muted">Étapes de validation d'un arrêt déclaré par un employé (dans l'ordre). Les arrêts saisis par un agent RH
+      habilité sont validés d'office.</p></div>
+  <a href="/admin" class="muted">← Administration</a>
+</div>
+
+<form method="post" action="/admin/arrets" class="card form" id="wf_form" style="max-width:860px">
+  <h2>Étapes de validation</h2>
+  <ol class="wf-steps" id="wf_steps">
+    {% for s in steps %}
+    <li class="wf-step">
+      <span class="wf-num"></span>
+      <select name="type" class="wf-type">{% for k, label in types.items() %}<option value="{{ k }}" {{ 'selected' if s.type == k }}>{{ label }}</option>{% endfor %}</select>
+      <select name="user" class="wf-user" {{ 'hidden' if s.type != 'utilisateur' }}>
+        <option value="">— choisir l'utilisateur —</option>
+        {% for u in users %}<option value="{{ u.username }}" {{ 'selected' if s.user == u.username }}>{{ u.full_name or u.username }} ({{ u.username }})</option>{% endfor %}
+      </select>
+      <span class="wf-tools">
+        <button type="button" class="icon-btn" data-up title="Monter" aria-label="Monter">↑</button>
+        <button type="button" class="icon-btn" data-down title="Descendre" aria-label="Descendre">↓</button>
+        <button type="button" class="icon-btn" data-remove title="Supprimer l'étape" aria-label="Supprimer">×</button>
+      </span>
+    </li>
+    {% endfor %}
+  </ol>
+  <p class="empty wf-empty" {{ 'hidden' if steps }}>Aucune étape : les arrêts déclarés par les employés seront validés dès leur déclaration.</p>
+  <div class="form-actions">
+    <button type="button" class="btn" id="wf_add">+ Ajouter une étape</button>
+    <button class="btn primary">Enregistrer le circuit</button>
+  </div>
+  <div class="help muted small">
+    <p><strong>Responsable N+1 de l'employé</strong> : le responsable défini dans la hiérarchie, s'il a un compte rattaché à son matricule
+      (Administration → Utilisateurs). Sinon, l'étape revient aux agents RH habilités.</p>
+    <p><strong>Agent RH habilité</strong> : tout utilisateur coché « Agent RH : arrêts maladie »
+      ({% if hr_users %}{{ hr_users | map(attribute='username') | join(', ') }}{% else %}aucun pour l'instant{% endif %}).</p>
+    <p><strong>Utilisateur désigné</strong> : un compte précis (ex. le médecin du travail, le directeur).</p>
+    <p>Un administrateur peut valider n'importe quelle étape. Une modification du circuit s'applique aux déclarations suivantes.</p>
+  </div>
+</form>
+
+<template id="wf_tpl">
+  <li class="wf-step">
+    <span class="wf-num"></span>
+    <select name="type" class="wf-type">{% for k, label in types.items() %}<option value="{{ k }}">{{ label }}</option>{% endfor %}</select>
+    <select name="user" class="wf-user" hidden><option value="">— choisir l'utilisateur —</option>
+      {% for u in users %}<option value="{{ u.username }}">{{ u.full_name or u.username }} ({{ u.username }})</option>{% endfor %}</select>
+    <span class="wf-tools">
+      <button type="button" class="icon-btn" data-up title="Monter" aria-label="Monter">↑</button>
+      <button type="button" class="icon-btn" data-down title="Descendre" aria-label="Descendre">↓</button>
+      <button type="button" class="icon-btn" data-remove title="Supprimer l'étape" aria-label="Supprimer">×</button>
+    </span>
+  </li>
+</template>
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  const list = document.getElementById('wf_steps'), empty = document.querySelector('.wf-empty');
+  function refresh() {
+    [...list.children].forEach((li, i) => {
+      li.querySelector('.wf-num').textContent = i + 1;
+      const user = li.querySelector('.wf-user');
+      user.hidden = li.querySelector('.wf-type').value !== 'utilisateur';
+      user.disabled = user.hidden;
+    });
+    empty.hidden = list.children.length > 0;
+  }
+  list.addEventListener('change', refresh);
+  list.addEventListener('click', e => {
+    const li = e.target.closest('li'); if (!li) return;
+    if (e.target.matches('[data-remove]')) li.remove();
+    if (e.target.matches('[data-up]') && li.previousElementSibling) li.parentNode.insertBefore(li, li.previousElementSibling);
+    if (e.target.matches('[data-down]') && li.nextElementSibling) li.parentNode.insertBefore(li.nextElementSibling, li);
+    refresh();
+  });
+  document.getElementById('wf_add').addEventListener('click', () => {
+    list.appendChild(document.getElementById('wf_tpl').content.cloneNode(true)); refresh();
+  });
+  refresh();
+})();
+</script>
+{% endblock %}

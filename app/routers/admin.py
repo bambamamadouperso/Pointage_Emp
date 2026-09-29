@@ -506,6 +506,7 @@ def user_save(
     password: str = Form(""),
     emp_matricule: str = Form(""),
     scope: str = Form("tous"),
+    sick_leave_hr: bool = Form(False),
     db: Session = Depends(get_db),
 ):
     me = request.session.get("user", "")
@@ -534,11 +535,13 @@ def user_save(
         return redirect("/admin/users")
     def describe(u: User) -> str:
         return (f"rôle {u.role}, {'actif' if u.active else 'inactif'}, matricule {u.emp_matricule or '—'}, "
-                f"périmètre {'équipe' if u.scope == 'equipe' else 'tous'}")
+                f"périmètre {'équipe' if u.scope == 'equipe' else 'tous'}, "
+                f"RH arrêts maladie {'oui' if u.sick_leave_hr else 'non'}")
 
     before = describe(user) if user_id else "création"
     user.full_name, user.role, user.active = full_name.strip(), role, active if user_id else True
     user.emp_matricule, user.scope = emp_matricule.strip() or None, scope
+    user.sick_leave_hr = sick_leave_hr
     if not user_id:
         db.add(user)
     try:

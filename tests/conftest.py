@@ -4,6 +4,7 @@ import tempfile
 # La configuration est lue à l'import : on isole la base interne avant d'importer l'application.
 _tmp = tempfile.mkdtemp(prefix="sync-tests-")
 os.environ["APP_DB_URL"] = f"sqlite:///{_tmp}/app.db"
+os.environ["ARRETS_DIR"] = f"{_tmp}/arrets"
 os.environ["SCHEDULER_ENABLED"] = "0"
 os.environ["SECRET_KEY"] = "test-secret"
 os.environ["ADMIN_USERNAME"] = "admin"

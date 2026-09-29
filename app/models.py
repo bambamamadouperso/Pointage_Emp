@@ -249,6 +249,8 @@ class User(Base):
     # Rattachement à un employé (matricule) et périmètre du suivi : « tous » ou « equipe » (sa hiérarchie).
     emp_matricule: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     scope: Mapped[Optional[str]] = mapped_column(String(20), nullable=True, default="tous")
+    # Agent RH habilité à saisir les arrêts maladie (validés d'office) et à valider les étapes « RH ».
+    sick_leave_hr: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True, default=False)
 
     @property
     def role_label(self) -> str:
@@ -349,3 +351,65 @@ class MailLog(Base):
     status: Mapped[str] = mapped_column(String(20), default="sent")  # sent, failed, skipped
     attempts: Mapped[int] = mapped_column(Integer, default=1)
     error: Mapped[str] = mapped_column(Text, default="")
+
+
+SICK_STATUS = {"en_attente": "En attente de validation", "valide": "Validé", "refuse": "Refusé", "annule": "Annulé"}
+
+
+class SickLeave(Base):
+    """Arrêt maladie déclaré par l'employé (circuit de validation) ou saisi par un agent RH (validé d'office)."""
+
+    __tablename__ = "sick_leaves"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    emp_key: Mapped[str] = mapped_column(String(100), index=True)
+    matricule: Mapped[str] = mapped_column(String(100), default="")
+    name: Mapped[str] = mapped_column(String(255), default="")
+    start_date: Mapped[datetime] = mapped_column(DateTime)
+    end_date: Mapped[datetime] = mapped_column(DateTime)
+    comment: Mapped[str] = mapped_column(Text, default="")
+    source: Mapped[str] = mapped_column(String(20), default="employe")    # employe, rh
+    status: Mapped[str] = mapped_column(String(20), default="en_attente")  # voir SICK_STATUS
+    step: Mapped[int] = mapped_column(Integer, default=0)                  # étape du circuit en cours (0 = première)
+    workflow: Mapped[str] = mapped_column(Text, default="[]")              # circuit figé à la déclaration (JSON)
+    manager_matricule: Mapped[str] = mapped_column(String(100), default="")  # responsable N+1 au moment de la déclaration
+    manager_name: Mapped[str] = mapped_column(String(255), default="")
+    file_name: Mapped[str] = mapped_column(String(255), default="")        # nom d'origine du justificatif
+    file_path: Mapped[str] = mapped_column(String(255), default="")        # nom du fichier stocké
+    file_type: Mapped[str] = mapped_column(String(100), default="")
+    created_by: Mapped[str] = mapped_column(String(100), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    decided_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+    @property
+    def status_label(self) -> str:
+        return SICK_STATUS.get(self.status, self.status)
+
+    @property
+    def days(self) -> int:
+        return (self.end_date.date() - self.start_date.date()).days + 1
+
+
+class SickLeaveAction(Base):
+    """Historique d'un arrêt maladie : déclaration, validations, refus, annulation."""
+
+    __tablename__ = "sick_leave_actions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    leave_id: Mapped[int] = mapped_column(ForeignKey("sick_leaves.id", ondelete="CASCADE"), index=True)
+    at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    actor: Mapped[str] = mapped_column(String(100), default="")
+    action: Mapped[str] = mapped_column(String(30), default="")  # declare, valide, refuse, annule, saisi_rh
+    step_label: Mapped[str] = mapped_column(String(255), default="")
+    comment: Mapped[str] = mapped_column(Text, default="")
+
+
+class SickLeaveSettings(Base):
+    """Circuit de validation des arrêts déclarés par les employés (étapes ordonnées, JSON)."""
+
+    __tablename__ = "sick_leave_settings"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    workflow: Mapped[str] = mapped_column(Text, default="")
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    updated_by: Mapped[str] = mapped_column(String(100), default="")

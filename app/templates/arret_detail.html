@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}Arrêt maladie · {{ leave.name }}{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Arrêt maladie · {{ leave.name }}
+      <span class="badge {{ {'valide': 'ok', 'refuse': 'err', 'annule': '', 'en_attente': 'warn'}[leave.status] }}">{{ leave.status_label }}</span></h1>
+    <p class="muted">Matricule {{ leave.matricule }} · du {{ leave.start_date | jour_fr }} au {{ leave.end_date | jour_fr }}
+      · {{ leave.days }} jour(s) dont {{ working_days }} du lundi au vendredi</p></div>
+  <a href="/arrets" class="muted">← Arrêts maladie</a>
+</div>
+
+<div class="sick-grid">
+  <section class="card">
+    <h2>Circuit de validation</h2>
+    {% if leave.source == 'rh' %}
+      <p class="muted small">Saisi par un agent RH habilité ({{ leave.created_by }}) : validé d'office.</p>
+    {% elif not timeline %}
+      <p class="muted small">Aucune étape n'était paramétrée : validé dès la déclaration.</p>
+    {% else %}
+    <ol class="steps">
+      <li class="done"><span class="step-dot"></span><div><strong>Déclaration</strong><span class="muted small">par {{ leave.created_by }} · {{ leave.created_at | dt }}</span></div></li>
+      {% for st in timeline %}
+      <li class="{{ {'faite': 'done', 'en_cours': 'current', 'refusee': 'refused', 'a_venir': 'todo'}[st.state] }}">
+        <span class="step-dot"></span><div><strong>{{ st.label }}</strong>
+          <span class="muted small">{{ {'faite': 'Validé', 'en_cours': 'En attente', 'refusee': 'Refusé', 'a_venir': 'À venir'}[st.state] }}</span></div></li>
+      {% endfor %}
+    </ol>
+    {% endif %}
+
+    {% if can_act %}
+    <form method="post" action="/arrets/{{ leave.id }}/decision" class="form decision">
+      <label>Commentaire <span class="muted small">(obligatoire en cas de refus)</span><textarea name="commentaire" rows="2" class="plain"></textarea></label>
+      <div class="form-actions">
+        <button class="btn primary" name="decision" value="valider">Valider</button>
+        <button class="btn danger" name="decision" value="refuser" data-confirm="Refuser cet arrêt maladie ?">Refuser</button>
+      </div>
+    </form>
+    {% endif %}
+  </section>
+
+  <section class="card">
+    <h2>Justificatif</h2>
+    {% if leave.file_path %}
+      <p><a class="btn" href="/arrets/{{ leave.id }}/justificatif" target="_blank" rel="noopener">Ouvrir « {{ leave.file_name }} »</a></p>
+      {% if leave.file_type.startswith('image/') %}<img class="attachment-preview" src="/arrets/{{ leave.id }}/justificatif" alt="Justificatif d'arrêt maladie">{% endif %}
+    {% else %}<p class="empty">Aucun justificatif joint.</p>{% endif %}
+    {% if leave.comment %}<h3>Commentaire de la déclaration</h3><p>{{ leave.comment }}</p>{% endif %}
+    {% if can_cancel %}
+    <details class="cancel-box"><summary class="btn small ghost">Annuler l'arrêt…</summary>
+      <form method="post" action="/arrets/{{ leave.id }}/annuler" class="form" data-confirm="Annuler cet arrêt maladie ?{{ ' Ses jours ne seront plus comptés en arrêt maladie.' if leave.status == 'valide' }}">
+        <label>Motif <textarea name="commentaire" rows="2" class="plain"></textarea></label>
+        <button class="btn small danger">Confirmer l'annulation</button>
+      </form></details>
+    {% endif %}
+  </section>
+</div>
+
+<section class="card">
+  <h2>Historique</h2>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Date</th><th>Par</th><th>Action</th><th>Étape</th><th>Commentaire</th></tr></thead>
+    <tbody>{% for h in history %}
+      <tr><td class="small nowrap">{{ h.at | dt }}</td><td>{{ h.actor }}</td><td>{{ actions.get(h.action, h.action) }}</td>
+        <td class="small">{{ h.step_label or '—' }}</td><td class="small">{{ h.comment or '—' }}</td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+</section>
+{% endblock %}

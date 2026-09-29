@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}Arrêts maladie{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Arrêts maladie</h1>
+    <p class="muted">{% if hr %}Saisie par les RH (validée d'office) et suivi des déclarations des employés.
+      {% else %}Déclarez votre arrêt avec le justificatif : il suit le circuit de validation.{% endif %}</p></div>
+</div>
+
+{% if pending %}
+<section class="card pending-card">
+  <div class="card-head"><div><h2>À valider <span class="count-pill">{{ pending | length }}</span></h2>
+    <p class="muted small">Arrêts dont l'étape en cours vous revient.</p></div></div>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Employé</th><th>Période</th><th>Étape en cours</th><th>Déclaré le</th><th></th></tr></thead>
+    <tbody>{% for x in pending %}
+      <tr><td><span class="mono small">{{ x.matricule }}</span> {{ x.name }}</td>
+        <td class="nowrap">{{ x.start_date.strftime('%d/%m/%Y') }} → {{ x.end_date.strftime('%d/%m/%Y') }} <span class="muted small">({{ x.days }} j)</span></td>
+        <td class="small">Étape {{ x.step + 1 }}</td>
+        <td class="small">{{ x.created_at | dt }}</td>
+        <td><a class="btn small primary" href="/arrets/{{ x.id }}">Examiner</a></td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+</section>
+{% endif %}
+
+<section class="card">
+  <div class="card-head"><div><h2>{{ 'Saisir un arrêt maladie' if hr else 'Déclarer un arrêt maladie' }}</h2>
+    <p class="muted small">{% if hr %}Saisi par un agent RH habilité : <strong>validé immédiatement</strong>, les jours passent en « Arrêt maladie ».
+      {% elif workflow %}Circuit de validation : {{ workflow | join(' → ') }}.{% else %}Validé dès la déclaration.{% endif %}</p></div></div>
+  {% if not hr and not (me and me.emp_matricule) %}
+    <p class="empty">Votre compte n'est rattaché à aucun employé : demandez à un administrateur d'indiquer votre matricule
+      (Administration → Utilisateurs), ou adressez-vous aux RH.</p>
+  {% else %}
+  <form method="post" action="/arrets" enctype="multipart/form-data" class="form sick-form">
+    <div class="row">
+      {% if hr %}<label>Matricule de l'employé <input name="matricule" required placeholder="ex. 590394" autocomplete="off"></label>
+      {% else %}<label>Employé <input value="{{ me.full_name or me.username }} ({{ me.emp_matricule }})" disabled></label>{% endif %}
+      <label>Du <input type="date" name="du" required></label>
+      <label>Au <input type="date" name="au" required></label>
+    </div>
+    <label class="file-drop compact">
+      <input type="file" name="justificatif" accept=".pdf,.jpg,.jpeg,.png" {{ 'required' if not hr }}>
+      <span class="file-drop-text"><strong>Joindre le justificatif</strong> (arrêt de travail) {{ '' if not hr else '— facultatif pour les RH' }}<br>
+        <span class="muted small">PDF, JPG ou PNG · 10 Mo maximum</span></span>
+    </label>
+    <label>Commentaire <span class="muted small">(facultatif)</span><textarea name="commentaire" rows="2" class="plain" placeholder="Informations utiles pour la validation"></textarea></label>
+    <div class="form-actions"><button class="btn primary">{{ 'Enregistrer l\'arrêt' if hr else 'Envoyer la déclaration' }}</button></div>
+  </form>
+  {% endif %}
+</section>
+
+<section class="card">
+  <div class="card-head"><div><h2>{{ 'Tous les arrêts' if hr else 'Mes arrêts et ceux de mon équipe' }}</h2></div>
+    <div class="actions">
+      <a class="chip {{ 'selected' if not statut }}" href="/arrets">Tous</a>
+      {% for code, label in statuses.items() %}<a class="chip {{ 'selected' if statut == code }}" href="?statut={{ code }}">{{ label }}</a>{% endfor %}
+    </div></div>
+  {% if not leaves %}<p class="empty">Aucun arrêt maladie.</p>{% else %}
+  <div class="table-wrap"><table>
+    <thead><tr><th>Employé</th><th>Période</th><th class="right">Jours</th><th>Origine</th><th>Statut</th><th>Justificatif</th><th></th></tr></thead>
+    <tbody>{% for x in leaves %}
+      <tr><td><span class="mono small">{{ x.matricule }}</span> {{ x.name }}</td>
+        <td class="nowrap">{{ x.start_date.strftime('%d/%m/%Y') }} → {{ x.end_date.strftime('%d/%m/%Y') }}</td>
+        <td class="right">{{ x.days }}</td>
+        <td class="small">{{ 'RH' if x.source == 'rh' else 'Employé' }} · {{ x.created_by }}</td>
+        <td><span class="badge {{ {'valide': 'ok', 'refuse': 'err', 'annule': '', 'en_attente': 'warn'}[x.status] }}">{{ x.status_label }}{% if x.status == 'en_attente' %} · étape {{ x.step + 1 }}{% endif %}</span></td>
+        <td>{% if x.file_path %}<a class="small" href="/arrets/{{ x.id }}/justificatif" target="_blank" rel="noopener">{{ x.file_name | truncate(28) }}</a>{% else %}<span class="muted small">—</span>{% endif %}</td>
+        <td><a class="btn small {{ 'primary' if can_act(x) else '' }}" href="/arrets/{{ x.id }}">{{ 'Examiner' if can_act(x) else 'Détail' }}</a></td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+  {% endif %}
+</section>
+{% endblock %}
