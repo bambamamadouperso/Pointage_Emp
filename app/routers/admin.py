@@ -1,9 +1,11 @@
 """Espace d'administration (rôle admin) : paramètres horaires historisés, source des pointages, jours fériés,
 utilisateurs et rôles, journal d'audit, traitements planifiés."""
+import re
 from datetime import date, datetime, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Form, Request
+from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
+from fastapi.responses import Response
 from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -334,6 +336,138 @@ def field_add(request: Request, type: str = Form(...), service: str = Form(""), 
     flash(request, f"{what[0].upper()}{what[1:]} déclaré agent terrain : ses journées ne seront plus comptées "
                    f"en absence ni en retard.", "ok")
     return redirect("/admin/terrain")
+
+
+MAX_IMPORT_BYTES = 5 * 1024 * 1024
+# Colonne du matricule, par ordre de préférence (« Nom employé » ne doit pas être pris pour le matricule).
+_MAT_HEADERS = [re.compile(p, re.I) for p in (r"matric", r"badge", r"^n[°o]\s*(d.)?employ", r"^code", r"^id")]
+_LABEL_HEADER = re.compile(r"motif|libell|fonction|poste|comment|zone|remarque", re.I)
+
+
+def read_field_file(name: str, data: bytes) -> list[tuple[str, str]]:
+    """Lignes (matricule, motif) d'un fichier Excel (.xlsx) ou CSV. En-tête facultatif ; sinon colonne A = matricule,
+    colonne B = motif. Lève ValueError avec un message lisible."""
+    lower = (name or "").lower()
+    if lower.endswith((".xlsx", ".xlsm")):
+        import io
+
+        from openpyxl import load_workbook
+        try:
+            wb = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+        except Exception as exc:  # noqa: BLE001
+            raise ValueError("Fichier Excel illisible (enregistrez-le au format .xlsx).") from exc
+        rows = [list(r) for r in wb.worksheets[0].iter_rows(values_only=True)]
+    elif lower.endswith((".csv", ".txt")):
+        import csv
+
+        for encoding in ("utf-8-sig", "cp1252"):
+            try:
+                content = data.decode(encoding)
+                break
+            except UnicodeDecodeError:
+                continue
+        delimiter = ";" if content.count(";") >= content.count(",") else ","
+        rows = [r for r in csv.reader(content.splitlines(), delimiter=delimiter)]
+    elif lower.endswith(".xls"):
+        raise ValueError("Ancien format Excel (.xls) : enregistrez le fichier au format .xlsx puis réessayez.")
+    else:
+        raise ValueError("Format non pris en charge : choisissez un fichier Excel (.xlsx) ou CSV.")
+    rows = [r for r in rows if r and any(c not in (None, "") for c in r)][:20000]
+    if not rows:
+        raise ValueError("Le fichier est vide.")
+    header = [str(c or "").strip() for c in rows[0]]
+    mat_col = next((i for pattern in _MAT_HEADERS for i, h in enumerate(header) if pattern.search(h)), None)
+    label_col = next((i for i, h in enumerate(header) if i != mat_col and _LABEL_HEADER.search(h)), None)
+    if mat_col is not None:
+        rows = rows[1:]
+    else:
+        mat_col, label_col = 0, 1
+    out = []
+    for r in rows:
+        mat = pointage.clean_matricule(r[mat_col] if mat_col < len(r) else None)
+        label = r[label_col] if label_col is not None and label_col < len(r) else ""
+        if mat:
+            out.append((mat, str(label or "").strip()))
+    if not out:
+        raise ValueError("Aucun matricule trouvé (colonne « Matricule » ou première colonne).")
+    return out
+
+
+@router.post("/terrain/import")
+async def field_import(request: Request, fichier: UploadFile = File(...), mode: str = Form("ajouter"),
+                       db: Session = Depends(get_db)):
+    cfg, mapping = _mapping_ready(db)
+    if mapping is None:
+        return redirect("/admin/pointage")
+    data = await fichier.read(MAX_IMPORT_BYTES + 1)
+    if len(data) > MAX_IMPORT_BYTES:
+        flash(request, "Fichier trop volumineux (5 Mo maximum).", "err")
+        return redirect("/admin/terrain")
+    try:
+        rows = read_field_file(fichier.filename or "", data)
+    except ValueError as exc:
+        flash(request, str(exc), "err")
+        return redirect("/admin/terrain")
+    engine = make_engine(cfg.conn, **pointage.WEB_LIMITS)
+    try:
+        result = pointage.import_fields(engine, mapping, rows, request.session.get("user", ""), replace=mode == "remplacer")
+    except Exception as exc:  # noqa: BLE001
+        flash(request, f"Import impossible : {friendly(exc)}", "err")
+        return redirect("/admin/terrain")
+    finally:
+        engine.dispose()
+    auth.audit(request, "Agents terrain importés", fichier.filename or "",
+               f"{result['lus']} matricule(s) lus, {result['ajoutes']} ajouté(s), {result['mis_a_jour']} mis à jour, "
+               f"{result['retires']} retiré(s), {len(result['inconnus'])} inconnu(s)")
+    flash(request, f"Import de « {fichier.filename} » : {result['ajoutes']} agent(s) ajouté(s), {result['mis_a_jour']} "
+                   f"déjà présent(s) mis à jour" + (f", {result['retires']} retiré(s) (absents du fichier)"
+                                                    if mode == "remplacer" else "") + ".", "ok")
+    if result["inconnus"]:
+        shown = ", ".join(result["inconnus"][:30]) + (" …" if len(result["inconnus"]) > 30 else "")
+        flash(request, f"{len(result['inconnus'])} matricule(s) introuvable(s) dans la liste des employés, ignoré(s) : "
+                       f"{shown}", "warn")
+    return redirect("/admin/terrain")
+
+
+def _xlsx(headers: list[str], rows: list[list], name: str) -> Response:
+    import io
+
+    from openpyxl import Workbook
+    from openpyxl.styles import Font
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Agents terrain"
+    ws.append(headers)
+    for r in rows:
+        ws.append(r)
+    for i, _ in enumerate(headers, 1):
+        ws.cell(1, i).font = Font(bold=True)
+        ws.column_dimensions[chr(64 + i)].width = 28
+    buf = io.BytesIO()
+    wb.save(buf)
+    return Response(buf.getvalue(), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
+@router.get("/terrain/modele.xlsx")
+def field_template():
+    return _xlsx(["Matricule", "Motif"], [["590394", "Commercial zone Nord"], ["590412", "Force de vente"]],
+                 "modele_agents_terrain.xlsx")
+
+
+@router.get("/terrain/export.xlsx")
+def field_export(db: Session = Depends(get_db)):
+    cfg, mapping = _mapping_ready(db)
+    if mapping is None:
+        return redirect("/admin/pointage")
+    engine = make_engine(cfg.conn, **pointage.WEB_LIMITS)
+    try:
+        entries = pointage.field_entries(engine, mapping)
+    finally:
+        engine.dispose()
+    rows = [[e["valeur"], e["libelle"] or "", e["nom"] or ""] for e in entries if e["type"] == "employe"]
+    return _xlsx(["Matricule", "Motif", "Nom"], rows, "agents_terrain.xlsx")
 
 
 @router.post("/terrain/{entry_id}/delete")

@@ -642,3 +642,16 @@ input.compact { min-height: 32px; padding: .3rem .55rem; font-size: .84rem; }
 .ms-list label.check:hover { background: var(--primary-soft); }
 .ms-list label.check:has(input:checked) { font-weight: 600; }
 .ms-foot { display: flex; align-items: center; justify-content: space-between; gap: .6rem; padding-top: .45rem; border-top: 1px solid var(--border); }
+
+/* Import de fichier */
+.import-form { display: grid; gap: .9rem; }
+.file-drop { position: relative; display: flex; align-items: center; justify-content: center; text-align: center; min-height: 104px;
+  padding: 1rem; border: 1.5px dashed var(--border-strong); border-radius: 12px; background: var(--surface-2); cursor: pointer;
+  font-weight: 500; color: var(--text-2); transition: border-color .15s, background .15s; }
+.file-drop:hover, .file-drop.drag { border-color: var(--primary); background: var(--primary-soft); }
+.file-drop input[type=file] { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+.file-drop-text strong { color: var(--primary); }
+.file-drop.has-file .file-drop-text strong { color: var(--text); }
+.import-mode { border: 0; padding: 0; margin: 0; display: grid; gap: .5rem; }
+.import-mode label.check { align-items: flex-start; font-weight: 500; }
+.import-mode label.check input { margin-top: .2rem; }

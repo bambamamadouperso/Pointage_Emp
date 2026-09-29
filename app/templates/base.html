@@ -139,6 +139,16 @@
     });
     refresh();
   });
+  // Zones de dépôt de fichier : nom du fichier choisi, glisser-déposer.
+  document.querySelectorAll('.file-drop').forEach(zone => {
+    const input = zone.querySelector('input[type=file]'), text = zone.querySelector('.file-drop-text strong');
+    input.addEventListener('change', () => {
+      const f = input.files[0];
+      if (f) { text.textContent = f.name; zone.classList.add('has-file'); }
+    });
+    ['dragenter', 'dragover'].forEach(t => zone.addEventListener(t, () => zone.classList.add('drag')));
+    ['dragleave', 'drop'].forEach(t => zone.addEventListener(t, () => zone.classList.remove('drag')));
+  });
   document.addEventListener('click', e => {
     document.querySelectorAll('[data-ms] details[open]').forEach(d => { if (!d.contains(e.target)) d.open = false; });
   });

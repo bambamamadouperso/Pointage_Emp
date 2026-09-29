@@ -967,6 +967,63 @@ def add_field(engine: Engine, m: Mapping, kind: str, value: str, label: str, aut
             f"modifie_le = now()"), {"t": kind, "v": value.strip(), "l": label.strip(), "a": author})
 
 
+def clean_matricule(value) -> str:
+    """Matricule lu dans un fichier : les nombres Excel (590394.0) redeviennent « 590394 »."""
+    if value is None:
+        return ""
+    if isinstance(value, float) and value.is_integer():
+        value = int(value)
+    text_value = str(value).strip()
+    return text_value[:-2] if re.fullmatch(r"\d+\.0", text_value) else text_value
+
+
+def import_fields(engine: Engine, m: Mapping, rows: list[tuple[str, str]], author: str, replace: bool = False) -> dict:
+    """Agents terrain importés d'un fichier : (matricule, motif). « replace » retire les employés absents du fichier
+    (les services entiers déclarés restent). Les matricules inconnus sont ignorés et listés."""
+    S = qi(m.objs)
+    wanted: dict[str, str] = {}
+    duplicates = 0
+    for mat, label in rows:
+        mat = clean_matricule(mat)
+        if not mat:
+            continue
+        if mat in wanted:
+            duplicates += 1
+        wanted[mat] = (label or "").strip()[:200] or wanted.get(mat, "")
+    with engine.begin() as c:
+        found = {}
+        if wanted:
+            for matricule, key in c.execute(text(
+                    f"SELECT matricule, emp_key FROM {S}.v_pointage_employes "
+                    f"WHERE matricule IN :m OR emp_key IN :m").bindparams(bindparam("m", expanding=True)),
+                    {"m": list(wanted)}):
+                for ref in (matricule, key):
+                    if ref in wanted and ref not in found:
+                        found[ref] = matricule or key
+        existing = {v for (v,) in c.execute(text(f"SELECT valeur FROM {S}.pointage_terrain WHERE type = 'employe'"))}
+        kept, added, updated = set(), 0, 0
+        for ref, label in wanted.items():
+            if ref not in found:
+                continue
+            value = found[ref]
+            kept.add(value)
+            added += value not in existing
+            updated += value in existing
+            c.execute(text(
+                f"INSERT INTO {S}.pointage_terrain (type, valeur, libelle, auteur) VALUES ('employe', :v, :l, :a) "
+                f"ON CONFLICT (type, valeur) DO UPDATE SET libelle = COALESCE(NULLIF(EXCLUDED.libelle, ''), "
+                f"{S}.pointage_terrain.libelle), auteur = EXCLUDED.auteur, modifie_le = now()"),
+                {"v": value, "l": label, "a": author})
+        removed = 0
+        if replace:
+            gone = [v for v in existing if v not in kept]
+            if gone:
+                removed = c.execute(text(f"DELETE FROM {S}.pointage_terrain WHERE type = 'employe' AND valeur IN :g")
+                                    .bindparams(bindparam("g", expanding=True)), {"g": gone}).rowcount
+    return {"lus": len(wanted), "ajoutes": added, "mis_a_jour": updated, "retires": removed, "doublons": duplicates,
+            "inconnus": [r for r in wanted if r not in found]}
+
+
 def delete_field(engine: Engine, m: Mapping, entry_id: int) -> Optional[tuple[str, str]]:
     with engine.begin() as c:
         return c.execute(text(f"DELETE FROM {qi(m.objs)}.pointage_terrain WHERE id = :i RETURNING type, valeur"),

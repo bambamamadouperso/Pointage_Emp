@@ -725,3 +725,46 @@ def test_badge_mails_test_mode_production_and_no_duplicates(configured, pg, logg
             if s:
                 s.enabled, s.mode = False, "test"
             db.commit()
+
+
+def test_field_agents_excel_import(configured, pg, logged_client):
+    """Agents terrain importés d'un fichier Excel ou CSV : ajout, remplacement, matricules inconnus, modèle, export."""
+    import io
+
+    from openpyxl import Workbook, load_workbook
+
+    wb = Workbook()
+    ws = wb.active
+    ws.append(["Nom employé", "Matricule", "Motif"])          # « Nom employé » ne doit pas être pris pour le matricule
+    ws.append(["Ndiaye Moussa", "E002", "Commercial Nord"])
+    ws.append(["Fall Ibou", "E004", "Commercial Sud"])
+    ws.append(["Inconnu", "ZZZ9", "?"])
+    ws.append(["Ndiaye Moussa", "E002", ""])                  # doublon
+    buf = io.BytesIO()
+    wb.save(buf)
+    r = logged_client.post("/admin/terrain/import", files={"fichier": ("commerciaux.xlsx", buf.getvalue())},
+                           data={"mode": "ajouter"}, follow_redirects=True)
+    assert "2 agent(s) ajouté(s)" in r.text and "1 matricule(s) introuvable(s)" in r.text and "ZZZ9" in r.text
+    assert "Commercial Nord" in r.text and "Commercial Sud" in r.text
+    assert rows(pg, MON)[("E002", MON)].statut == "TERRAIN"
+
+    # CSV sans en-tête, séparateur « ; », accents Windows : remplacement de la liste des employés.
+    csv = "E007;Délégué médical\r\n".encode("cp1252")
+    r = logged_client.post("/admin/terrain/import", files={"fichier": ("liste.csv", csv)},
+                           data={"mode": "remplacer"}, follow_redirects=True)
+    assert "1 agent(s) ajouté(s)" in r.text and "2 retiré(s)" in r.text and "Délégué médical" in r.text
+    assert rows(pg, MON)[("E002", MON)].statut == "RETARD" and rows(pg, MON)[("E007", MON)].statut == "TERRAIN"
+
+    bad = logged_client.post("/admin/terrain/import", files={"fichier": ("vieux.xls", b"...")}, follow_redirects=True)
+    assert "format .xlsx" in bad.text
+    empty = logged_client.post("/admin/terrain/import", files={"fichier": ("vide.csv", b"\r\n")}, follow_redirects=True)
+    assert "vide" in empty.text
+
+    model = load_workbook(io.BytesIO(logged_client.get("/admin/terrain/modele.xlsx").content)).active
+    assert [c.value for c in model[1]] == ["Matricule", "Motif"]
+    export = load_workbook(io.BytesIO(logged_client.get("/admin/terrain/export.xlsx").content)).active
+    assert list(export.iter_rows(min_row=2, values_only=True)) == [("E007", "Délégué médical", "Diop Aminata")]
+    assert "Importer une liste depuis Excel" in logged_client.get("/admin/terrain").text
+
+    for entry in pointage.field_entries(pg, pointage.Mapping.from_json(_cfg_data())):
+        logged_client.post(f"/admin/terrain/{entry['id']}/delete")

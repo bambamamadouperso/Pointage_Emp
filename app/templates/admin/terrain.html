@@ -50,6 +50,35 @@
 </section>
 
 <section class="card">
+  <div class="card-head">
+    <div><h2>Importer une liste depuis Excel</h2>
+      <p class="muted small">Fichier Excel (.xlsx) ou CSV : une colonne « Matricule » (obligatoire) et une colonne « Motif »
+        (facultative). Sans en-tête, la 1<sup>re</sup> colonne est lue comme matricule et la 2<sup>e</sup> comme motif.</p></div>
+    <div class="actions">
+      <a class="btn small" href="/admin/terrain/modele.xlsx">⬇ Modèle Excel</a>
+      <a class="btn small ghost" href="/admin/terrain/export.xlsx">⬇ Liste actuelle</a>
+    </div>
+  </div>
+  <form method="post" action="/admin/terrain/import" enctype="multipart/form-data" class="import-form"
+        data-confirm="Importer ce fichier dans la liste des agents terrain ?">
+    <label class="file-drop">
+      <input type="file" name="fichier" accept=".xlsx,.xlsm,.csv,.txt" required>
+      <span class="file-drop-text"><strong>Choisir un fichier</strong> ou le déposer ici<br>
+        <span class="muted small">.xlsx ou .csv · 5 Mo maximum</span></span>
+    </label>
+    <fieldset class="import-mode">
+      <legend class="sr-only">Mode d'import</legend>
+      <label class="check"><input type="radio" name="mode" value="ajouter" checked>
+        <span><strong>Ajouter</strong> à la liste actuelle <span class="muted small">(les agents déjà déclarés sont conservés)</span></span></label>
+      <label class="check"><input type="radio" name="mode" value="remplacer">
+        <span><strong>Remplacer</strong> la liste des employés <span class="muted small">(ceux absents du fichier sont retirés ; les services entiers restent)</span></span></label>
+    </fieldset>
+    <div class="form-actions"><button class="btn primary">Importer</button></div>
+  </form>
+  <p class="muted small">Les matricules inconnus de la liste des employés sont ignorés et signalés après l'import. Chaque import est tracé dans le journal d'audit.</p>
+</section>
+
+<section class="card">
   <h2>Liste actuelle</h2>
   {% if not entries %}<p class="empty">Aucun agent terrain déclaré : tout le personnel est soumis aux règles de pointage.</p>{% else %}
   <div class="table-wrap"><table>
