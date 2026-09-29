@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+{% block title %}Horaires postés{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Horaires postés</h1>
+    <p class="muted">Agents en équipes (3×8, 2×12…) : leur planning remplace l'horaire de bureau. Chacun est jugé sur le poste
+      prévu ce jour-là, y compris les nuits qui finissent le lendemain.</p></div>
+  <a href="/admin" class="muted">← Administration</a>
+</div>
+{% if mapping is none %}
+  <div class="flash warn">Configurez d'abord la <a href="/admin/pointage">source des pointages</a>.</div>
+{% else %}
+{% if error %}<div class="flash err">{{ error }}</div>{% endif %}
+
+<section class="card rules">
+  <h2>Règles appliquées aux jours planifiés</h2>
+  <ul class="rule-list">
+    <li><strong>Poste de travail</strong> (ex. P1 06h–14h, 1806 18h–06h) : <span class="badge st-ok">À l'heure</span> si l'arrivée est
+      avant le début du poste + la tolérance de retard (la même que pour le bureau : écart entre « début de journée » et « seuil de retard »),
+      sinon <span class="badge st-late">En retard</span>. Sans pointage : <span class="badge st-abs">Absent</span>, même un samedi ou un dimanche,
+      sauf arrêt maladie, congé ou télétravail approuvé.</li>
+    <li><strong>Durée validée</strong> : du début du poste (ou de l'arrivée tardive) à sa fin (ou au départ anticipé), moins la pause du poste.
+      Un poste de nuit est compté <strong>le jour où il commence</strong> : le départ de 06h le lendemain lui est rattaché.</li>
+    <li>Les pointages sont rattachés au poste s'ils ont lieu jusqu'à <strong>{{ marge | replace(':', 'h') }}</strong> avant son début ou
+      après sa fin (<a href="/admin/parametres">Paramètres horaires</a> → « marge avant/après un poste »).</li>
+    <li><span class="badge st-off">Repos (planning)</span>, <span class="badge st-leave">Congé Annuel</span>,
+      <span class="badge st-train">Formation</span>, férié payé : jamais d'absence. Repos et fériés ne comptent pas dans les jours attendus des rapports.</li>
+    <li>Les jours sans planning pour un employé suivent l'horaire de bureau habituel.</li>
+  </ul>
+</section>
+
+<section class="card">
+  <div class="card-head">
+    <div><h2>Importer un planning Excel</h2>
+      <p class="muted small">Le fichier tel qu'il est rempli par les équipes (ex. « PLANNING ATF ») : une ligne <strong>MATRICULE</strong>
+        (un employé par colonne), une ligne <strong>NOM</strong> facultative, puis une ligne par jour avec la date en 1<sup>re</sup> colonne
+        et le code du poste de chaque employé. La légende « Code / Heure Début / Heure Fin » du haut de la feuille est lue :
+        les codes qui n'existent pas encore sont créés.</p></div>
+    {% if du and au and grid and grid.employes %}<div class="actions">
+      <a class="btn small ghost" href="/admin/planning/export.xlsx?du={{ du.isoformat() }}&au={{ au.isoformat() }}">⬇ Exporter la période affichée</a></div>{% endif %}
+  </div>
+  <form method="post" action="/admin/planning/import" enctype="multipart/form-data" class="import-form"
+        data-confirm="Importer ce planning ? Les jours déjà planifiés pour ces employés seront remplacés.">
+    <label class="file-drop">
+      <input type="file" name="fichier" accept=".xlsx,.xlsm" required>
+      <span class="file-drop-text"><strong>Choisir le planning</strong> ou le déposer ici<br>
+        <span class="muted small">.xlsx · 5 Mo maximum</span></span>
+    </label>
+    <div class="form-actions"><button class="btn primary">Importer le planning</button></div>
+  </form>
+  <p class="muted small">Chaque (matricule, jour) du fichier remplace la valeur précédente ; les cases vides ne changent rien.
+    Les matricules inconnus et les codes absents de la liste ci-dessous sont ignorés et signalés. « 618 » (zéro supprimé par Excel)
+    est reconnu comme « 0618 ».</p>
+</section>
+
+<section class="card">
+  <div class="card-head">
+    <div><h2>Planning{% if du %} du {{ du.strftime('%d/%m/%Y') }} au {{ au.strftime('%d/%m/%Y') }}{% endif %}</h2>
+      {% if grid and grid.premier %}<p class="muted small">{{ grid.planifies }} employé(s) planifié(s) au total, du
+        {{ grid.premier.strftime('%d/%m/%Y') }} au {{ grid.dernier.strftime('%d/%m/%Y') }}.</p>{% endif %}</div>
+    <form method="get" class="inline">
+      <label>Du <input type="date" name="du" value="{{ du.isoformat() if du }}"></label>
+      <label>Au <input type="date" name="au" value="{{ au.isoformat() if au }}"></label>
+      <button class="btn small">Afficher</button>
+    </form>
+  </div>
+  {% if not grid or not grid.employes %}
+    <p class="empty">Aucun planning sur cette période. Importez le fichier Excel ci-dessus.</p>
+  {% else %}
+  <div class="planning-wrap"><table class="planning">
+    <thead><tr><th class="pl-who">Employé</th>
+      {% for d in grid.jours %}<th class="{{ 'we' if d.isoweekday() > 5 }}">{{ ['Lu','Ma','Me','Je','Ve','Sa','Di'][d.weekday()] }}<small>{{ d.strftime('%d/%m') }}</small></th>{% endfor %}
+    </tr></thead>
+    <tbody>{% for e in grid.employes %}
+      <tr><td class="pl-who"><span class="mono small">{{ e.matricule }}</span> {{ e.nom }}</td>
+        {% for d in grid.jours %}{% set cell = grid.grille.get(e.matricule, {}).get(d) %}
+        <td>{% if cell %}<span class="pl pl-{{ 'nuit' if cell[0] in nuit else cell[1] }}">{{ cell[0] }}</span>{% endif %}</td>
+        {% endfor %}</tr>
+    {% endfor %}</tbody>
+  </table></div>
+  <div class="legend-row">
+    <span><span class="pl pl-travail">P1</span> poste de jour</span><span><span class="pl pl-nuit">P3</span> poste de nuit</span>
+    <span><span class="pl pl-repos">P4</span> repos</span><span><span class="pl pl-conge">P11</span> congé</span>
+    <span><span class="pl pl-formation">P8</span> formation</span><span><span class="pl pl-inconnu">?</span> code supprimé</span>
+  </div>
+  <form method="post" action="/admin/planning/supprimer" class="inline" style="margin-top:1rem"
+        data-confirm="Supprimer le planning de cette période ? Ces jours suivront de nouveau l'horaire de bureau.">
+    <input type="hidden" name="du" value="{{ du.isoformat() }}"><input type="hidden" name="au" value="{{ au.isoformat() }}">
+    <label>Matricule <span class="muted small">(vide = tous)</span> <input name="matricule" placeholder="ex. 590128" size="10"></label>
+    <button class="btn small danger">Supprimer le planning de la période</button>
+  </form>
+  {% endif %}
+</section>
+
+<section class="card" id="postes">
+  <h2>Codes de poste</h2>
+  <p class="muted small">Un poste de travail a des heures de début et de fin (fin ≤ début = poste de nuit, finit le lendemain) et, si besoin,
+    une pause déduite. Les autres types n'ont pas d'horaire ; « durée attribuée » est comptée en durée validée (formation, férié payé).</p>
+  <div class="table-wrap"><table class="postes">
+    <thead><tr><th>Code</th><th>Libellé</th><th>Type</th><th>Début</th><th>Fin</th><th>Pause</th><th>Durée attribuée</th><th class="right">Jours planifiés</th><th></th></tr></thead>
+    <tbody>
+    {% for p in postes %}
+      <tr><td colspan="9" style="padding:0">
+        <form method="post" action="/admin/planning/postes" class="row-form" style="display:grid;grid-template-columns:.7fr 1.6fr 1.4fr .9fr .9fr .8fr .9fr .8fr auto;gap:.4rem;align-items:center;padding:.35rem .5rem">
+          <input type="hidden" name="code" value="{{ p.code }}">
+          <span class="pl pl-{{ 'nuit' if p.code in nuit else p.type }}">{{ p.code }}</span>
+          <input name="libelle" value="{{ p.libelle }}" aria-label="Libellé">
+          <select name="type" aria-label="Type">{% for k, label in types.items() %}<option value="{{ k }}" {{ 'selected' if p.type == k }}>{{ label }}</option>{% endfor %}</select>
+          <input name="debut" value="{{ p.debut.strftime('%H:%M') if p.debut }}" placeholder="—" inputmode="numeric" aria-label="Début (HH:MM)">
+          <input name="fin" value="{{ p.fin.strftime('%H:%M') if p.fin }}" placeholder="—" inputmode="numeric" aria-label="Fin (HH:MM)">
+          <input name="pause" value="{{ p.pause | hhmm if p.pause and p.pause.total_seconds() }}" placeholder="—" aria-label="Pause">
+          <input name="duree" value="{{ p.duree | hhmm if p.duree }}" placeholder="—" aria-label="Durée attribuée">
+          <span class="right muted small">{{ p.utilise | num }}</span>
+          <span class="nowrap"><button class="btn small">Enregistrer</button>
+            <button class="btn small danger" formaction="/admin/planning/postes/{{ p.code }}/delete"
+                    {% if p.utilise %}disabled title="Utilisé par le planning"{% endif %}>×</button></span>
+        </form></td></tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  <form method="post" action="/admin/planning/postes" class="inline" style="margin-top:1rem">
+    <label>Nouveau code <input name="code" required size="6" placeholder="ex. P7"></label>
+    <label>Libellé <input name="libelle" placeholder="ex. Journée"></label>
+    <label>Type <select name="type">{% for k, label in types.items() %}<option value="{{ k }}">{{ label }}</option>{% endfor %}</select></label>
+    <label>Début <input name="debut" size="5" placeholder="06:00" inputmode="numeric"></label>
+    <label>Fin <input name="fin" size="5" placeholder="14:00" inputmode="numeric"></label>
+    <label>Pause <input name="pause" size="5" placeholder="0h30"></label>
+    <label>Durée attribuée <input name="duree" size="5" placeholder="8h00"></label>
+    <button class="btn primary">Ajouter</button>
+  </form>
+</section>
+{% endif %}
+{% endblock %}

@@ -131,6 +131,8 @@
       <a class="{{ 'selected' if only == 'TELETRAVAIL' }}" href="?{{ request.query_params | set_statuts(['TELETRAVAIL']) }}" title="Afficher le télétravail"><span class="dot st-remote"></span>Télétravail <b>{{ k.teletravail | num }}</b></a>
       <a class="{{ 'selected' if only == 'TERRAIN' }}" href="?{{ request.query_params | set_statuts(['TERRAIN']) }}" title="Afficher les agents terrain"><span class="dot st-field"></span>Terrain <b>{{ k.terrain | num }}</b></a>
       <a class="{{ 'selected' if only == 'ARRET_MALADIE' }}" href="?{{ request.query_params | set_statuts(['ARRET_MALADIE']) }}" title="Afficher les arrêts maladie"><span class="dot st-sick"></span>Maladie <b>{{ k.maladies | num }}</b></a>
+      {% if k.formations %}<a class="{{ 'selected' if only == 'FORMATION' }}" href="?{{ request.query_params | set_statuts(['FORMATION']) }}" title="Afficher les formations (planning)"><span class="dot st-train"></span>Formation <b>{{ k.formations | num }}</b></a>{% endif %}
+      {% if k.repos %}<a class="{{ 'selected' if only == 'REPOS' }}" href="?{{ request.query_params | set_statuts(['REPOS']) }}" title="Afficher les repos du planning des horaires postés"><span class="dot st-off"></span>Repos <b>{{ k.repos | num }}</b></a>{% endif %}
     </span></div>
   <a class="kpi c-pink {{ 'selected' if f.population == 'hors' }}" href="?{{ request.query_params | with_param('pop', '' if f.population == 'hors' else 'hors') }}"
      title="Personnes qui ont pointé mais ne figurent pas dans la liste des employés">
@@ -175,8 +177,9 @@
         <td>{{ r.service or '—' }}</td>
         {% if has_hierarchy %}<td class="small">{{ r.responsable or '—' }}</td>{% endif %}
         <td>{{ hhmm(r.premier_pointage) }}</td>
-        <td>{{ hhmm(r.dernier_pointage) if r.nb_pointages > 1 else '—' }}</td>
-        <td class="nowrap"><span class="badge {{ cls }}">{{ label }}</span>{% if not r.jour_ouvre and r.statut != 'NON_OUVRE' %} <span class="muted small" title="Jour non ouvré ou férié">(non ouvré)</span>{% endif %}</td>
+        <td>{{ hhmm(r.dernier_pointage) if r.nb_pointages > 1 else '—' }}{% if r.nb_pointages > 1 and r.dernier_pointage.date() > r.jour %} <span class="muted small" title="Le lendemain (poste de nuit)">+1 j</span>{% endif %}</td>
+        <td class="nowrap"><span class="badge {{ cls }}">{{ label }}</span>{% if not r.jour_ouvre and r.statut not in ('NON_OUVRE', 'REPOS') %} <span class="muted small" title="Jour non ouvré ou férié">(non ouvré)</span>{% endif %}
+          {% if r.poste %}<br><span class="poste-tag" title="Poste planifié (horaires postés)">{{ r.poste }}</span>{% endif %}</td>
         <td class="right">{% if r.duree_validee_min is not none %}<span class="dur {{ 'dur-ok' if r.duree_validee_min >= objectif_min else 'dur-ko' }}"
           title="{{ 'Objectif atteint' if r.duree_validee_min >= objectif_min else 'Sous l\'objectif' }} ({{ objectif_min // 60 }}h{{ '%02d' % (objectif_min % 60) }})">{{ hhmm(r.duree_validee) }}</span>{% else %}—{% endif %}</td>
         <td class="right">{{ hhmm(r.duree_effective) }}</td>

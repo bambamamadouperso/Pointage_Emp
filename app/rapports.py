@@ -41,7 +41,7 @@ _WEEKDAYS = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Diman
 # Journée « attendue » : jour ouvré ; « disponible » : attendue hors congé ; « présent » : au travail sous une forme ou une autre.
 _ATTENDU = "jour_ouvre AND statut <> 'NON_OUVRE'"
 _DISPO = f"{_ATTENDU} AND statut NOT IN ('CONGE_ANNUEL', 'CONGE_EXCEP', 'ARRET_MALADIE')"
-_PRESENT = "statut IN ('A_L_HEURE', 'RETARD', 'INCOMPLET', 'TERRAIN', 'TELETRAVAIL')"
+_PRESENT = "statut IN ('A_L_HEURE', 'RETARD', 'INCOMPLET', 'TERRAIN', 'TELETRAVAIL', 'FORMATION')"
 _BUREAU = "statut IN ('A_L_HEURE', 'RETARD')"
 # Les oublis de badge ne sont comptés que les jours terminés (aujourd'hui, le départ n'a pas encore eu lieu).
 
@@ -161,7 +161,7 @@ def build(engine: Engine, m: Mapping, f: Filters, sort: str = "absences", compar
         out["arrivees"] = [dict(x) for x in c.execute(text(f"""
             SELECT (extract(hour FROM premier_pointage)::int * 60
                     + (extract(minute FROM premier_pointage)::int / 15) * 15) AS minute, count(*) AS n
-            FROM r WHERE {_BUREAU} GROUP BY 1 ORDER BY 1""")).mappings()]
+            FROM r WHERE {_BUREAU} AND poste IS NULL GROUP BY 1 ORDER BY 1""")).mappings()]
 
         out["services"] = _group(c, "COALESCE(service, '(sans service)')")
         out["categories"] = _group(c, "COALESCE(categorie, '(non renseignée)')") if has_categories else []
@@ -184,7 +184,7 @@ def build(engine: Engine, m: Mapping, f: Filters, sort: str = "absences", compar
                 count(*) FILTER (WHERE statut = 'TERRAIN') AS terrain_jours,
                 count(*) FILTER (WHERE statut = 'ARRET_MALADIE') AS maladies,
                 sum(duree_validee_min) / 60.0 AS heures_validees,
-                avg(extract(epoch FROM premier_pointage::time) / 60) FILTER (WHERE {_BUREAU}) AS arrivee_moy_min
+                avg(extract(epoch FROM premier_pointage::time) / 60) FILTER (WHERE {_BUREAU} AND poste IS NULL) AS arrivee_moy_min
             FROM r GROUP BY emp_key""")).mappings()]
 
     keys = {

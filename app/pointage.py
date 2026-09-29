@@ -29,6 +29,7 @@ PARAMS = [
     ("duree_terrain", "Durée validée minimale par jour pour un agent terrain", "duration", "08:00"),
     ("objectif_duree", "Objectif de durée validée (vert si atteint, rouge sinon)", "duration", "08:00"),
     ("duree_arret_maladie", "Durée attribuée par jour d'arrêt maladie", "duration", "08:00"),
+    ("marge_poste", "Horaires postés : marge avant/après un poste pour y rattacher les pointages", "duration", "04:00"),
 ]
 PARAM_LABELS = {k: label for k, label, _, _ in PARAMS}
 PARAM_TYPES = {k: kind for k, _, kind, _ in PARAMS}
@@ -47,10 +48,12 @@ STATUTS = {
     "TELETRAVAIL": ("Télétravail", "st-remote"),
     "TERRAIN": ("Sur le terrain", "st-field"),
     "ARRET_MALADIE": ("Arrêt maladie", "st-sick"),
+    "REPOS": ("Repos (planning)", "st-off"),
+    "FORMATION": ("Formation", "st-train"),
 }
 CONGES = ("CONGE_ANNUEL", "CONGE_EXCEP")
 # Version des objets PostgreSQL : si elle change, ils sont réinstallés automatiquement.
-SQL_VERSION = 13
+SQL_VERSION = 14
 # Limites des requêtes lancées depuis les pages web : une attente de verrou ou une requête lente ne doit jamais
 # bloquer le site (au pire, la page affiche une erreur au bout de 2 minutes).
 WEB_LIMITS = {"lock_timeout_s": 15, "statement_timeout_s": 120}
@@ -519,7 +522,7 @@ RETURNS TABLE (
     jour date, jour_ouvre boolean, premier_pointage timestamp, dernier_pointage timestamp, nb_pointages integer,
     statut text, statut_libelle text, debut_valide time, fin_validee time, pause_deduite interval,
     duree_validee interval, duree_effective interval, duree_validee_min numeric, duree_effective_min numeric,
-    hors_liste boolean, terrain boolean, retard_min numeric, categorie text
+    hors_liste boolean, terrain boolean, retard_min numeric, categorie text, poste text
 )
 LANGUAGE sql STABLE
 -- La compilation JIT coûte plus d'une seconde par appel, pour aucun gain sur ce type de requête.
@@ -537,9 +540,33 @@ WITH emp AS (
 pl AS (
     SELECT {pkey} AS emp_key, {ts} AS ts FROM {punch} p{raw_filter}
 ),
+plan AS (  -- horaires postés : poste planifié de l'employé ce jour-là (import du planning, table pointage_planning)
+    SELECT DISTINCT ON (e.emp_key, pp.jour) e.emp_key, pp.jour, po.code, po.type, po.libelle,
+           pp.jour + po.debut AS s_debut,
+           pp.jour + po.fin + CASE WHEN po.fin <= po.debut THEN interval '1 day' ELSE interval '0' END AS s_fin,
+           po.pause AS s_pause, po.duree AS s_duree
+    FROM {S}.pointage_planning pp
+    JOIN {S}.pointage_postes po ON po.code = pp.code
+    JOIN emp e ON pp.matricule IN (e.matricule, e.emp_key)
+    WHERE pp.jour BETWEEN p_du - 1 AND p_au
+    ORDER BY e.emp_key, pp.jour, (pp.matricule = e.matricule) DESC
+),
+marge AS (
+    SELECT COALESCE((SELECT x.valeur FROM {S}.pointage_parametres x WHERE x.cle = 'marge_poste'
+                     ORDER BY x.date_effet DESC, x.id DESC LIMIT 1), {lit(PARAM_DEFAULTS['marge_poste'])})::interval AS v
+),
+rattache AS (  -- pointage autour d'un poste planifié (ex. nuit 18h-6h) : rattaché au jour où le poste commence
+    SELECT DISTINCT ON (pl.emp_key, pl.ts) pl.emp_key, pl.ts, x.jour
+    FROM pl CROSS JOIN marge
+    JOIN plan x ON x.emp_key = pl.emp_key AND x.type = 'travail'
+     AND pl.ts >= x.s_debut - marge.v AND pl.ts <= x.s_fin + marge.v
+    ORDER BY pl.emp_key, pl.ts, GREATEST(x.s_debut - pl.ts, pl.ts - x.s_fin, interval '0'), x.jour DESC
+),
 agg AS (
-    SELECT emp_key, ts::date AS jour, min(ts) AS p1, max(ts) AS p2, count(DISTINCT ts)::int AS n
-    FROM pl WHERE ts >= p_du AND ts < p_au + 1 AND emp_key IS NOT NULL
+    SELECT pl.emp_key, COALESCE(r.jour, pl.ts::date) AS jour, min(pl.ts) AS p1, max(pl.ts) AS p2,
+           count(DISTINCT pl.ts)::int AS n
+    FROM pl LEFT JOIN rattache r ON r.emp_key = pl.emp_key AND r.ts = pl.ts
+    WHERE pl.emp_key IS NOT NULL AND COALESCE(r.jour, pl.ts::date) BETWEEN p_du AND p_au
     GROUP BY 1, 2
 ),
 par AS (
@@ -583,8 +610,13 @@ g AS (
            p.duree_conge, p.duree_teletravail, p.duree_terrain, p.duree_maladie, k.statut AS conge, t.statut AS tele,
            (mal.emp_key IS NOT NULL) AS maladie,
            COALESCE(e.terrain, false) AS terrain,
-           (NOT p.ferie AND extract(isodow FROM b.jour)::int = ANY (
-               string_to_array(regexp_replace(p.jours_ouvres, '[^0-9,]', '', 'g'), ',')::int[])) AS jour_ouvre
+           s.code AS poste_code, s.type AS poste_type, s.libelle AS poste_libelle, s.s_debut, s.s_fin,
+           COALESCE(s.s_pause, interval '0') AS s_pause, s.s_duree,
+           -- Seuil de retard d'un poste planifié : même tolérance que pour l'horaire de bureau.
+           (p.seuil_retard - p.debut_journee) AS tolerance,
+           CASE WHEN s.type IS NOT NULL THEN s.type IN ('travail', 'conge', 'formation')
+                ELSE (NOT p.ferie AND extract(isodow FROM b.jour)::int = ANY (
+                      string_to_array(regexp_replace(p.jours_ouvres, '[^0-9,]', '', 'g'), ',')::int[])) END AS jour_ouvre
     FROM base b
     JOIN par p ON p.jour = b.jour
     LEFT JOIN emp e ON e.emp_key = b.emp_key
@@ -592,10 +624,21 @@ g AS (
     LEFT JOIN conge k ON k.emp_key = b.emp_key AND k.jour = b.jour
     LEFT JOIN tele t ON t.emp_key = b.emp_key AND t.jour = b.jour
     LEFT JOIN maladie mal ON mal.emp_key = b.emp_key AND mal.jour = b.jour
+    LEFT JOIN plan s ON s.emp_key = b.emp_key AND s.jour = b.jour
 ),
 c AS (
     SELECT g.*,
-        CASE WHEN g.n IS NULL THEN CASE WHEN g.jour_ouvre
+        -- Poste planifié (horaires postés) : le planning remplace l'horaire de bureau et les jours ouvrés.
+        CASE WHEN g.poste_type = 'conge' THEN COALESCE(g.conge, 'CONGE_ANNUEL')
+             WHEN g.poste_type = 'formation' THEN 'FORMATION'
+             WHEN g.poste_type = 'ferie' THEN 'NON_OUVRE'
+             WHEN g.poste_type = 'repos' THEN 'REPOS'
+             WHEN g.poste_type = 'travail' THEN
+                 CASE WHEN g.n IS NULL THEN COALESCE(CASE WHEN g.maladie THEN 'ARRET_MALADIE' END, g.conge, g.tele, 'ABSENT')
+                      WHEN g.n < 2 THEN 'INCOMPLET'
+                      WHEN g.p1 >= g.s_debut + g.tolerance THEN 'RETARD'
+                      ELSE 'A_L_HEURE' END
+             WHEN g.n IS NULL THEN CASE WHEN g.jour_ouvre
                                           THEN COALESCE(CASE WHEN g.maladie THEN 'ARRET_MALADIE' END, g.conge, g.tele,
                                                         CASE WHEN g.terrain THEN 'TERRAIN' END, 'ABSENT')
                                      ELSE COALESCE(g.tele, 'NON_OUVRE') END  -- le télétravail vaut aussi les jours non ouvrés
@@ -604,13 +647,21 @@ c AS (
              WHEN g.n < 2 THEN 'INCOMPLET'
              WHEN g.p1::time >= g.seuil_retard THEN 'RETARD'
              ELSE 'A_L_HEURE' END AS statut,
-        CASE WHEN g.n >= 2 THEN
+        CASE WHEN g.n >= 2 AND g.poste_type IS NOT NULL THEN g.s_pause
+             WHEN g.n >= 2 THEN
             CASE WHEN g.p1::time < g.debut_pause AND g.p2::time > g.fin_pause THEN g.duree_pause
                  ELSE interval '0' END
         END AS pause,
-        CASE WHEN g.n >= 2 THEN CASE WHEN g.p1::time < g.seuil_retard THEN g.debut_journee ELSE g.p1::time END END
-            AS debut_valide,
-        CASE WHEN g.n >= 2 THEN LEAST(g.p2::time, g.fin_journee) END AS fin_validee
+        CASE WHEN g.n >= 2 AND g.poste_type = 'travail' THEN
+                 (CASE WHEN g.p1 < g.s_debut + g.tolerance THEN g.s_debut ELSE g.p1 END)::time
+             WHEN g.n >= 2 AND g.poste_type IS NULL THEN
+                 CASE WHEN g.p1::time < g.seuil_retard THEN g.debut_journee ELSE g.p1::time END END AS debut_valide,
+        CASE WHEN g.n >= 2 AND g.poste_type = 'travail' THEN LEAST(g.p2, g.s_fin)::time
+             WHEN g.n >= 2 AND g.poste_type IS NULL THEN LEAST(g.p2::time, g.fin_journee) END AS fin_validee,
+        -- Poste planifié : durée validée entre le début du poste (ou l'arrivée tardive) et sa fin (ou le départ anticipé).
+        CASE WHEN g.n >= 2 AND g.poste_type = 'travail' THEN GREATEST(
+                 (LEAST(g.p2, g.s_fin) - CASE WHEN g.p1 < g.s_debut + g.tolerance THEN g.s_debut ELSE g.p1 END) - g.s_pause,
+                 interval '0') END AS hv_poste
     FROM g
 )
 SELECT c.emp_key, COALESCE(c.matricule, c.emp_key), COALESCE(c.nom, 'Hors liste'), c.prenom, c.service,
@@ -618,11 +669,18 @@ SELECT c.emp_key, COALESCE(c.matricule, c.emp_key), COALESCE(c.nom, 'Hors liste'
        c.debut_valide, c.fin_validee, c.pause, v.hv, v.de,
        round((extract(epoch FROM v.hv) / 60)::numeric, 2), round((extract(epoch FROM v.de) / 60)::numeric, 2),
        c.hors_liste, c.terrain,
-       CASE WHEN c.statut = 'RETARD' THEN round((extract(epoch FROM c.p1::time - c.debut_journee) / 60)::numeric, 0) END,
-       c.categorie
+       CASE WHEN c.statut = 'RETARD' AND c.poste_type = 'travail'
+                THEN round((extract(epoch FROM c.p1 - c.s_debut) / 60)::numeric, 0)
+            WHEN c.statut = 'RETARD' THEN round((extract(epoch FROM c.p1::time - c.debut_journee) / 60)::numeric, 0) END,
+       c.categorie,
+       CASE WHEN c.poste_type = 'travail'
+                 THEN c.poste_code || ' · ' || to_char(c.s_debut, 'HH24"h"MI') || '–' || to_char(c.s_fin, 'HH24"h"MI')
+            WHEN c.poste_code IS NOT NULL THEN c.poste_code || ' · ' || c.poste_libelle END
 FROM c
 CROSS JOIN LATERAL (
-    SELECT CASE WHEN c.statut IN ('CONGE_ANNUEL', 'CONGE_EXCEP') THEN c.duree_conge
+    SELECT CASE WHEN c.poste_type = 'travail' AND c.statut IN ('A_L_HEURE', 'RETARD') THEN c.hv_poste
+                WHEN c.poste_type IN ('formation', 'ferie', 'repos') THEN nullif(c.s_duree, interval '0')
+                WHEN c.statut IN ('CONGE_ANNUEL', 'CONGE_EXCEP') THEN c.duree_conge
                 WHEN c.statut = 'TELETRAVAIL' THEN c.duree_teletravail
                 WHEN c.statut = 'ARRET_MALADIE' THEN c.duree_maladie
                 -- Agent terrain : au moins la durée prévue, davantage si ses pointages le justifient.
@@ -632,7 +690,8 @@ CROSS JOIN LATERAL (
            CASE WHEN c.statut IN ('CONGE_ANNUEL', 'CONGE_EXCEP') THEN c.duree_conge
                 WHEN c.statut = 'TELETRAVAIL' THEN c.duree_teletravail
                 WHEN c.statut = 'ARRET_MALADIE' THEN c.duree_maladie
-                WHEN c.n >= 2 THEN GREATEST((c.p2 - c.p1) - c.pause, interval '0') END AS de
+                WHEN c.statut = 'FORMATION' AND c.n IS NULL THEN nullif(c.s_duree, interval '0')
+                WHEN c.n >= 2 THEN GREATEST((c.p2 - c.p1) - COALESCE(c.pause, interval '0'), interval '0') END AS de
 ) v
 WHERE c.statut IS NOT NULL
 $fn$"""
@@ -658,6 +717,27 @@ $fn$"""
     modifie_le timestamptz NOT NULL DEFAULT now(),
     UNIQUE (type, valeur)
 )""",
+        "postes_table": f"""CREATE TABLE IF NOT EXISTS {S}.pointage_postes (
+    code text PRIMARY KEY,
+    libelle text NOT NULL,
+    type text NOT NULL CHECK (type IN ('travail', 'repos', 'conge', 'formation', 'ferie')),
+    debut time,
+    fin time,
+    pause interval NOT NULL DEFAULT interval '0',
+    duree interval,
+    auteur text,
+    modifie_le timestamptz NOT NULL DEFAULT now(),
+    CHECK (type <> 'travail' OR (debut IS NOT NULL AND fin IS NOT NULL))
+)""",
+        "planning_table": f"""CREATE TABLE IF NOT EXISTS {S}.pointage_planning (
+    matricule text NOT NULL,
+    jour date NOT NULL,
+    code text NOT NULL,
+    auteur text,
+    modifie_le timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (matricule, jour)
+)""",
+        "planning_index": f"CREATE INDEX IF NOT EXISTS pointage_planning_jour ON {S}.pointage_planning (jour)",
         "holidays_table": f"""CREATE TABLE IF NOT EXISTS {S}.pointage_jours_feries (
     jour date PRIMARY KEY,
     libelle text,
@@ -739,7 +819,8 @@ def install(engine: Engine, m: Mapping, author: str) -> None:
                                    f"({qi(m.punch_ts_col)})"))
             except Exception:
                 pass
-        for key in ("schema", "params_table", "params_index", "holidays_table", "field_table", "sick_table", "drop_view", "drop_raw_view",
+        for key in ("schema", "params_table", "params_index", "holidays_table", "field_table", "sick_table",
+                    "postes_table", "planning_table", "planning_index", "drop_view", "drop_raw_view",
                     "drop_function", "drop_team_function", "drop_employees_view", "employees_view",
                     "team_function", "function", "view", "raw_view", "comment"):
             c.execute(text(sql[key]))
@@ -748,6 +829,11 @@ def install(engine: Engine, m: Mapping, author: str) -> None:
                 f"INSERT INTO {S}.pointage_parametres (cle, valeur, date_effet, auteur) "
                 f"SELECT :k, :v, DATE '2000-01-01', :a WHERE NOT EXISTS "
                 f"(SELECT 1 FROM {S}.pointage_parametres WHERE cle = :k)"), {"k": key, "v": default, "a": author})
+        if not c.execute(text(f"SELECT 1 FROM {S}.pointage_postes LIMIT 1")).first():
+            for poste in DEFAULT_POSTES:  # codes du planning des agents postés (modifiables dans l'administration)
+                c.execute(text(f"INSERT INTO {S}.pointage_postes (code, libelle, type, debut, fin, duree, auteur) "
+                               f"VALUES (:code, :libelle, :type, CAST(:debut AS time), CAST(:fin AS time), "
+                               f"CAST(:duree AS interval), :a)"), {**poste, "a": author})
         # Contrôle : la fonction doit s'exécuter sur les données réelles (conversion des dates, etc.).
         try:
             c.execute(text(f"SELECT count(*) FROM {S}.f_pointage_journalier(current_date - 31, current_date)"))
@@ -1047,6 +1133,310 @@ def delete_field(engine: Engine, m: Mapping, entry_id: int) -> Optional[tuple[st
                          {"i": entry_id}).first()
 
 
+# --------------------------------------------------------------------------- horaires postés (planning)
+
+POSTE_TYPES = {
+    "travail": "Poste de travail (horaire)",
+    "repos": "Repos",
+    "conge": "Congé",
+    "formation": "Formation",
+    "ferie": "Férié payé",
+}
+# Codes du planning des Agents Techniques Fabrication (légende du fichier « PLANNING ATF »).
+DEFAULT_POSTES = [
+    {"code": "P1", "libelle": "Matin", "type": "travail", "debut": "06:00", "fin": "14:00", "duree": None},
+    {"code": "P2", "libelle": "Après-midi", "type": "travail", "debut": "14:00", "fin": "22:00", "duree": None},
+    {"code": "P3", "libelle": "Nuit", "type": "travail", "debut": "22:00", "fin": "06:00", "duree": None},
+    {"code": "0618", "libelle": "Jour 12 h", "type": "travail", "debut": "06:00", "fin": "18:00", "duree": None},
+    {"code": "1806", "libelle": "Nuit 12 h", "type": "travail", "debut": "18:00", "fin": "06:00", "duree": None},
+    {"code": "P4", "libelle": "Repos", "type": "repos", "debut": None, "fin": None, "duree": None},
+    {"code": "P5", "libelle": "Astreinte", "type": "repos", "debut": None, "fin": None, "duree": None},
+    {"code": "P6", "libelle": "Férié payé", "type": "ferie", "debut": None, "fin": None, "duree": "08:00"},
+    {"code": "P8", "libelle": "Formation", "type": "formation", "debut": None, "fin": None, "duree": "08:00"},
+    {"code": "P11", "libelle": "Congés", "type": "conge", "debut": None, "fin": None, "duree": None},
+]
+_POSTE_KEYWORDS = [("repos", "repos"), ("conge", "conge"), ("formation", "formation"), ("ferie", "ferie"),
+                   ("astreinte", "repos")]
+
+
+def clean_code(value) -> str:
+    """Code de poste lu dans une cellule : « P1 », « 0618 » (Excel a pu le transformer en nombre 618)."""
+    if value is None:
+        return ""
+    if isinstance(value, float) and value.is_integer():
+        value = int(value)
+    return re.sub(r"\s+", "", str(value)).upper()[:20]
+
+
+def _as_clock(value) -> Optional[time]:
+    """Heure lue dans une cellule Excel (heure, date-heure, fraction de jour ou texte « 06:00 », « 6h »)."""
+    if isinstance(value, datetime):
+        return value.time().replace(second=0, microsecond=0)
+    if isinstance(value, time):
+        return value.replace(second=0, microsecond=0)
+    if isinstance(value, (int, float)) and not isinstance(value, bool) and 0 <= value < 1:
+        minutes = round(value * 1440) % 1440
+        return time(minutes // 60, minutes % 60)
+    m = re.fullmatch(r"\s*(\d{1,2})\s*[:hH]\s*(\d{2})?\s*", str(value or ""))
+    if m and int(m.group(1)) < 24:
+        return time(int(m.group(1)), int(m.group(2) or 0))
+    return None
+
+
+def _as_day(value) -> Optional[date]:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    m = re.fullmatch(r"\s*(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})\s*", str(value or ""))
+    if m:
+        try:
+            return date(int(m.group(3)), int(m.group(2)), int(m.group(1)))
+        except ValueError:
+            return None
+    return None
+
+
+def parse_planning(rows: list[list]) -> dict:
+    """Lit une feuille de planning : légende des codes (blocs « Code / Heure Début / Heure Fin »), ligne « MATRICULE »
+    (une colonne par employé), ligne « NOM » facultative, puis une ligne par jour (date en 1re colonne) avec le code
+    du poste de chaque employé. Lève PointageError si la structure n'est pas reconnue."""
+    def cell(r: int, c: int):
+        return rows[r][c] if r < len(rows) and c < len(rows[r]) else None
+
+    def label(v) -> str:
+        return norm(str(v)) if isinstance(v, str) else ""
+
+    mat_pos = next(((r, c) for r in range(min(len(rows), 300)) for c in range(min(len(rows[r]), 5))
+                    if label(cell(r, c)) == "matricule"), None)
+    if mat_pos is None:
+        raise PointageError("Ligne « MATRICULE » introuvable : le planning doit avoir une ligne « MATRICULE » "
+                            "(un matricule par colonne) puis une ligne par jour.")
+    r0, c0 = mat_pos
+    columns = {c: clean_matricule(cell(r0, c)) for c in range(c0 + 1, len(rows[r0])) if clean_matricule(cell(r0, c))}
+    if not columns:
+        raise PointageError("Aucun matricule sur la ligne « MATRICULE ».")
+    names = {}
+    for r in range(r0 + 1, min(r0 + 4, len(rows))):
+        if label(cell(r, c0)) in ("nom", "noms", "nom et prenom", "nom prenom"):
+            names = {mat: re.sub(r"\s+", " ", str(cell(r, c) or "")).strip() for c, mat in columns.items()}
+    entries, empty = [], 0
+    for r in range(r0 + 1, len(rows)):
+        day = _as_day(cell(r, c0))
+        if day is None:
+            continue
+        for c, mat in columns.items():
+            code = clean_code(cell(r, c))
+            if code:
+                entries.append((mat, day, code))
+            else:
+                empty += 1
+    if not entries:
+        raise PointageError("Aucun jour trouvé sous la ligne « MATRICULE » (une date par ligne en première colonne).")
+    legend: dict[str, dict] = {}
+    for r in range(r0):
+        for c in range(len(rows[r])):
+            if label(cell(r, c)) != "code":
+                continue
+            for rr in range(r + 1, r0):
+                code, a, b = clean_code(cell(rr, c)), cell(rr, c + 1), cell(rr, c + 2)
+                if not code:
+                    break
+                if code in legend or (a is None and b is None):
+                    continue
+                start, end = _as_clock(a), _as_clock(b)
+                if start and end:
+                    legend[code] = {"code": code, "type": "travail", "debut": start.strftime("%H:%M"),
+                                    "fin": end.strftime("%H:%M"), "duree": None,
+                                    "libelle": f"Poste {start.strftime('%Hh%M')}–{end.strftime('%Hh%M')}"}
+                elif isinstance(a, str) and a.strip():
+                    text_value = norm(a)
+                    kind = next((k for word, k in _POSTE_KEYWORDS if word in text_value), "repos")
+                    legend[code] = {"code": code, "type": kind, "debut": None, "fin": None,
+                                    "duree": "08:00" if kind in ("formation", "ferie") else None,
+                                    "libelle": a.strip().capitalize()[:80]}
+    days = sorted({d for _, d, _ in entries})
+    return {"entries": entries, "names": names, "legend": list(legend.values()), "matricules": list(columns.values()),
+            "du": days[0], "au": days[-1], "vides": empty}
+
+
+def read_planning_file(name: str, data: bytes) -> dict:
+    """Planning d'un classeur Excel : première feuille qui contient une ligne « MATRICULE »."""
+    import io
+
+    from openpyxl import load_workbook
+
+    if not (name or "").lower().endswith((".xlsx", ".xlsm")):
+        raise PointageError("Choisissez le planning au format Excel (.xlsx).")
+    try:
+        wb = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+    except Exception as exc:  # noqa: BLE001
+        raise PointageError("Fichier Excel illisible (enregistrez-le au format .xlsx).") from exc
+    first_error = None
+    for ws in wb.worksheets:
+        rows = [list(r) for r in ws.iter_rows(max_row=2000, max_col=400, values_only=True)]
+        try:
+            result = parse_planning(rows)
+            result["feuille"] = ws.title
+            return result
+        except PointageError as exc:
+            first_error = first_error or exc
+    raise first_error or PointageError("Le classeur est vide.")
+
+
+def postes(engine: Engine, m: Mapping) -> list[dict]:
+    """Codes de poste, avec le nombre de jours planifiés qui les utilisent."""
+    S = qi(m.objs)
+    with engine.connect() as c:
+        return [dict(r) for r in c.execute(text(
+            f"SELECT po.*, (SELECT count(*) FROM {S}.pointage_planning pp WHERE pp.code = po.code) AS utilise "
+            f"FROM {S}.pointage_postes po ORDER BY po.type <> 'travail', po.debut NULLS LAST, po.code")).mappings()]
+
+
+def _poste_values(code: str, libelle: str, kind: str, debut: str, fin: str, pause: str, duree: str) -> dict:
+    code = clean_code(code)
+    if not re.fullmatch(r"[A-Z0-9_-]{1,20}", code):
+        raise PointageError("Code de poste invalide : lettres, chiffres, tiret (20 caractères maximum).")
+    if kind not in POSTE_TYPES:
+        raise PointageError("Type de poste inconnu.")
+    values = {"code": code, "libelle": (libelle or "").strip()[:80] or code, "type": kind,
+              "debut": None, "fin": None, "pause": "00:00", "duree": None}
+    if kind == "travail":
+        start, end = _as_clock(debut), _as_clock(fin)
+        if not (start and end) or start == end:
+            raise PointageError("Un poste de travail a une heure de début et une heure de fin différentes (HH:MM).")
+        values.update(debut=start.strftime("%H:%M"), fin=end.strftime("%H:%M"))
+        if (pause or "").strip():
+            values["pause"] = validate_param("duree_pause_deduite", pause)
+    elif (duree or "").strip():
+        values["duree"] = validate_param("duree_conge", duree)
+    return values
+
+
+def save_poste(engine: Engine, m: Mapping, author: str, code: str, libelle: str, kind: str, debut: str = "",
+               fin: str = "", pause: str = "", duree: str = "") -> str:
+    values = _poste_values(code, libelle, kind, debut, fin, pause, duree)
+    with engine.begin() as c:
+        c.execute(text(
+            f"INSERT INTO {qi(m.objs)}.pointage_postes (code, libelle, type, debut, fin, pause, duree, auteur) "
+            f"VALUES (:code, :libelle, :type, CAST(:debut AS time), CAST(:fin AS time), CAST(:pause AS interval), "
+            f"CAST(:duree AS interval), :a) "
+            f"ON CONFLICT (code) DO UPDATE SET libelle = EXCLUDED.libelle, type = EXCLUDED.type, debut = EXCLUDED.debut, "
+            f"fin = EXCLUDED.fin, pause = EXCLUDED.pause, duree = EXCLUDED.duree, auteur = EXCLUDED.auteur, "
+            f"modifie_le = now()"), {**values, "a": author})
+    return values["code"]
+
+
+def delete_poste(engine: Engine, m: Mapping, code: str) -> None:
+    S = qi(m.objs)
+    with engine.begin() as c:
+        used = c.execute(text(f"SELECT count(*) FROM {S}.pointage_planning WHERE code = :c"), {"c": code}).scalar()
+        if used:
+            raise PointageError(f"Le code « {code} » est utilisé par {used} jour(s) du planning : "
+                                f"supprimez ou réimportez ces jours d'abord.")
+        c.execute(text(f"DELETE FROM {S}.pointage_postes WHERE code = :c"), {"c": code})
+
+
+def import_planning(engine: Engine, m: Mapping, plan: dict, author: str) -> dict:
+    """Enregistre un planning lu par parse_planning. Les codes de la légende absents de l'application sont créés
+    (les codes existants ne sont pas modifiés) ; « 618 » est reconnu comme « 0618 ». Chaque (matricule, jour) du
+    fichier remplace l'éventuelle valeur précédente. Matricules et codes inconnus sont ignorés et signalés."""
+    S = qi(m.objs)
+    with engine.begin() as c:
+        known = {code for (code,) in c.execute(text(f"SELECT code FROM {S}.pointage_postes"))}
+        created = []
+        for poste in plan["legend"]:
+            if poste["code"] not in known:
+                c.execute(text(f"INSERT INTO {S}.pointage_postes (code, libelle, type, debut, fin, duree, auteur) "
+                               f"VALUES (:code, :libelle, :type, CAST(:debut AS time), CAST(:fin AS time), "
+                               f"CAST(:duree AS interval), :a)"),
+                          {**poste, "a": author})
+                known.add(poste["code"])
+                created.append(poste["code"])
+        mats = sorted({mat for mat, _, _ in plan["entries"]})
+        found = {}
+        for matricule, key in c.execute(text(
+                f"SELECT matricule, emp_key FROM {S}.v_pointage_employes WHERE matricule IN :m OR emp_key IN :m")
+                .bindparams(bindparam("m", expanding=True)), {"m": mats}):
+            for ref in (matricule, key):
+                if ref in mats and ref not in found:
+                    found[ref] = matricule or key
+        unknown_codes: dict[str, int] = {}
+        rows = {}
+        for mat, day, code in plan["entries"]:
+            if code not in known and code.isdigit() and code.zfill(4) in known:
+                code = code.zfill(4)
+            if code not in known:
+                unknown_codes[code] = unknown_codes.get(code, 0) + 1
+                continue
+            if mat in found:
+                rows[(found[mat], day)] = code
+        for (mat, day), code in rows.items():
+            c.execute(text(
+                f"INSERT INTO {S}.pointage_planning (matricule, jour, code, auteur) VALUES (:m, :j, :c, :a) "
+                f"ON CONFLICT (matricule, jour) DO UPDATE SET code = EXCLUDED.code, auteur = EXCLUDED.auteur, "
+                f"modifie_le = now()"), {"m": mat, "j": day, "c": code, "a": author})
+    return {"jours": len(rows), "employes": len({mat for mat, _ in rows}), "du": plan["du"], "au": plan["au"],
+            "codes_crees": created, "codes_inconnus": unknown_codes,
+            "matricules_inconnus": [mat for mat in mats if mat not in found]}
+
+
+def planning_grid(engine: Engine, m: Mapping, du: date, au: date) -> dict:
+    """Planning de la période : une ligne par employé planifié, une colonne par jour."""
+    S = qi(m.objs)
+    with engine.connect() as c:
+        cells = c.execute(text(
+            f"SELECT pp.matricule, pp.jour, pp.code, po.type FROM {S}.pointage_planning pp "
+            f"LEFT JOIN {S}.pointage_postes po ON po.code = pp.code WHERE pp.jour BETWEEN :du AND :au"),
+            {"du": du, "au": au}).all()
+        mats = sorted({r[0] for r in cells})
+        people = {}
+        if mats:
+            for mat, key, nom, prenom, service in c.execute(text(
+                    f"SELECT matricule, emp_key, nom, prenom, service FROM {S}.v_pointage_employes "
+                    f"WHERE matricule IN :m OR emp_key IN :m").bindparams(bindparam("m", expanding=True)), {"m": mats}):
+                for ref in (mat, key):
+                    people.setdefault(ref, {"nom": " ".join(x for x in (nom, prenom) if x), "service": service})
+        bounds = c.execute(text(f"SELECT min(jour), max(jour), count(DISTINCT matricule) FROM {S}.pointage_planning")).one()
+    grid: dict[str, dict] = {}
+    for mat, day, code, kind in cells:
+        grid.setdefault(mat, {})[day] = (code, kind or "inconnu")
+    employees = sorted(({"matricule": mat, **people.get(mat, {"nom": "(introuvable)", "service": None})} for mat in mats),
+                       key=lambda e: (e["nom"] or "").lower())
+    days = [du + timedelta(days=i) for i in range((au - du).days + 1)]
+    return {"employes": employees, "jours": days, "grille": grid,
+            "premier": bounds[0], "dernier": bounds[1], "planifies": bounds[2]}
+
+
+def delete_planning(engine: Engine, m: Mapping, du: date, au: date, matricule: str = "") -> int:
+    S = qi(m.objs)
+    extra = " AND matricule = :m" if matricule else ""
+    with engine.begin() as c:
+        return c.execute(text(f"DELETE FROM {S}.pointage_planning WHERE jour BETWEEN :du AND :au{extra}"),
+                         {"du": du, "au": au, "m": matricule}).rowcount
+
+
+def planned_window(engine: Engine, m: Mapping, emp_key: str, day: date) -> Optional[tuple[datetime, datetime]]:
+    """Période des pointages rattachés à un poste planifié ce jour-là (poste ± marge), ou None."""
+    S = qi(m.objs)
+    with engine.connect() as c:
+        row = c.execute(text(
+            f"SELECT CAST(:j AS date) + po.debut, CAST(:j AS date) + po.fin + CASE WHEN po.fin <= po.debut "
+            f"THEN interval '1 day' ELSE interval '0' END FROM {S}.pointage_planning pp "
+            f"JOIN {S}.pointage_postes po ON po.code = pp.code AND po.type = 'travail' "
+            f"JOIN {S}.v_pointage_employes e ON pp.matricule IN (e.matricule, e.emp_key) "
+            f"WHERE e.emp_key = :k AND pp.jour = :j LIMIT 1"), {"k": emp_key, "j": day}).first()
+    if not row:
+        return None
+    marge = timedelta(hours=4)
+    try:
+        h, mi = params_at(engine, m, day)["marge_poste"].split(":")
+        marge = timedelta(hours=int(h), minutes=int(mi))
+    except Exception:  # noqa: BLE001
+        pass
+    return row[0] - marge, row[1] + marge
+
+
 # --------------------------------------------------------------------------- écran de suivi
 
 
@@ -1130,14 +1520,16 @@ def daily(engine: Engine, m: Mapping, f: Filters, page: int = 1, size: int = 100
         count(*) FILTER (WHERE statut = 'TELETRAVAIL') AS teletravail,
         count(*) FILTER (WHERE statut = 'TERRAIN') AS terrain,
         count(*) FILTER (WHERE statut = 'ARRET_MALADIE') AS maladies,
+        count(*) FILTER (WHERE statut = 'REPOS') AS repos,
+        count(*) FILTER (WHERE statut = 'FORMATION') AS formations,
         count(DISTINCT emp_key) FILTER (WHERE hors_liste) AS hors_liste,
-        avg(duree_validee) FILTER (WHERE statut NOT IN ('CONGE_ANNUEL', 'CONGE_EXCEP', 'TELETRAVAIL', 'TERRAIN', 'ARRET_MALADIE')) AS moy_validee,
+        avg(duree_validee) FILTER (WHERE statut NOT IN ('CONGE_ANNUEL', 'CONGE_EXCEP', 'TELETRAVAIL', 'TERRAIN', 'ARRET_MALADIE', 'FORMATION', 'REPOS')) AS moy_validee,
         -- Heures moyennes de premier et de dernier pointage des personnes venues au bureau.
         time '00:00' + avg(premier_pointage::time - time '00:00')
-            FILTER (WHERE statut IN ('A_L_HEURE', 'RETARD', 'INCOMPLET')) AS moy_premier,
+            FILTER (WHERE statut IN ('A_L_HEURE', 'RETARD', 'INCOMPLET') AND poste IS NULL) AS moy_premier,
         time '00:00' + avg(dernier_pointage::time - time '00:00')
-            FILTER (WHERE statut IN ('A_L_HEURE', 'RETARD') AND nb_pointages >= 2) AS moy_dernier,
-        avg(duree_effective) FILTER (WHERE statut NOT IN ('CONGE_ANNUEL', 'CONGE_EXCEP', 'TELETRAVAIL', 'TERRAIN', 'ARRET_MALADIE')) AS moy_effective,
+            FILTER (WHERE statut IN ('A_L_HEURE', 'RETARD') AND nb_pointages >= 2 AND poste IS NULL) AS moy_dernier,
+        avg(duree_effective) FILTER (WHERE statut NOT IN ('CONGE_ANNUEL', 'CONGE_EXCEP', 'TELETRAVAIL', 'TERRAIN', 'ARRET_MALADIE', 'FORMATION', 'REPOS')) AS moy_effective,
         count(DISTINCT emp_key) AS employes
         FROM {source}{where}""").bindparams(*binds)
     rows_sql = text(f"SELECT * FROM {source}{where}{_order(f)} LIMIT :lim OFFSET :off").bindparams(*binds)
@@ -1250,8 +1642,15 @@ def detail(engine: Engine, m: Mapping, emp_key: str, day: date) -> tuple[list[st
     pkey = _as_text(f"p.{qi(m.punch_emp_col)}", punch_types.get(m.punch_emp_col, ""))
     sql = text(f"SELECT {ts} AS horodatage, p.* FROM {qt(m.schema, m.punch_table)} p "
                f"WHERE {pkey} = :k AND {ts} >= :d AND {ts} < :d2 ORDER BY 1")
+    start, end = datetime.combine(day, time()), datetime.combine(day + timedelta(days=1), time())
+    try:  # poste planifié (ex. de nuit) : ses pointages peuvent déborder sur le lendemain
+        window = planned_window(engine, m, emp_key, day)
+    except Exception:  # noqa: BLE001
+        window = None
+    if window:
+        start, end = window[0], window[1]
     with engine.connect() as c:
-        result = c.execute(sql, {"k": emp_key, "d": day, "d2": day + timedelta(days=1)})
+        result = c.execute(sql, {"k": emp_key, "d": start, "d2": end})
         return list(result.keys()), result.all()
 
 

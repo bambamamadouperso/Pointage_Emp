@@ -779,3 +779,33 @@ textarea.plain { font: inherit; font-size: .9rem; resize: vertical; }
 .wf-step select { width: auto; flex: 1 1 200px; }
 .wf-tools { display: flex; gap: .1rem; margin-left: auto; }
 .wf-tools .icon-btn { width: 30px; height: 30px; font-size: 1rem; color: var(--muted); }
+
+/* ---------------------------------------------------------------- horaires postés */
+:root { --train: #6d28d9; --train-bg: #ede9fe; --train-solid: #8b5cf6; }
+@media (prefers-color-scheme: dark) { :root { --train: #c4b5fd; --train-bg: #2a2140; } }
+.badge.st-train { background: var(--train-bg); color: var(--train); border-color: transparent; }
+.chip-check.st-train { background: var(--train-bg); color: var(--train); }
+.dot.st-train { background: var(--train-solid); }
+table.suivi tr.st-train td:first-child { border-left-color: var(--train-solid); }
+.poste-tag { display: inline-block; margin-top: 2px; font-size: .72rem; color: var(--muted); white-space: nowrap; }
+.poste-tag::before { content: "⏱ "; opacity: .7; }
+
+.planning-wrap { overflow: auto; max-height: 70vh; border: 1px solid var(--border); border-radius: 10px; }
+table.planning { border-collapse: separate; border-spacing: 0; font-size: .78rem; width: max-content; min-width: 100%; }
+table.planning th, table.planning td { padding: 4px 6px; border-bottom: 1px solid var(--border); text-align: center; white-space: nowrap; }
+table.planning thead th { position: sticky; top: 0; background: var(--surface); z-index: 2; font-weight: 600; }
+table.planning th.pl-who, table.planning td.pl-who { position: sticky; left: 0; background: var(--surface); text-align: left; z-index: 1; min-width: 190px; }
+table.planning thead th.pl-who { z-index: 3; }
+table.planning th.we { color: var(--muted); background: color-mix(in srgb, var(--sky-bg) 50%, var(--surface)); }
+table.planning th small { display: block; font-weight: 400; color: var(--muted); }
+.pl { display: inline-block; min-width: 38px; padding: 2px 4px; border-radius: 6px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.pl-travail { background: var(--ok-bg, #dcfce7); color: var(--ok, #166534); }
+.pl-nuit { background: #1e293b; color: #e2e8f0; }
+.pl-repos { background: var(--sky-bg); color: var(--sky); }
+.pl-conge { background: var(--leave-bg, #ecfccb); color: var(--leave, #3f6212); }
+.pl-formation { background: var(--train-bg); color: var(--train); }
+.pl-ferie { background: var(--sky-bg); color: var(--sky); font-style: italic; }
+.pl-inconnu { background: var(--err-bg, #fee2e2); color: var(--err, #991b1b); }
+.legend-row { display: flex; flex-wrap: wrap; gap: .5rem 1rem; margin: .6rem 0 0; font-size: .8rem; color: var(--muted); }
+table.postes input, table.postes select { min-width: 0; width: 100%; }
+table.postes td { vertical-align: middle; }

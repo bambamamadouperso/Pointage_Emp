@@ -914,3 +914,111 @@ def test_sick_leave_workflow_and_hr(configured, pg, logged_client):
             db.query(User).filter(User.username.in_(["moussa", "awa", "rh1", "fatou"])).delete()
             db.commit()
         logged_client.post("/admin/arrets", data={"type": ["responsable", "rh"], "user": ["", ""]})
+
+
+def _planning_xlsx(days: dict) -> bytes:
+    """Planning au format « PLANNING ATF » : légende, ligne MATRICULE, ligne NOM, une ligne par jour."""
+    from datetime import time as t
+
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "PLANNING"
+    ws["C1"] = "VEUILLEZ SAISIR LE CODE DE CHAQUE PLANNING HORAIRE DEVANT LE JOUR DE CHAQUE COLLABORATEUR"
+    for col, value in zip("BCDFGH", ["Code", "Heure Début", "Heure Fin", "Code", "Heure Début", "Heure Fin"]):
+        ws[f"{col}5"] = value
+    legend = [("P1", t(6), t(14), "P5", "ASTREINTE"), ("P2", t(14), t(22), "P6", "FERIE PAYE"),
+              ("P3", t(22), t(6), "P8", "FORMATION"), ("P4", "REPOS", None, "P9", "FORMATION CONTINUE")]
+    for i, (c1, d1, f1, c2, l2) in enumerate(legend, start=6):
+        ws[f"B{i}"], ws[f"C{i}"], ws[f"D{i}"], ws[f"F{i}"], ws[f"G{i}"] = c1, d1, f1, c2, l2
+    ws["J5"], ws["K5"], ws["L5"] = "Code", "Heure Début", "Heure Fin"
+    ws["J6"], ws["K6"], ws["L6"] = "0618", t(6), t(18)
+    ws["J7"], ws["K7"], ws["L7"] = "1806", t(18), t(6)
+    ws.append([])
+    ws.append(["MATRICULE", "E005", "X999"])
+    ws.append(["NOM", "BA KHADY     ", "INCONNU"])
+    ws.append(["DATE"])
+    for day, (code, other) in days.items():
+        ws.append([datetime(day.year, day.month, day.day), code, other])
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def test_shift_planning_import_and_calculations(configured, pg, logged_client):
+    """Horaires postés : nuit 18h-6h rattachée au jour de début, repos, retard sur l'horaire du poste, absence un
+    dimanche planifié, congé du planning ; import du fichier Excel tel quel (618 = 0618, légende, inconnus)."""
+    THU, FRI, SUN, MON2 = date(2026, 9, 24), date(2026, 9, 25), date(2026, 9, 27), date(2026, 9, 28)
+    S = f"{SCHEMA}"
+    punches = [(5, THU, "17:55"), (5, FRI, "06:05"), (5, SAT, "15:00"), (5, SAT, "22:00")]
+    try:
+        with pg.begin() as c:
+            for emp, day, hhmm in punches:
+                c.execute(text(f"INSERT INTO {S}.punchlog (employe_id, date_pointage, heure_pointage, terminal) "
+                               f"VALUES (:e, :d, :h, 'PLAN')"), {"e": emp, "d": day, "h": hhmm.replace(":", "") + "00"})
+        # Codes par défaut installés avec les calculs (légende du planning ATF).
+        page = logged_client.get("/admin/planning")
+        assert page.status_code == 200 and "1806" in page.text and "Aucun planning" in page.text
+
+        data = _planning_xlsx({THU: (1806, "P1"), FRI: ("P4", "P1"), SAT: ("P2", "P1"), SUN: ("P1", None),
+                               MON2: ("P11", None), date(2026, 9, 29): ("ZZ", None)})
+        r = logged_client.post("/admin/planning/import", files={"fichier": ("PLANNING ATF.xlsx", data)},
+                               follow_redirects=True)
+        assert "importé du 24/09/2026 au 29/09/2026 : 1 employé(s), 5 jour(s)" in r.text, r.text[:3000]
+        assert "P9" in r.text and "Nouveaux codes" in r.text          # code de la légende créé
+        assert "« ZZ » (1 j)" in r.text and "X999" in r.text           # code et matricule inconnus signalés
+        assert "BA" in r.text.upper() and 'pl pl-nuit">1806' in r.text
+
+        got = rows(pg, THU, MON2)
+        night = got[("E005", THU)]
+        assert night.statut == "A_L_HEURE" and night.nb_pointages == 2 and night.poste == "1806 · 18h00–06h00"
+        assert hm(night.premier_pointage) == "17h55" and night.dernier_pointage.date() == FRI
+        assert hm(night.duree_validee) == "12h00" and hm(night.duree_effective) == "12h10"
+        rest = got[("E005", FRI)]
+        assert rest.statut == "REPOS" and rest.nb_pointages == 0 and not rest.jour_ouvre
+        late = got[("E005", SAT)]  # 15h00 pour un poste de 14h (tolérance 45 min) : retard de 60 min
+        assert late.statut == "RETARD" and late.retard_min == 60 and hm(late.duree_validee) == "7h00" and late.jour_ouvre
+        assert got[("E005", SUN)].statut == "ABSENT" and got[("E005", SUN)].jour_ouvre
+        leave = got[("E005", MON2)]
+        assert leave.statut == "CONGE_ANNUEL" and hm(leave.duree_validee) == "8h00"
+        assert got[("E004", SUN)].statut == "NON_OUVRE" and got[("E004", SUN)].poste is None  # non planifié : bureau
+
+        # Détail de la nuit : le départ du lendemain est affiché ; suivi et rapports affichent le poste.
+        detail = logged_client.get(f"/suivi/detail?key=5&jour={THU.isoformat()}").text
+        assert "17:55" in detail and "06:05" in detail
+        page = logged_client.get(f"/suivi?du={THU.isoformat()}&au={SAT.isoformat()}&q=E005").text
+        assert "1806 · 18h00–06h00" in page and "+1 j" in page and "Repos (planning)" in page
+        assert logged_client.get(f"/rapports?du={THU.isoformat()}&au={MON2.isoformat()}").status_code == 200
+
+        # Codes de poste : modification, refus de suppression d'un code utilisé, export réimportable.
+        r = logged_client.post("/admin/planning/postes", data={"code": "p7", "libelle": "Journée", "type": "travail",
+                                                               "debut": "08:00", "fin": "08:00"}, follow_redirects=True)
+        assert "heure de début et une heure de fin différentes" in r.text
+        r = logged_client.post("/admin/planning/postes", data={"code": "p7", "libelle": "Journée", "type": "travail",
+                                                               "debut": "08:00", "fin": "16:30", "pause": "0h30"},
+                               follow_redirects=True)
+        assert "Code « P7 » enregistré" in r.text
+        assert "utilisé par" in logged_client.post("/admin/planning/postes/P4/delete", follow_redirects=True).text
+        assert "Code « P7 » supprimé" in logged_client.post("/admin/planning/postes/P7/delete", follow_redirects=True).text
+        export = logged_client.get(f"/admin/planning/export.xlsx?du={THU.isoformat()}&au={MON2.isoformat()}")
+        plan = pointage.read_planning_file("x.xlsx", export.content)
+        assert ("E005", THU, "1806") in plan["entries"] and ("E005", FRI, "P4") in plan["entries"]
+
+        # Suppression : les jours reviennent à l'horaire de bureau.
+        r = logged_client.post("/admin/planning/supprimer", data={"du": THU.isoformat(), "au": MON2.isoformat()},
+                               follow_redirects=True)
+        assert "5 jour(s) planifié(s) supprimé(s)" in r.text
+        assert rows(pg, FRI)[("E005", FRI)].statut != "REPOS"
+    finally:
+        with pg.begin() as c:
+            c.execute(text(f"DELETE FROM {S}.punchlog WHERE terminal = 'PLAN'"))
+            c.execute(text(f"DELETE FROM {S}.pointage_planning"))
+            c.execute(text(f"DELETE FROM {S}.pointage_postes WHERE code IN ('P9', 'P7')"))
+
+
+def test_parse_planning_rejects_unknown_layout():
+    with pytest.raises(pointage.PointageError, match="MATRICULE"):
+        pointage.parse_planning([["a", "b"], [1, 2]])
+    plan = pointage.parse_planning([["MATRICULE", 590128.0], ["NOM", "KARAMOKO"], ["19/08/2026", 618]])
+    assert plan["entries"] == [("590128", date(2026, 8, 19), "618")] and plan["names"] == {"590128": "KARAMOKO"}

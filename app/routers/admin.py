@@ -486,6 +486,186 @@ def field_delete(request: Request, entry_id: int, db: Session = Depends(get_db))
     return redirect("/admin/terrain")
 
 
+# --------------------------------------------------------------------------- horaires postés (planning)
+
+
+def _planning_back(du=None, au=None) -> str:
+    return f"/admin/planning?du={du.isoformat()}&au={au.isoformat()}" if du and au else "/admin/planning"
+
+
+@router.get("/planning")
+def planning_page(request: Request, du: str = "", au: str = "", db: Session = Depends(get_db)):
+    cfg, mapping = _mapping_ready(db)
+    context = dict(mapping=mapping, postes=[], grid=None, error=None, types=pointage.POSTE_TYPES,
+                   marge=pointage.PARAM_DEFAULTS["marge_poste"], du=None, au=None, nuit=set())
+    if mapping is not None:
+        engine = make_engine(cfg.conn, **pointage.WEB_LIMITS)
+        try:
+            context["postes"] = pointage.postes(engine, mapping)
+            context["nuit"] = {p["code"] for p in context["postes"] if p["type"] == "travail" and p["fin"] <= p["debut"]}
+            context["marge"] = pointage.params_at(engine, mapping, date.today())["marge_poste"]
+            start, end = pointage.parse_day(du), pointage.parse_day(au)
+            if not (start and end):
+                bounds = pointage.planning_grid(engine, mapping, date.today(), date.today())
+                if bounds["dernier"]:  # par défaut : la dernière période planifiée (5 semaines au plus)
+                    end = bounds["dernier"]
+                    start = max(bounds["premier"], end - timedelta(days=34))
+                else:
+                    start, end = date.today().replace(day=1), date.today()
+            if start > end:
+                start, end = end, start
+            end = min(end, start + timedelta(days=62))
+            context.update(du=start, au=end, grid=pointage.planning_grid(engine, mapping, start, end))
+        except Exception as exc:
+            context["error"] = friendly(exc)
+        finally:
+            engine.dispose()
+    return render(request, "admin/planning.html", **context)
+
+
+@router.post("/planning/import")
+async def planning_import(request: Request, fichier: UploadFile = File(...), db: Session = Depends(get_db)):
+    cfg, mapping = _mapping_ready(db)
+    if mapping is None:
+        return redirect("/admin/pointage")
+    data = await fichier.read(MAX_IMPORT_BYTES + 1)
+    if len(data) > MAX_IMPORT_BYTES:
+        flash(request, "Fichier trop volumineux (5 Mo maximum).", "err")
+        return redirect("/admin/planning")
+    engine = make_engine(cfg.conn, **pointage.WEB_LIMITS)
+    try:
+        plan = pointage.read_planning_file(fichier.filename or "", data)
+        result = pointage.import_planning(engine, mapping, plan, request.session.get("user", ""))
+    except pointage.PointageError as exc:
+        flash(request, str(exc), "err")
+        return redirect("/admin/planning")
+    except Exception as exc:  # noqa: BLE001
+        flash(request, f"Import impossible : {friendly(exc)}", "err")
+        return redirect("/admin/planning")
+    finally:
+        engine.dispose()
+    period = f"du {result['du']:%d/%m/%Y} au {result['au']:%d/%m/%Y}"
+    auth.audit(request, "Planning importé", fichier.filename or "",
+               f"{period} : {result['employes']} employé(s), {result['jours']} jour(s) planifié(s)")
+    flash(request, f"Planning « {fichier.filename} » importé {period} : {result['employes']} employé(s), "
+                   f"{result['jours']} jour(s) planifié(s). Les calculs du suivi en tiennent compte immédiatement.", "ok")
+    if result["codes_crees"]:
+        flash(request, "Nouveaux codes créés depuis la légende du fichier (à vérifier ci-dessous) : "
+                       + ", ".join(result["codes_crees"]) + ".", "warn")
+    if result["codes_inconnus"]:
+        flash(request, "Codes inconnus, jours ignorés : " + ", ".join(
+            f"« {k} » ({n} j)" for k, n in sorted(result["codes_inconnus"].items()))
+            + ". Ajoutez ces codes puis réimportez le fichier.", "warn")
+    if result["matricules_inconnus"]:
+        flash(request, f"{len(result['matricules_inconnus'])} matricule(s) introuvable(s) dans la liste des employés, "
+                       f"ignoré(s) : " + ", ".join(result["matricules_inconnus"][:30]), "warn")
+    return redirect(_planning_back(result["du"], result["au"]))
+
+
+@router.post("/planning/postes")
+def poste_save(request: Request, code: str = Form(...), libelle: str = Form(""), type: str = Form(...),
+               debut: str = Form(""), fin: str = Form(""), pause: str = Form(""), duree: str = Form(""),
+               db: Session = Depends(get_db)):
+    cfg, mapping = _mapping_ready(db)
+    if mapping is None:
+        return redirect("/admin/pointage")
+    engine = make_engine(cfg.conn, **pointage.WEB_LIMITS)
+    try:
+        saved = pointage.save_poste(engine, mapping, request.session.get("user", ""), code, libelle, type,
+                                    debut, fin, pause, duree)
+    except pointage.PointageError as exc:
+        flash(request, str(exc), "err")
+        return redirect("/admin/planning#postes")
+    finally:
+        engine.dispose()
+    auth.audit(request, "Code de poste enregistré", saved, f"{pointage.POSTE_TYPES.get(type, type)} {debut}-{fin}".strip())
+    flash(request, f"Code « {saved} » enregistré.", "ok")
+    return redirect("/admin/planning#postes")
+
+
+@router.post("/planning/postes/{code}/delete")
+def poste_delete(request: Request, code: str, db: Session = Depends(get_db)):
+    cfg, mapping = _mapping_ready(db)
+    if mapping is None:
+        return redirect("/admin/pointage")
+    engine = make_engine(cfg.conn, **pointage.WEB_LIMITS)
+    try:
+        pointage.delete_poste(engine, mapping, code)
+    except pointage.PointageError as exc:
+        flash(request, str(exc), "err")
+        return redirect("/admin/planning#postes")
+    finally:
+        engine.dispose()
+    auth.audit(request, "Code de poste supprimé", code)
+    flash(request, f"Code « {code} » supprimé.", "ok")
+    return redirect("/admin/planning#postes")
+
+
+@router.post("/planning/supprimer")
+def planning_delete(request: Request, du: str = Form(...), au: str = Form(...), matricule: str = Form(""),
+                    db: Session = Depends(get_db)):
+    cfg, mapping = _mapping_ready(db)
+    start, end = pointage.parse_day(du), pointage.parse_day(au)
+    if mapping is None or not (start and end):
+        return redirect("/admin/planning")
+    engine = make_engine(cfg.conn, **pointage.WEB_LIMITS)
+    try:
+        n = pointage.delete_planning(engine, mapping, start, end, matricule.strip())
+    finally:
+        engine.dispose()
+    who = f" de {matricule.strip()}" if matricule.strip() else ""
+    auth.audit(request, "Planning supprimé", f"du {start:%d/%m/%Y} au {end:%d/%m/%Y}{who}", f"{n} jour(s)")
+    flash(request, f"{n} jour(s) planifié(s){who} supprimé(s) : ces jours suivent de nouveau l'horaire de bureau.", "ok")
+    return redirect(_planning_back(start, end))
+
+
+@router.get("/planning/export.xlsx")
+def planning_export(du: str = "", au: str = "", db: Session = Depends(get_db)):
+    """Planning de la période au format de l'import (réimportable après modification)."""
+    import io
+
+    from openpyxl import Workbook
+    from openpyxl.styles import Font
+
+    cfg, mapping = _mapping_ready(db)
+    start, end = pointage.parse_day(du), pointage.parse_day(au)
+    if mapping is None or not (start and end):
+        return redirect("/admin/planning")
+    engine = make_engine(cfg.conn, **pointage.WEB_LIMITS)
+    try:
+        grid = pointage.planning_grid(engine, mapping, start, min(end, start + timedelta(days=62)))
+        codes = pointage.postes(engine, mapping)
+    finally:
+        engine.dispose()
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "PLANNING"
+    ws.append(["", "Code", "Heure Début", "Heure Fin", "Libellé"])
+    for p in codes:
+        ws.append(["", p["code"], p["debut"] if p["type"] == "travail" else p["libelle"].upper(),
+                   p["fin"] if p["type"] == "travail" else None, p["libelle"]])
+    ws.append([])
+    ws.append(["MATRICULE"] + [e["matricule"] for e in grid["employes"]])
+    ws.append(["NOM"] + [e["nom"] for e in grid["employes"]])
+    ws.append(["DATE"])
+    for day in grid["jours"]:
+        ws.append([day] + [grid["grille"].get(e["matricule"], {}).get(day, ("",))[0] for e in grid["employes"]])
+        ws.cell(ws.max_row, 1).number_format = "DD/MM/YYYY"
+    for row in ws.iter_rows():
+        for cell in row:
+            if cell.value in ("Code", "MATRICULE", "NOM", "DATE"):
+                cell.font = Font(bold=True)
+            if hasattr(cell.value, "hour") and not hasattr(cell.value, "year"):
+                cell.number_format = "HH:MM"
+            if isinstance(cell.value, str) and cell.value.isdigit():
+                cell.number_format = "@"
+    ws.column_dimensions["A"].width = 14
+    buf = io.BytesIO()
+    wb.save(buf)
+    return Response(buf.getvalue(), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f'attachment; filename="planning_{start:%Y%m%d}_{end:%Y%m%d}.xlsx"'})
+
+
 # --------------------------------------------------------------------------- utilisateurs
 
 

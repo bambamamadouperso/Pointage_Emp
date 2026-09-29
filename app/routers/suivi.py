@@ -214,12 +214,12 @@ def export(request: Request, db: Session = Depends(get_db)):
     ws.title = "Suivi journalier"
     headers = ["Date", "Matricule", "Nom", "Prénom", "Service", "Statut du personnel", "1er pointage", "Dernier pointage", "Nb pointages",
                "Statut", "Durée validée", "Durée effective", "Durée validée (min)", "Durée effective (min)",
-               "Responsable", "Dans la liste des employés"]
+               "Responsable", "Dans la liste des employés", "Poste planifié"]
     ws.append(headers)
     fills = {"A_L_HEURE": "DCFCE7", "RETARD": "FFEDD5", "ABSENT": "FEE2E2", "INCOMPLET": "E5E7EB", "NON_OUVRE": "E0F2FE",
              "CONGE_ANNUEL": "E4F5D3", "CONGE_EXCEP": "E4F5D3",
              "TELETRAVAIL": "CDEEE7", "TERRAIN": "DBEAFE",
-             "ARRET_MALADIE": "E7E5E4"}
+             "ARRET_MALADIE": "E7E5E4", "REPOS": "E0F2FE", "FORMATION": "EDE9FE"}
     for r in rows:
         ws.append([
             r["jour"], r["matricule"], r["nom"], r["prenom"], r["service"], r["categorie"],
@@ -228,7 +228,7 @@ def export(request: Request, db: Session = Depends(get_db)):
             r["nb_pointages"], r["statut_libelle"], r["duree_validee"], r["duree_effective"],
             float(r["duree_validee_min"]) if r["duree_validee_min"] is not None else None,
             float(r["duree_effective_min"]) if r["duree_effective_min"] is not None else None,
-            r["responsable"], "Non" if r["hors_liste"] else "Oui",
+            r["responsable"], "Non" if r["hors_liste"] else "Oui", r.get("poste"),
         ])
         row = ws.max_row
         ws.cell(row, 1).number_format = "DD/MM/YYYY"
@@ -260,12 +260,13 @@ def export(request: Request, db: Session = Depends(get_db)):
         return (datetime.min + td).time().replace(microsecond=0) if td is not None else None
 
     bureau = [r for r in rows if r["statut"] in ("A_L_HEURE", "RETARD", "INCOMPLET")]
+    complete = [r for r in bureau if r["statut"] != "INCOMPLET"]
+    bureau = [r for r in bureau if not r.get("poste")]  # heures moyennes : horaire de bureau seulement
     first = avg([timedelta(hours=r["premier_pointage"].hour, minutes=r["premier_pointage"].minute,
                            seconds=r["premier_pointage"].second) for r in bureau if r["premier_pointage"]])
     last = avg([timedelta(hours=r["dernier_pointage"].hour, minutes=r["dernier_pointage"].minute,
                           seconds=r["dernier_pointage"].second)
                 for r in bureau if r["dernier_pointage"] and r["nb_pointages"] >= 2 and r["statut"] != "INCOMPLET"])
-    complete = [r for r in bureau if r["statut"] != "INCOMPLET"]
     ws.append([])
     ws.append(["Moyenne", "", "présents au bureau", "", "", "", clock(first), clock(last), "", "",
                avg([r["duree_validee"] for r in complete]), avg([r["duree_effective"] for r in complete])])

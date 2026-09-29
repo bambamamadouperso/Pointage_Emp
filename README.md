@@ -104,6 +104,14 @@ Filtres (jour ou période, employé, service, **équipe d'un responsable** — t
 statuts), colonne « Responsable », tri par colonne, filtres conservés dans l'URL (lien partageable),
 **export Excel** de la vue filtrée.
 
+**Horaires postés** (*Administration → Horaires postés*) : pour les agents en équipes (3×8, 2×12…), le planning
+Excel (ex. « PLANNING ATF » : légende des codes, ligne `MATRICULE`, une ligne par jour) est importé tel quel.
+Les jours planifiés remplacent l'horaire de bureau : retard et durée validée calculés sur le poste du jour
+(P1 06h–14h, 1806 18h–06h…), poste de nuit compté le jour où il commence (départ du lendemain rattaché, marge
+réglable « marge avant/après un poste »), repos `P4` → « Repos (planning) », congé `P11` → « Congé Annuel »,
+formation → « Formation », absence possible un week-end planifié. Tables PostgreSQL `pointage_postes`
+(codes modifiables) et `pointage_planning` ; colonne `poste` dans `v_pointage_journalier`.
+
 **Périmètre par compte** : un lecteur ou un manager peut être rattaché à un employé (matricule) et limité à
 **son équipe** : il ne voit (écran, détail, export) que lui-même et toutes les personnes placées sous lui.
 
