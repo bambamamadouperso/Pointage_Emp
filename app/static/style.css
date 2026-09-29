@@ -839,3 +839,7 @@ table.suivi tr.st-mission td { background: color-mix(in srgb, var(--mission-bg) 
   padding: .7rem 0; border-bottom: 1px solid var(--border); }
 .digest-plan .check { flex: 1 1 360px; }
 .digest-plan .inline { display: flex; gap: .8rem; }
+select.multi-cols { min-width: 220px; padding: .3rem; }
+select.multi-cols option { padding: .2rem .4rem; border-radius: 4px; }
+select.multi-cols option:checked { background: var(--primary-soft); color: var(--primary); font-weight: 600; }
+.multi-summary { display: block; margin-top: .25rem; font-weight: 600; color: var(--primary); }

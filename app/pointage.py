@@ -229,6 +229,9 @@ class Mapping:
             out.append("colonnes employé, date de début et date de fin des missions")
         if self.mission_table and self.mission_ref == "person" and not self.person_table:
             out.append("table des noms (les missions désignent les personnes)")
+        for prefix, label in (("leave", "congés"), ("tw", "télétravail"), ("mission", "missions")):
+            if getattr(self, f"{prefix}_table") and getattr(self, f"{prefix}_ref") == "email" and not self.email_col:
+                out.append(f"colonne « Adresse e-mail » des employés (les {label} désignent les personnes par e-mail)")
         return out
 
 
@@ -293,8 +296,9 @@ _GUESSES = {
     "leave_table": [r"demande_?cong", r"cong[ée]", r"absence", r"leave"],
     "tw_table": [r"t[ée]l[ée]_?travail", r"remote", r"home_?office"],
     "mission_table": [r"mission", r"d[ée]placement", r"voyage", r"travel"],
-    "mission_start_col": [r"d[ée]part", r"^date_?d[ée]but", r"d[ée]but", r"^du$", r"start", r"aller"],
+    "mission_start_col": [r"aller", r"d[ée]part", r"^date_?d[ée]but", r"d[ée]but", r"^du$", r"start"],
     "mission_end_col": [r"retour", r"^date_?fin", r"fin", r"^au$", r"end"],
+    "mission_emp_col": [r"mail", r"courriel", r"matric", r"employ", r"demandeur", r"agent", r"collab", r"missionnaire"],
     "mission_state_col": [r"^[ée]tat", r"statut", r"approb", r"autoris", r"valid", r"state"],
     "leave_emp_col": [r"^id_?employ", r"employ", r"matric", r"^id_?person", r"person", r"^id_?agent", r"agent"],
     "leave_start_col": [r"^date_?d[ée]but", r"d[ée]but", r"start"],
@@ -304,6 +308,12 @@ _GUESSES = {
     "hier_manager_col": [r"respons", r"manager", r"sup[ée]rieur", r"^id_?chef", r"chef", r"n\+?1", r"valideur",
                          r"hi[ée]rarch"],
 }
+
+
+def guess_all(kind: str, names: list[str]) -> str:
+    """Toutes les colonnes qui correspondent (ex. « Date aller 1 », « Date aller 2 »), séparées par des virgules."""
+    patterns = _GUESSES.get(kind, [])
+    return ", ".join(n for n in names if any(re.search(p, n, re.I) for p in patterns))
 
 
 def guess(kind: str, names: list[str], exclude: tuple = ()) -> str:
@@ -337,6 +347,11 @@ def _norm_sql(expr: str) -> str:
 
 def _values(raw: str) -> list[str]:
     return [norm(v) for v in (raw or "").split(",") if v.strip()]
+
+
+def split_cols(value: str) -> list[str]:
+    """Liste de colonnes saisie « a, b » (ou une seule colonne)."""
+    return [c.strip() for c in (value or "").split(",") if c.strip()]
 
 
 def _as_text(expr: str, dtype: str) -> str:
@@ -382,6 +397,44 @@ def _raw_day_col(m: Mapping, types: dict[str, str]) -> Optional[str]:
     return None
 
 
+def _request_link(m: Mapping, prefix: str) -> tuple[str, str]:
+    """(valeur de la colonne employé d'une demande, condition de liaison avec un employé « e »)."""
+    get = lambda name: getattr(m, f"{prefix}_{name}")  # noqa: E731
+    who = f"btrim(l.{qi(get('emp_col'))}::text)"
+    if get("ref") == "email":  # ex. colonne « contact » d'une feuille Smartsheet : lien par l'adresse e-mail
+        return who, f"e.email = lower({who})"
+    return who, f"e.{({'matricule': 'matricule', 'person': 'person_ref'}.get(get('ref'), 'emp_key'))} = {who}"
+
+
+def email_columns(engine: Engine, schema: str, table: str, cols: dict[str, str]) -> list[str]:
+    """Colonnes texte dont la plupart des valeurs (échantillon) sont des adresses e-mail."""
+    text_cols = [c for c, t in cols.items() if t in _TEXT]
+    if not table or not text_cols:
+        return []
+    checks = ", ".join(f"count({qi(c)}) FILTER (WHERE {qi(c)}::text LIKE '%_@_%.%'), count({qi(c)})" for c in text_cols)
+    with engine.connect() as c:
+        row = c.execute(text(f"SELECT {checks} FROM (SELECT * FROM {qt(schema, table)} LIMIT 200) s")).one()
+    return [col for i, col in enumerate(text_cols) if row[2 * i + 1] and row[2 * i] * 2 > row[2 * i + 1]]
+
+
+def unmatched_requests(engine: Engine, m: Mapping, prefix: str) -> dict:
+    """Demandes approuvées dont l'employé n'est pas retrouvé (matricule ou e-mail inconnu) : total et exemples."""
+    table = getattr(m, f"{prefix}_table")
+    who, link = _request_link(m, prefix)
+    state_col, values = getattr(m, f"{prefix}_state_col"), _values(getattr(m, f"{prefix}_state_values"))
+    where = f"{_norm_sql(f'l.{qi(state_col)}')} IN ({', '.join(lit(v) for v in values)})" if state_col and values else "true"
+    S = qi(m.objs)
+    with engine.connect() as c:
+        total = c.execute(text(f"SELECT count(*) FROM {qt(m.schema, table)} l WHERE {where}")).scalar()
+        missing = c.execute(text(
+            f"SELECT {who} AS ref, count(*) FROM {qt(m.schema, table)} l WHERE {where} AND NOT EXISTS "
+            f"(SELECT 1 FROM {S}.v_pointage_employes e WHERE {link}) GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT 10")).all()
+        count = c.execute(text(
+            f"SELECT count(*) FROM {qt(m.schema, table)} l WHERE {where} AND NOT EXISTS "
+            f"(SELECT 1 FROM {S}.v_pointage_employes e WHERE {link})")).scalar()
+    return {"total": total, "sans_employe": count, "exemples": [(r or "(vide)", n) for r, n in missing]}
+
+
 def _requests_cte(m: Mapping, prefix: str, types: dict[str, str], default_status: str) -> str:
     """Jours couverts par une demande approuvée (congé ou télétravail) de chaque employé sur la période."""
     table = getattr(m, f"{prefix}_table")
@@ -389,10 +442,13 @@ def _requests_cte(m: Mapping, prefix: str, types: dict[str, str], default_status
         return "SELECT NULL::text AS emp_key, NULL::date AS jour, NULL::text AS statut WHERE false"
     get = lambda name: getattr(m, f"{prefix}_{name}")  # noqa: E731
     col = lambda name: f"l.{qi(name)}"  # noqa: E731
-    start = _date_expr(col(get("start_col")), types.get(get("start_col"), ""))
-    end = f"COALESCE({_date_expr(col(get('end_col')), types.get(get('end_col'), ''))}, {start})"
-    ref = {"matricule": "matricule", "person": "person_ref"}.get(get("ref"), "emp_key")
-    who = f"btrim({col(get('emp_col'))}::text)"
+    # Plusieurs colonnes possibles (ex. « Date aller 1 », « Date aller 2 ») : du premier départ au dernier retour.
+    starts = [_date_expr(col(c), types.get(c, "")) for c in split_cols(get("start_col"))]
+    ends = [_date_expr(col(c), types.get(c, "")) for c in split_cols(get("end_col"))]
+    start = starts[0] if len(starts) == 1 else f"LEAST({', '.join(starts)})"
+    last = ends[0] if len(ends) == 1 else f"GREATEST({', '.join(ends)})"
+    end = f"COALESCE({last}, {start})"
+    who, link = _request_link(m, prefix)
     conds = [f"{start} <= p_au", f"{end} >= p_du"]
     if get("state_col") and _values(get("state_values")):
         conds.append(f"{_norm_sql(col(get('state_col')))} IN ({', '.join(lit(v) for v in _values(get('state_values')))})")
@@ -405,7 +461,7 @@ def _requests_cte(m: Mapping, prefix: str, types: dict[str, str], default_status
         kind = f"CASE WHEN {typ} IN ({', '.join(lit(v) for v in excep)}) THEN 'CONGE_EXCEP' ELSE 'CONGE_ANNUEL' END"
     return f"""SELECT DISTINCT ON (e.emp_key, d::date) e.emp_key, d::date AS jour, {kind} AS statut
     FROM {qt(m.schema, table)} l
-    JOIN emp e ON e.{ref} = {who}
+    JOIN emp e ON {link}
     CROSS JOIN LATERAL generate_series(GREATEST({start}, p_du)::timestamp, LEAST({end}, p_au)::timestamp,
                                        interval '1 day') AS d
     WHERE {' AND '.join(conds)}
@@ -838,7 +894,7 @@ def install(engine: Engine, m: Mapping, author: str) -> None:
         types = column_types(engine, m.schema, table)
         if not types:
             raise PointageError(f"Table {m.schema}.{table} introuvable.")
-        for col in cols:
+        for col in (c for value in cols for c in split_cols(value or "")):
             if col and col not in types:
                 raise PointageError(f"Colonne « {col} » absente de {table}.")
     if m.hier_ref == "person" and not m.person_table:

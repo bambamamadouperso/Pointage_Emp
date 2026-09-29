@@ -114,7 +114,9 @@ formation → « Formation », absence possible un week-end planifié. Tables Po
 planifiées de chaque agent ; au-delà de 48 h par semaine en moyenne, l'agent est signalé (à l'import et en rouge).
 
 **Missions** (*Source des pointages → Missions*) : table des autorisations de mission (ex. feuille Smartsheet
-synchronisée) ; un jour ouvré ou un poste planifié couvert par une mission approuvée devient « En mission », avec la
+synchronisée), reliée aux employés par matricule ou par **adresse e-mail** (colonne « contact » Smartsheet) ;
+plusieurs colonnes « date aller » / « date retour » possibles (du premier aller au dernier retour) ; un jour ouvré ou
+un poste planifié couvert par une mission approuvée devient « En mission », avec la
 « durée attribuée par jour de mission » (8h par défaut) en durée validée. Congé et arrêt maladie l'emportent.
 
 **Résumés par mail** (*Administration → Résumés par mail*) : chaque responsable abonné reçoit le point de la veille

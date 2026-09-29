@@ -1176,10 +1176,49 @@ def test_missions_from_authorisation_table(configured, pg, logged_client):
         section = admin.split("Table des autorisations de mission")[1]
         assert '<option value="date_de_depart" selected' in section and '<option value="date_de_retour" selected' in section
         assert '<option value="statut" selected' in section
+
+        # Feuille Smartsheet sans matricule : lien par e-mail (colonne « contact »), plusieurs dates d'aller et de
+        # retour par ligne → du premier aller au dernier retour.
+        with pg.begin() as c:
+            c.execute(text(f'ALTER TABLE {SCHEMA}."Personnel" ADD COLUMN IF NOT EXISTS "Email" text'))
+            c.execute(text(f'UPDATE {SCHEMA}."Personnel" SET "Email" = lower("Prenom" || \'.\' || "Nom") || \'@exemple.com\''))
+            c.execute(text(f"DROP TABLE IF EXISTS {SCHEMA}.missions_email"))
+            c.execute(text(f"""CREATE TABLE {SCHEMA}.missions_email (row_id bigint, demandeur text, demandeur_nom text,
+                date_aller_1 date, date_retour_1 date, date_aller_2 date, date_retour_2 date, statut text)"""))
+            c.execute(text(f"""INSERT INTO {SCHEMA}.missions_email VALUES
+                (1, 'fatou.sow@exemple.com', 'Fatou Sow', '2026-09-22', '2026-09-22', '2026-09-24', '2026-09-25', 'Approuvée'),
+                (2, 'ibou.fall@exemple.com', 'Ibou Fall', NULL, NULL, '2026-09-23', NULL, 'Approuvée'),
+                (3, 'inconnu@exemple.com', 'Inconnu', '2026-09-22', '2026-09-22', NULL, NULL, 'Approuvée'),
+                (4, 'aminata.diop@exemple.com', 'Aminata Diop', '2026-09-21', '2026-09-21', NULL, NULL, 'Refusée')"""))
+        m2 = dataclasses.replace(m, email_col="Email", email_in="person", mission_table="missions_email",
+                                 mission_emp_col="demandeur", mission_ref="email",
+                                 mission_start_col="date_aller_1, date_aller_2",
+                                 mission_end_col="date_retour_1, date_retour_2", mission_state_col="statut")
+        pointage.install(pg, m2, "test")
+        with pg.connect() as c:
+            r = {(x.matricule, x.jour): x.statut for x in c.execute(text(
+                "SELECT * FROM pt_test_mission.f_pointage_journalier(:du, :au)"), {"du": MON, "au": SAT}).mappings()}
+        fatou = [r[("E003", d)] for d in (MON, TUE, WED, date(2026, 9, 24), date(2026, 9, 25))]
+        assert fatou == ["A_L_HEURE", "MISSION", "MISSION", "MISSION", "MISSION"]  # 22 → 25 (écart inclus)
+        assert r[("E004", WED)] == "MISSION" and r[("E004", date(2026, 9, 24))] == "ABSENT"  # seul l'aller 2 renseigné
+        assert r[("E007", MON)] == "RETARD"  # mission refusée
+        match = pointage.unmatched_requests(pg, m2, "mission")
+        assert match == {"total": 3, "sans_employe": 1, "exemples": [("inconnu@exemple.com", 1)]}
+
+        # Administration : dates multiples et lien par e-mail proposés automatiquement.
+        admin = logged_client.get(f"/admin/pointage?conn_id={configured}&schema={SCHEMA}&punch_table=punchlog"
+                                  f"&emp_table=Employes&email_col=Email&mission_table=missions_email"
+                                  f"&mission_ref=matricule").text
+        section = admin.split("Table des autorisations de mission")[1].split("</fieldset>")[0]
+        assert '<option value="date_aller_1" selected' in section and '<option value="date_aller_2" selected' in section
+        assert '<option value="date_retour_2" selected' in section and '<option value="date_retour_1" selected' in section
+        assert '<option value="demandeur" selected' in section and '<option value="email" selected' in section
     finally:
         with pg.begin() as c:
             c.execute(text("DROP SCHEMA IF EXISTS pt_test_mission CASCADE"))
             c.execute(text(f"DROP TABLE IF EXISTS {SCHEMA}.missions_ss"))
+            c.execute(text(f"DROP TABLE IF EXISTS {SCHEMA}.missions_email"))
+            c.execute(text(f'ALTER TABLE {SCHEMA}."Personnel" DROP COLUMN IF EXISTS "Email"'))
 
 
 def test_manager_digests(configured, pg, logged_client, monkeypatch):

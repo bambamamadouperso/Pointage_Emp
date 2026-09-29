@@ -17,6 +17,14 @@
     {% if value and value not in cols %}<option value="{{ value }}" selected>{{ value }} (introuvable)</option>{% endif %}
   </select>
 {% endmacro %}
+{% macro multicolselect(name, cols, value) %}{% set chosen = value.replace(' ', '').split(',') if value else [] %}
+  <select name="{{ name }}" multiple size="{{ [[cols | length, 3] | max, 12] | min }}" class="multi-cols"
+          onchange="this.nextElementSibling.textContent = 'Sélection : ' + ([...this.selectedOptions].map(o => o.value).join(', ') || 'aucune')">
+    {% for c, t in cols.items() %}<option value="{{ c }}" {{ 'selected' if c in chosen }}>{{ c }} ({{ t }})</option>{% endfor %}
+    {% for c in chosen if c not in cols %}<option value="{{ c }}" selected>{{ c }} (introuvable)</option>{% endfor %}
+  </select>
+  <span class="muted small multi-summary">Sélection : {{ chosen | join(', ') or 'aucune' }}</span>
+{% endmacro %}
 {% macro tableselect(name, value, optional=False) %}
   <select name="{{ name }}" data-reload>
     <option value="">{{ '— aucune —' if optional else '— choisir —' }}</option>
@@ -267,6 +275,7 @@
       <label>La colonne de l'employé contient
         <select name="mission_ref">
           <option value="matricule" {{ 'selected' if m.mission_ref in ('matricule', '') }}>le matricule</option>
+          <option value="email" {{ 'selected' if m.mission_ref == 'email' }}>l'adresse e-mail{{ '' if m.email_col else ' (configurez la colonne e-mail des employés)' }}</option>
           <option value="key" {{ 'selected' if m.mission_ref == 'key' }}>la clé employé ({{ m.emp_key_col or 'colonne de correspondance' }})</option>
           <option value="person" {{ 'selected' if m.mission_ref == 'person' }}>l'identifiant de la table des noms</option>
         </select></label>
@@ -275,13 +284,28 @@
     {% if m.mission_table %}
     <div class="row">
       <label>Colonne de l'employé {{ colselect('mission_emp_col', mission_cols, m.mission_emp_col) }}</label>
-      <label>Date de début (départ) {{ colselect('mission_start_col', mission_cols, m.mission_start_col) }}</label>
-      <label>Date de fin (retour) {{ colselect('mission_end_col', mission_cols, m.mission_end_col) }}</label>
+      <label>Date(s) d'aller <span class="muted small">(plusieurs possibles : Ctrl + clic)</span>
+        {{ multicolselect('mission_start_col', mission_cols, m.mission_start_col) }}</label>
+      <label>Date(s) de retour <span class="muted small">(plusieurs possibles : Ctrl + clic)</span>
+        {{ multicolselect('mission_end_col', mission_cols, m.mission_end_col) }}</label>
     </div>
     <div class="row">
       <label>Colonne de l'état <span class="muted small">(facultatif)</span> {{ colselect('mission_state_col', mission_cols, m.mission_state_col, True) }}</label>
       <label>Valeur(s) « approuvé » <span class="muted small">(séparées par des virgules, sans tenir compte des accents ni des majuscules)</span>
         <input name="mission_state_values" value="{{ m.mission_state_values }}" placeholder="Approuvée, Validée"></label>
+    </div>
+    {% endif %}
+    {% if m.mission_table %}<p class="muted small">Avec plusieurs colonnes de dates, la mission va de la <strong>plus ancienne date d'aller</strong>
+      à la <strong>plus récente date de retour</strong> de la ligne (cases vides ignorées ; sans retour, la mission dure un jour).
+      {% if m.mission_ref == 'email' %}Lien par e-mail : l'adresse de la mission est comparée, sans tenir compte des majuscules, à la colonne
+      « Adresse e-mail » des employés{% if m.email_col %} (<code>{{ m.email_col }}</code>){% endif %}.{% endif %}</p>{% endif %}
+    {% if mission_match %}
+    <div class="flash {{ 'warn' if mission_match.sans_employe else 'ok' }}">
+      {% if mission_match.sans_employe %}{{ mission_match.sans_employe }} mission(s) approuvée(s) sur {{ mission_match.total }} ne sont reliées à aucun employé
+        ({{ 'adresse e-mail' if m.mission_ref == 'email' else 'identifiant' }} introuvable) :
+        {% for ref, n in mission_match.exemples %}<code>{{ ref }}</code> ({{ n }}){{ ', ' if not loop.last }}{% endfor %}.
+        {% if m.mission_ref == 'email' %}Vérifiez que ces adresses figurent dans la colonne e-mail des employés.{% endif %}
+      {% else %}Les {{ mission_match.total }} mission(s) approuvée(s) sont toutes reliées à un employé.{% endif %}
     </div>
     {% endif %}
     <p class="muted small">Source typique : une <strong>feuille Smartsheet</strong> d'autorisations de mission, synchronisée par un job

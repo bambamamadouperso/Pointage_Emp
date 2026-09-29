@@ -26,7 +26,7 @@ COLUMNS = [
 
 def row(row_id, mat, name, start, end, status, urgent=False):
     return {"id": row_id, "cells": [
-        {"columnId": 1, "value": mat}, {"columnId": 2, "value": f"{name.lower()}@exemple.com", "displayValue": name},
+        {"columnId": 1, "value": mat}, {"columnId": 2, "value": f"{name.lower().replace(' ', '.')}@Exemple.com", "displayValue": name},
         {"columnId": 3, "value": start}, {"columnId": 4, "value": end}, {"columnId": 5, "value": status},
         {"columnId": 6, "value": urgent}]}
 
@@ -58,10 +58,14 @@ def conn(database="4583173393803140"):
 def test_parse_sheet_types_and_row_id():
     data = smartsheet.parse_sheet(SHEET)
     assert data.title == "Autorisations de mission"
-    assert data.columns == ["row_id", "matricule", "employe", "date_de_depart", "date_de_retour", "statut", "urgent"]
-    assert data.headers[1:3] == ["Matricule", "Employé"]
-    assert data.rows == [[11, 590394, "Awa Diallo", date(2026, 9, 21), date(2026, 9, 23), "Approuvée", True],
-                         [12, "E002", "Moussa Ndiaye", date(2026, 9, 22), date(2026, 9, 22), "En attente", False]]
+    # Colonne « contact » : adresse e-mail (en minuscules, pour le lien avec les employés) + nom affiché.
+    assert data.columns == ["row_id", "matricule", "employe", "employe_nom", "date_de_depart", "date_de_retour",
+                            "statut", "urgent"]
+    assert data.headers[1:4] == ["Matricule", "Employé (e-mail)", "Employé (nom)"]
+    assert data.rows == [
+        [11, 590394, "awa.diallo@exemple.com", "Awa Diallo", date(2026, 9, 21), date(2026, 9, 23), "Approuvée", True],
+        [12, "E002", "moussa.ndiaye@exemple.com", "Moussa Ndiaye", date(2026, 9, 22), date(2026, 9, 22), "En attente",
+         False]]
 
 
 def test_load_by_name_describe_and_errors(monkeypatch):
@@ -146,11 +150,13 @@ def test_smartsheet_sync_end_to_end(monkeypatch):
             run = db.get(JobRun, run_job(job_id, "manual"))
             assert run.status == "success", run.message
         with dst.connect() as c:
-            rows = c.execute(text(f"SELECT row_id, matricule, employe, date_de_depart, date_de_retour, statut, urgent "
-                                  f"FROM {SCHEMA}.missions ORDER BY row_id")).all()
+            rows = c.execute(text(f"SELECT row_id, matricule, employe, employe_nom, date_de_depart, date_de_retour, "
+                                  f"statut, urgent FROM {SCHEMA}.missions ORDER BY row_id")).all()
         # Matricules mixtes (nombre et texte) : colonne texte ; dates et case à cocher typées.
-        assert rows == [(11, "590394", "Awa Diallo", date(2026, 9, 21), date(2026, 9, 23), "Approuvée", True),
-                        (12, "E002", "Moussa Ndiaye", date(2026, 9, 22), date(2026, 9, 22), "En attente", False)]
+        assert rows == [(11, "590394", "awa.diallo@exemple.com", "Awa Diallo", date(2026, 9, 21), date(2026, 9, 23),
+                         "Approuvée", True),
+                        (12, "E002", "moussa.ndiaye@exemple.com", "Moussa Ndiaye", date(2026, 9, 22),
+                         date(2026, 9, 22), "En attente", False)]
     finally:
         with SessionLocal() as db:
             db.query(SyncJob).filter_by(name="ss-job").delete()

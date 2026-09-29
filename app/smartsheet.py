@@ -8,6 +8,7 @@ La connexion stocke :
 
 Chaque feuille devient une « table » (comme un onglet Google Sheets) : colonnes normalisées, valeurs typées
 (dates, cases à cocher, nombres), plus une colonne row_id (identifiant stable de la ligne, utilisable comme clé).
+Une colonne « contact » donne l'adresse e-mail (lien avec les employés) et le nom affiché (colonne …_nom).
 """
 import json
 import re
@@ -126,25 +127,47 @@ def cell_value(cell: dict, column_type: str) -> Any:
     return value
 
 
+def _unique(name: str, seen: set) -> str:
+    base, n = name, 2
+    while name in seen:
+        name = f"{base}_{n}"
+        n += 1
+    seen.add(name)
+    return name
+
+
+def contact_email(cell: dict) -> Optional[str]:
+    """Adresse e-mail d'une cellule « contact » (la valeur ; à défaut, le texte affiché s'il en contient une)."""
+    for candidate in (cell.get("value"), cell.get("displayValue")):
+        if isinstance(candidate, str) and "@" in candidate:
+            match = re.search(r"[^\s<>,;]+@[^\s<>,;]+", candidate)
+            if match:
+                return match.group(0).lower()
+    return None
+
+
 def parse_sheet(data: dict) -> SheetData:
-    """Réponse de GET /sheets/{id} → SheetData (row_id + une colonne par colonne de la feuille)."""
-    columns_raw = list(data.get("columns", []))
-    seen, columns, headers, ids, types = {"row_id"}, ["row_id"], ["Row ID"], [], []
-    for i, col in enumerate(columns_raw):
-        name = base = normalize_identifier(col.get("title"), i)
-        n = 2
-        while name in seen:
-            name = f"{base}_{n}"
-            n += 1
-        seen.add(name)
-        columns.append(name)
-        headers.append(col.get("title") or "")
-        ids.append(col.get("id"))
-        types.append(col.get("type", "TEXT_NUMBER"))
+    """Réponse de GET /sheets/{id} → SheetData (row_id + une colonne par colonne de la feuille).
+
+    Une colonne « contact » donne deux colonnes : l'adresse e-mail (ex. demandeur) et le nom affiché (demandeur_nom),
+    pour pouvoir relier la ligne à un employé par son e-mail."""
+    seen, columns, headers, readers = {"row_id"}, ["row_id"], ["Row ID"], []
+    for i, col in enumerate(data.get("columns", [])):
+        title, typ, cid = col.get("title") or "", col.get("type", "TEXT_NUMBER"), col.get("id")
+        name = _unique(normalize_identifier(title, i), seen)
+        if typ == "CONTACT_LIST":
+            columns += [name, _unique(f"{name}_nom", seen)]
+            headers += [f"{title} (e-mail)", f"{title} (nom)"]
+            readers.append(lambda cells, cid=cid: contact_email(cells.get(cid, {})))
+            readers.append(lambda cells, cid=cid: cell_value(cells.get(cid, {}), "CONTACT_LIST"))
+        else:
+            columns.append(name)
+            headers.append(title)
+            readers.append(lambda cells, cid=cid, typ=typ: cell_value(cells.get(cid, {}), typ))
     rows = []
     for row in data.get("rows", []):
         cells = {c.get("columnId"): c for c in row.get("cells", [])}
-        values = [cell_value(cells.get(cid, {}), typ) for cid, typ in zip(ids, types)]
+        values = [read(cells) for read in readers]
         if any(v is not None for v in values):
             rows.append([row.get("id")] + values)
     return SheetData(data.get("name") or str(data.get("id", "")), columns, headers, rows)

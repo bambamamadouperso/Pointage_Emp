@@ -54,6 +54,14 @@ def index(request: Request, db: Session = Depends(get_db)):
 # --------------------------------------------------------------------------- source des pointages
 
 _MAPPING_FIELDS = [f for f in pointage.Mapping.__dataclass_fields__]
+# Champs à choix multiples (plusieurs colonnes « Date aller » / « Date retour ») : « a, b ».
+_MULTI_FIELDS = ("mission_start_col", "mission_end_col")
+
+
+def _field(values, key: str) -> str:
+    if key in _MULTI_FIELDS:
+        return ", ".join(pointage.multi([str(v) for v in values.getlist(key)]))
+    return str(values.get(key, "") or "").strip()
 
 
 @router.get("/pointage")
@@ -64,13 +72,13 @@ def pointage_config(request: Request, db: Session = Depends(get_db)):
     mapping = pointage.Mapping.from_json(cfg.data)
     conn_id = cfg.conn_id
     if exploring:  # rechargement du formulaire (choix d'une connexion, d'un schéma ou d'une table)
-        mapping = pointage.Mapping(**{k: params.get(k, "").strip() for k in _MAPPING_FIELDS})
+        mapping = pointage.Mapping(**{k: _field(params, k) for k in _MAPPING_FIELDS})
         conn_id = int(params["conn_id"]) if params["conn_id"].isdigit() else None
     connections = db.scalars(select(Connection).where(Connection.kind == "postgresql").order_by(Connection.name)).all()
     conn = db.get(Connection, conn_id) if conn_id else (connections[0] if connections else None)
     schemas, tables, punch_cols, emp_cols, service_cols, error, installed = [], [], {}, {}, {}, None, False
     person_cols, hier_cols, leave_cols, tw_cols, diag, stale = {}, {}, {}, {}, None, False
-    cat_cols, cat_values, mission_cols = {}, [], {}
+    cat_cols, cat_values, mission_cols, mission_match = {}, [], {}, None
     if conn is not None:
         engine = make_engine(conn, **pointage.WEB_LIMITS)
         try:
@@ -93,6 +101,7 @@ def pointage_config(request: Request, db: Session = Depends(get_db)):
             for key in ("cat_key_col", "cat_label_col"):
                 if cat_cols and not getattr(mapping, key):
                     setattr(mapping, key, pointage.guess(key, list(cat_cols)))
+            mission_emp_guessed = bool(mission_cols) and not mapping.mission_emp_col
             # Colonnes des tables facultatives : proposées dès que la table est choisie.
             for key, cols in (("person_key_col", person_cols), ("person_nom_col", person_cols),
                               ("person_prenom_col", person_cols), ("hier_emp_col", hier_cols),
@@ -101,10 +110,22 @@ def pointage_config(request: Request, db: Session = Depends(get_db)):
                               ("leave_state_col", leave_cols), ("leave_type_col", leave_cols),
                               ("tw_emp_col", tw_cols), ("tw_start_col", tw_cols), ("tw_end_col", tw_cols),
                               ("tw_state_col", tw_cols), ("mission_emp_col", mission_cols),
-                              ("mission_start_col", mission_cols), ("mission_end_col", mission_cols),
                               ("mission_state_col", mission_cols)):
                 if cols and not getattr(mapping, key):
                     setattr(mapping, key, pointage.guess(key, list(cols)))
+            if mission_cols:
+                # Toutes les colonnes de dates d'aller / de retour (ex. une par étape du voyage).
+                dates = [c for c, t in mission_cols.items() if "date" in t or "timestamp" in t] or list(mission_cols)
+                for key in ("mission_start_col", "mission_end_col"):
+                    if not getattr(mapping, key):
+                        setattr(mapping, key, pointage.guess_all(key, dates) or pointage.guess(key, dates))
+                if mission_emp_guessed:
+                    # Pas de matricule dans la feuille (ex. Smartsheet) : colonne d'adresses e-mail → lien par e-mail.
+                    emails = pointage.email_columns(engine, mapping.schema, mapping.mission_table, mission_cols)
+                    if emails:
+                        mapping.mission_emp_col, mapping.mission_ref = emails[0], "email"
+                    elif re.search(r"mail|courriel", mapping.mission_emp_col or "", re.I):
+                        mapping.mission_ref = "email"
             if person_cols and not mapping.emp_person_col:
                 mapping.emp_person_col = pointage.guess("emp_person_col", list(emp_cols))
             pc, ec = list(punch_cols), list(emp_cols)
@@ -137,6 +158,11 @@ def pointage_config(request: Request, db: Session = Depends(get_db)):
                     cat_values = pointage.categories(engine, mapping)[:15]
                 except Exception:
                     cat_values = []
+            if installed and mapping.mission_table:
+                try:
+                    mission_match = pointage.unmatched_requests(engine, mapping, "mission")
+                except Exception:
+                    mission_match = None
             if installed and not exploring:
                 diag = pointage.diagnostics(engine, mapping)
                 last = diag["dernier_pointage"]
@@ -151,7 +177,7 @@ def pointage_config(request: Request, db: Session = Depends(get_db)):
         person_cols=person_cols, hier_cols=hier_cols, leave_cols=leave_cols, diag=diag, stale=stale,
         leave_guess=pointage.guess("leave_table", tables) if not mapping.leave_table else "",
         tw_cols=tw_cols, cat_cols=cat_cols, cat_values=cat_values, tw_guess=pointage.guess("tw_table", tables) if not mapping.tw_table else "",
-        installed=installed, exploring=exploring, mission_cols=mission_cols,
+        installed=installed, exploring=exploring, mission_cols=mission_cols, mission_match=mission_match,
         mission_guess=pointage.guess("mission_table", tables) if not mapping.mission_table else "",
     )
 
@@ -165,7 +191,7 @@ async def pointage_save(request: Request, db: Session = Depends(get_db)):
     if conn is None or conn.kind != "postgresql":
         flash(request, "Choisissez la base PostgreSQL qui contient les pointages.", "err")
         return redirect("/admin/pointage")
-    mapping = pointage.Mapping(**{k: str(form.get(k, "")).strip() for k in _MAPPING_FIELDS})
+    mapping = pointage.Mapping(**{k: _field(form, k) for k in _MAPPING_FIELDS})
     before = cfg.data
     engine = make_engine(conn, **pointage.WEB_LIMITS)
     try:
