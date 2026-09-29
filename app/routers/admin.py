@@ -489,6 +489,30 @@ def field_delete(request: Request, entry_id: int, db: Session = Depends(get_db))
 # --------------------------------------------------------------------------- horaires postés (planning)
 
 
+# Au-delà, la grille devient illisible et lourde : la période affichée est ramenée à un an.
+MAX_GRID_DAYS = 366
+
+
+def _month_bounds(day: date) -> tuple[date, date]:
+    first = day.replace(day=1)
+    return first, (first + timedelta(days=32)).replace(day=1) - timedelta(days=1)
+
+
+def _planning_shortcuts(start: date, end: date, first: Optional[date], last: Optional[date]) -> dict:
+    """Raccourcis de période : mois, période planifiée, période précédente / suivante de même durée."""
+    today = date.today()
+    span = end - start + timedelta(days=1)
+    this_month = _month_bounds(today)
+    items = [("Mois en cours", *this_month),
+             ("Mois précédent", *_month_bounds(this_month[0] - timedelta(days=1))),
+             ("Mois suivant", *_month_bounds(this_month[1] + timedelta(days=1))),
+             ("4 dernières semaines", today - timedelta(days=27), today)]
+    if first and last:
+        items.append(("Tout le planning", first, last))
+    return {"items": items, "prev": (start - span, start - timedelta(days=1)),
+            "next": (end + timedelta(days=1), end + span)}
+
+
 def _planning_back(du=None, au=None) -> str:
     return f"/admin/planning?du={du.isoformat()}&au={au.isoformat()}" if du and au else "/admin/planning"
 
@@ -497,7 +521,8 @@ def _planning_back(du=None, au=None) -> str:
 def planning_page(request: Request, du: str = "", au: str = "", db: Session = Depends(get_db)):
     cfg, mapping = _mapping_ready(db)
     context = dict(mapping=mapping, postes=[], grid=None, error=None, types=pointage.POSTE_TYPES,
-                   marge=pointage.PARAM_DEFAULTS["marge_poste"], du=None, au=None, nuit=set())
+                   marge=pointage.PARAM_DEFAULTS["marge_poste"], du=None, au=None, nuit=set(),
+                   tronque=False, raccourcis=None, max_jours=MAX_GRID_DAYS)
     if mapping is not None:
         engine = make_engine(cfg.conn, **pointage.WEB_LIMITS)
         try:
@@ -514,8 +539,11 @@ def planning_page(request: Request, du: str = "", au: str = "", db: Session = De
                     start, end = date.today().replace(day=1), date.today()
             if start > end:
                 start, end = end, start
-            end = min(end, start + timedelta(days=62))
-            context.update(du=start, au=end, grid=pointage.planning_grid(engine, mapping, start, end))
+            context["tronque"] = (end - start).days + 1 > MAX_GRID_DAYS
+            end = min(end, start + timedelta(days=MAX_GRID_DAYS - 1))
+            grid = pointage.planning_grid(engine, mapping, start, end)
+            context.update(du=start, au=end, grid=grid,
+                           raccourcis=_planning_shortcuts(start, end, grid["premier"], grid["dernier"]))
         except Exception as exc:
             context["error"] = friendly(exc)
         finally:
@@ -637,7 +665,7 @@ def planning_export(du: str = "", au: str = "", db: Session = Depends(get_db)):
         return redirect("/admin/planning")
     engine = make_engine(cfg.conn, **pointage.WEB_LIMITS)
     try:
-        grid = pointage.planning_grid(engine, mapping, start, min(end, start + timedelta(days=62)))
+        grid = pointage.planning_grid(engine, mapping, start, min(end, start + timedelta(days=MAX_GRID_DAYS - 1)))
         codes = pointage.postes(engine, mapping)
     finally:
         engine.dispose()

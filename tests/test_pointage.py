@@ -970,6 +970,13 @@ def test_shift_planning_import_and_calculations(configured, pg, logged_client):
         assert "« ZZ » (1 j)" in r.text and "X999" in r.text           # code et matricule inconnus signalés
         assert "BA" in r.text.upper() and 'pl pl-nuit">1806' in r.text
         assert "28 h" in r.text  # heures planifiées : 12 + 8 + 8 (repos et congé non comptés)
+        # Période libre : longue plage, plage vide (lien vers le planning importé), plage trop longue ramenée à un an.
+        page = logged_client.get("/admin/planning?du=2026-01-01&au=2026-12-31").text
+        assert "Planning du 01/01/2026 au 31/12/2026" in page and "365 jour(s)" in page and "28 h" in page
+        page = logged_client.get("/admin/planning?du=2007-11-21&au=2008-01-22").text
+        assert "Aucun planning sur cette période" in page and "du=2026-09-24&au=2026-09-28" in page
+        page = logged_client.get("/admin/planning?du=2020-01-01&au=2026-12-31").text
+        assert "Période ramenée à 366 jours" in page and "Tout le planning" in page and 'id="pl_expand"' not in page
 
         got = rows(pg, THU, MON2)
         night = got[("E005", THU)]

@@ -815,3 +815,14 @@ table.planning td.pl-hours strong { display: block; font-variant-numeric: tabula
 table.planning td.pl-hours small { color: var(--muted); }
 table.planning td.pl-hours.over, .pl-hours-over { background: var(--err-bg); color: var(--err); }
 table.planning td.pl-hours.over small { color: var(--err); }
+.pl-period { display: flex; flex-wrap: wrap; align-items: flex-end; gap: .5rem .6rem; margin: 0 0 .9rem; }
+.pl-period label { display: flex; flex-direction: column; gap: 2px; font-size: .78rem; color: var(--muted); }
+.pl-period input[type=date] { min-width: 150px; }
+.pl-shortcuts { display: flex; flex-wrap: wrap; gap: .35rem; margin-left: .4rem; align-self: center; }
+.pl-tools { display: flex; gap: .35rem; }
+body.no-scroll { overflow: hidden; }
+.planning-card.expanded { position: fixed; inset: 0; z-index: 1000; margin: 0; border-radius: 0; overflow: auto;
+  display: flex; flex-direction: column; padding: 1rem 1.25rem; box-shadow: none; }
+.planning-card.expanded .planning-wrap { flex: 1; max-height: none; min-height: 0; }
+.planning-card.expanded > form[action$="supprimer"] { display: none; }
+@media (max-width: 700px) { .pl-shortcuts { margin-left: 0; } .pl-period input[type=date] { min-width: 0; } }

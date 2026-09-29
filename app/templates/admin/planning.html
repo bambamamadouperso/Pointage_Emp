@@ -53,31 +53,49 @@
     est reconnu comme « 0618 ».</p>
 </section>
 
-<section class="card">
+<section class="card planning-card" id="planning">
   <div class="card-head">
-    <div><h2>Planning{% if du %} du {{ du.strftime('%d/%m/%Y') }} au {{ au.strftime('%d/%m/%Y') }}{% endif %}</h2>
+    <div><h2>Planning{% if du %} du {{ du.strftime('%d/%m/%Y') }} au {{ au.strftime('%d/%m/%Y') }}{% endif %}
+        {% if du %}<span class="muted small">· {{ (au - du).days + 1 }} jour(s)</span>{% endif %}</h2>
       {% if grid and grid.premier %}<p class="muted small">{{ grid.planifies }} employé(s) planifié(s) au total, du
         {{ grid.premier.strftime('%d/%m/%Y') }} au {{ grid.dernier.strftime('%d/%m/%Y') }}.</p>{% endif %}</div>
-    <form method="get" class="inline">
-      <label>Du <input type="date" name="du" value="{{ du.isoformat() if du }}"></label>
-      <label>Au <input type="date" name="au" value="{{ au.isoformat() if au }}"></label>
-      <button class="btn small">Afficher</button>
-    </form>
+    {% if grid and grid.employes %}
+    <div class="actions pl-tools">
+      <button type="button" class="btn small ghost" data-zoom="-1" title="Réduire la taille" aria-label="Réduire">A−</button>
+      <button type="button" class="btn small ghost" data-zoom="1" title="Augmenter la taille" aria-label="Agrandir le texte">A+</button>
+      <button type="button" class="btn small" id="pl_expand" aria-pressed="false" title="Afficher la grille en plein écran (Échap pour revenir)">⛶ Agrandir</button>
+    </div>{% endif %}
   </div>
+  {% if du %}
+  <form method="get" class="pl-period" action="/admin/planning#planning">
+    <a class="btn small ghost" href="?du={{ raccourcis.prev[0].isoformat() }}&au={{ raccourcis.prev[1].isoformat() }}#planning"
+       title="Période précédente de même durée" aria-label="Période précédente">◀</a>
+    <label>Du <input type="date" name="du" value="{{ du.isoformat() }}" required></label>
+    <label>Au <input type="date" name="au" value="{{ au.isoformat() }}" required></label>
+    <button class="btn small primary">Afficher</button>
+    <a class="btn small ghost" href="?du={{ raccourcis.next[0].isoformat() }}&au={{ raccourcis.next[1].isoformat() }}#planning"
+       title="Période suivante de même durée" aria-label="Période suivante">▶</a>
+    <span class="pl-shortcuts">{% for label, d1, d2 in raccourcis['items'] %}
+      <a class="chip {{ 'selected' if d1 == du and d2 == au }}" href="?du={{ d1.isoformat() }}&au={{ d2.isoformat() }}#planning">{{ label }}</a>{% endfor %}</span>
+  </form>
+  {% if tronque %}<div class="flash warn">Période ramenée à {{ max_jours }} jours (du {{ du.strftime('%d/%m/%Y') }} au {{ au.strftime('%d/%m/%Y') }}) pour rester lisible.</div>{% endif %}
+  {% endif %}
   {% if not grid or not grid.employes %}
-    <p class="empty">Aucun planning sur cette période. Importez le fichier Excel ci-dessus.</p>
+    <p class="empty">Aucun planning sur cette période.{% if grid and grid.premier %} Le planning importé va du
+      {{ grid.premier.strftime('%d/%m/%Y') }} au {{ grid.dernier.strftime('%d/%m/%Y') }} :
+      <a href="?du={{ grid.premier.isoformat() }}&au={{ grid.dernier.isoformat() }}#planning">l'afficher</a>.{% else %} Importez le fichier Excel ci-dessus.{% endif %}</p>
   {% else %}
-  <div class="planning-wrap"><table class="planning">
+  <div class="planning-wrap" id="pl_wrap"><table class="planning">
     <thead><tr><th class="pl-who">Employé</th>
       {% for d in grid.jours %}<th class="{{ 'we' if d.isoweekday() > 5 }}">{{ ['Lu','Ma','Me','Je','Ve','Sa','Di'][d.weekday()] }}<small>{{ d.strftime('%d/%m') }}</small></th>{% endfor %}
-      <th title="Heures de travail planifiées sur la période affichée (moyenne par semaine)">Heures<small>/ semaine</small></th>
+      <th title="Heures de travail planifiées sur la période affichée ; moyenne par semaine calculée sur les jours planifiés">Heures<small>/ semaine</small></th>
     </tr></thead>
     <tbody>{% for e in grid.employes %}
       <tr><td class="pl-who"><span class="mono small">{{ e.matricule }}</span> {{ e.nom }}</td>
         {% for d in grid.jours %}{% set cell = grid.grille.get(e.matricule, {}).get(d) %}
         <td>{% if cell %}<span class="pl pl-{{ 'nuit' if cell[0] in nuit else cell[1] }}">{{ cell[0] }}</span>{% endif %}</td>
         {% endfor %}
-        <td class="pl-hours {{ 'over' if e.surcharge }}" title="{{ e.postes }} poste(s) de travail{{ ' — plus de %d h par semaine en moyenne' % grid.max_hebdo if e.surcharge }}">
+        <td class="pl-hours {{ 'over' if e.surcharge }}" title="{{ e.postes }} poste(s) de travail sur {{ e.jours }} jour(s) planifié(s){{ ' — plus de %d h par semaine en moyenne' % grid.max_hebdo if e.surcharge }}">
           <strong>{{ '%.0f' | format(e.heures) }} h</strong><small>{{ '%.1f' | format(e.hebdo) | replace('.', ',') }} h/sem.</small></td></tr>
     {% endfor %}</tbody>
   </table></div>
@@ -134,4 +152,30 @@
   </form>
 </section>
 {% endif %}
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  const card = document.getElementById('planning'), btn = document.getElementById('pl_expand');
+  if (!card || !btn) return;
+  const table = card.querySelector('table.planning');
+  let zoom = 1;
+  try { zoom = parseFloat(localStorage.getItem('planningZoom')) || 1; } catch (e) {}
+  function applyZoom() { table.style.fontSize = (0.78 * zoom).toFixed(3) + 'rem'; }
+  applyZoom();
+  card.querySelectorAll('[data-zoom]').forEach(b => b.addEventListener('click', () => {
+    zoom = Math.min(1.8, Math.max(0.6, zoom + 0.15 * Number(b.dataset.zoom)));
+    applyZoom();
+    try { localStorage.setItem('planningZoom', zoom); } catch (e) {}
+  }));
+  function setExpanded(on) {
+    card.classList.toggle('expanded', on);
+    document.body.classList.toggle('no-scroll', on);
+    btn.setAttribute('aria-pressed', on);
+    btn.textContent = on ? '✕ Réduire' : '⛶ Agrandir';
+  }
+  btn.addEventListener('click', () => setExpanded(!card.classList.contains('expanded')));
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && card.classList.contains('expanded')) setExpanded(false); });
+})();
+</script>
 {% endblock %}
