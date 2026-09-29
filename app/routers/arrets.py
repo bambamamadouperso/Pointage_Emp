@@ -69,6 +69,7 @@ async def declare(request: Request, db: Session = Depends(get_db), du: str = For
         return redirect("/arrets")
     finally:
         engine.dispose()
+    _notify(request, leave, username)
     auth.audit(request, "Arrêt maladie " + ("saisi (RH)" if hr else "déclaré"),
                f"{leave.matricule} {leave.name}", f"du {leave.start_date:%d/%m/%Y} au {leave.end_date:%d/%m/%Y}")
     if leave.status == "valide":
@@ -78,6 +79,13 @@ async def declare(request: Request, db: Session = Depends(get_db), du: str = For
         flash(request, "Arrêt maladie déclaré : il est transmis pour validation "
                        f"({arrets.step_label(arrets.leave_steps(leave)[0])}).", "ok")
     return redirect(f"/arrets/{leave.id}")
+
+
+def _notify(request: Request, leave: SickLeave, username: str, comment: str = "") -> None:
+    """Mail aux valideurs de l'étape en cours, ou à l'employé une fois la décision prise (si activé)."""
+    event = {"en_attente": "a_valider", "valide": "valide", "refuse": "refuse"}.get(leave.status)
+    if event:
+        arrets.start_notify(leave.id, event, str(request.base_url), username, comment)
 
 
 def _load(db: Session, leave_id: int, request: Request) -> Optional[SickLeave]:
@@ -124,6 +132,7 @@ def decision(request: Request, leave_id: int, decision: str = Form(...), comment
     finally:
         if engine is not None:
             engine.dispose()
+    _notify(request, leave, username, commentaire)
     auth.audit(request, "Arrêt maladie " + ("validé" if decision == "valider" else "refusé"),
                f"{leave.matricule} {leave.name}", commentaire)
     if leave.status == "valide":
@@ -176,8 +185,20 @@ def attachment(request: Request, leave_id: int, db: Session = Depends(get_db)):
 @admin_router.get("")
 def workflow_page(request: Request, db: Session = Depends(get_db)):
     users = db.scalars(select(User).where(User.active.is_(True)).order_by(User.username)).all()
+    from ..mails import get_settings
+
+    mail = get_settings(db)
     return render(request, "admin/arrets.html", steps=arrets.get_workflow(db), types=arrets.STEP_TYPES, users=users,
-                  hr_users=[u for u in users if u.sick_leave_hr])
+                  hr_users=[u for u in users if u.sick_leave_hr], notify=arrets.notify_enabled(db), mail=mail,
+                  without_email=[u for u in users if (u.sick_leave_hr or u.emp_matricule) and not u.email])
+
+
+@admin_router.post("/notifications")
+def notifications_save(request: Request, notify: bool = Form(False), db: Session = Depends(get_db)):
+    arrets.set_notify(db, notify, request.session.get("user", ""))
+    auth.audit(request, "Notifications des arrêts maladie " + ("activées" if notify else "désactivées"))
+    flash(request, "Notifications par e-mail " + ("activées." if notify else "désactivées."), "ok")
+    return redirect("/admin/arrets#notifications")
 
 
 @admin_router.post("")

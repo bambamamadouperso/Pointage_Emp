@@ -110,7 +110,14 @@ Les jours planifiés remplacent l'horaire de bureau : retard et durée validée 
 (P1 06h–14h, 1806 18h–06h…), poste de nuit compté le jour où il commence (départ du lendemain rattaché, marge
 réglable « marge avant/après un poste »), repos `P4` → « Repos (planning) », congé `P11` → « Congé Annuel »,
 formation → « Formation », absence possible un week-end planifié. Tables PostgreSQL `pointage_postes`
-(codes modifiables) et `pointage_planning` ; colonne `poste` dans `v_pointage_journalier`.
+(codes modifiables) et `pointage_planning` ; colonne `poste` dans `v_pointage_journalier`. La grille affiche les heures
+planifiées de chaque agent ; au-delà de 48 h par semaine en moyenne, l'agent est signalé (à l'import et en rouge).
+
+**Arrêts maladie** (*Arrêts maladie*, *Administration → Circuit arrêts maladie*) : déclaration par l'employé avec
+justificatif, circuit de validation paramétrable, saisie RH validée d'office. **Notifications par e-mail**
+(facultatives) : le valideur de l'étape en cours est prévenu, puis l'employé quand l'arrêt est validé ou refusé ;
+envoi via le serveur SMTP des mails de badge et soumis à son mode test / production. Adresse : celle du compte
+(*Utilisateurs*), sinon celle de la fiche employé.
 
 **Périmètre par compte** : un lecteur ou un manager peut être rattaché à un employé (matricule) et limité à
 **son équipe** : il ne voit (écran, détail, export) que lui-même et toutes les personnes placées sous lui.

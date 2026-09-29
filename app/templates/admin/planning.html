@@ -70,18 +70,22 @@
   <div class="planning-wrap"><table class="planning">
     <thead><tr><th class="pl-who">Employé</th>
       {% for d in grid.jours %}<th class="{{ 'we' if d.isoweekday() > 5 }}">{{ ['Lu','Ma','Me','Je','Ve','Sa','Di'][d.weekday()] }}<small>{{ d.strftime('%d/%m') }}</small></th>{% endfor %}
+      <th title="Heures de travail planifiées sur la période affichée (moyenne par semaine)">Heures<small>/ semaine</small></th>
     </tr></thead>
     <tbody>{% for e in grid.employes %}
       <tr><td class="pl-who"><span class="mono small">{{ e.matricule }}</span> {{ e.nom }}</td>
         {% for d in grid.jours %}{% set cell = grid.grille.get(e.matricule, {}).get(d) %}
         <td>{% if cell %}<span class="pl pl-{{ 'nuit' if cell[0] in nuit else cell[1] }}">{{ cell[0] }}</span>{% endif %}</td>
-        {% endfor %}</tr>
+        {% endfor %}
+        <td class="pl-hours {{ 'over' if e.surcharge }}" title="{{ e.postes }} poste(s) de travail{{ ' — plus de %d h par semaine en moyenne' % grid.max_hebdo if e.surcharge }}">
+          <strong>{{ '%.0f' | format(e.heures) }} h</strong><small>{{ '%.1f' | format(e.hebdo) | replace('.', ',') }} h/sem.</small></td></tr>
     {% endfor %}</tbody>
   </table></div>
   <div class="legend-row">
     <span><span class="pl pl-travail">P1</span> poste de jour</span><span><span class="pl pl-nuit">P3</span> poste de nuit</span>
     <span><span class="pl pl-repos">P4</span> repos</span><span><span class="pl pl-conge">P11</span> congé</span>
     <span><span class="pl pl-formation">P8</span> formation</span><span><span class="pl pl-inconnu">?</span> code supprimé</span>
+    <span><span class="pl pl-hours-over">52 h</span> plus de {{ grid.max_hebdo }} h par semaine en moyenne</span>
   </div>
   <form method="post" action="/admin/planning/supprimer" class="inline" style="margin-top:1rem"
         data-confirm="Supprimer le planning de cette période ? Ces jours suivront de nouveau l'horaire de bureau.">

@@ -27,6 +27,7 @@
               <label>Nom complet <input name="full_name" value="{{ u.full_name }}"></label>
               <label>Rôle <select name="role">{% for k, l in roles.items() %}<option value="{{ k }}" {{ 'selected' if u.role == k }}>{{ l }}</option>{% endfor %}</select></label>
               <label>Matricule de l'employé <input name="emp_matricule" value="{{ u.emp_matricule or '' }}"></label>
+              <label>E-mail <span class="muted small">(notifications)</span><input type="email" name="email" value="{{ u.email or '' }}"></label>
               <label>Périmètre du suivi <select name="scope">
                 <option value="tous" {{ 'selected' if u.scope != 'equipe' }}>Tout le personnel</option>
                 <option value="equipe" {{ 'selected' if u.scope == 'equipe' }}>Son équipe (hiérarchie)</option></select></label>
@@ -60,6 +61,7 @@
   </div>
   <div class="row">
     <label>Matricule de l'employé <span class="muted small">(facultatif)</span> <input name="emp_matricule"></label>
+    <label>E-mail <span class="muted small">(notifications ; vide = celle de la fiche employé)</span> <input type="email" name="email"></label>
     <label>Périmètre du suivi <select name="scope">
       <option value="tous">Tout le personnel</option>
       <option value="equipe">Son équipe (toute sa hiérarchie)</option></select></label>

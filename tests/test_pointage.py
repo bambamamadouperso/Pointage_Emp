@@ -969,6 +969,7 @@ def test_shift_planning_import_and_calculations(configured, pg, logged_client):
         assert "P9" in r.text and "Nouveaux codes" in r.text          # code de la légende créé
         assert "« ZZ » (1 j)" in r.text and "X999" in r.text           # code et matricule inconnus signalés
         assert "BA" in r.text.upper() and 'pl pl-nuit">1806' in r.text
+        assert "28 h" in r.text  # heures planifiées : 12 + 8 + 8 (repos et congé non comptés)
 
         got = rows(pg, THU, MON2)
         night = got[("E005", THU)]
@@ -1022,3 +1023,98 @@ def test_parse_planning_rejects_unknown_layout():
         pointage.parse_planning([["a", "b"], [1, 2]])
     plan = pointage.parse_planning([["MATRICULE", 590128.0], ["NOM", "KARAMOKO"], ["19/08/2026", 618]])
     assert plan["entries"] == [("590128", date(2026, 8, 19), "618")] and plan["names"] == {"590128": "KARAMOKO"}
+
+
+def test_sick_leave_email_notifications(configured, pg, logged_client, monkeypatch):
+    """Mails des arrêts maladie : valideur de l'étape en cours, puis l'employé à la décision ; mode test redirigé,
+    auteur de l'action exclu, adresse du compte ou de la fiche employé, désactivé par défaut."""
+    from fastapi.testclient import TestClient
+
+    from app import arrets, mails
+    from app.main import app
+    from app.models import MailSettings, SickLeave, SickLeaveAction, User
+
+    delivered, results = [], []
+
+    class FakeSMTP:
+        def __init__(self, host, port, timeout=None): pass
+        def ehlo(self): pass
+        def starttls(self, context=None): pass
+        def login(self, user, pwd): pass
+        def send_message(self, msg): delivered.append(msg)
+        def quit(self): pass
+
+    monkeypatch.setattr(mails.smtplib, "SMTP", FakeSMTP)
+    monkeypatch.setattr(arrets, "start_notify", lambda *a: results.append(arrets.notify(*a)))
+    for data in ({"username": "n_moussa", "emp_matricule": "E002", "email": "moussa@exemple.com"},
+                 {"username": "n_awa", "emp_matricule": "E001", "email": "awa@exemple.com"},
+                 {"username": "n_rh", "sick_leave_hr": "true", "email": "rh@exemple.com"},
+                 {"username": "n_bad", "email": "pas-une-adresse"}):
+        r = logged_client.post("/admin/users/save", data={**data, "role": "lecteur", "password": "motdepasse1"},
+                               follow_redirects=True)
+        assert ("invalide" if data["username"] == "n_bad" else "enregistré") in r.text
+    logged_client.post("/admin/arrets", data={"type": ["responsable", "rh"], "user": ["", ""]})
+    with SessionLocal() as db:
+        s = mails.get_settings(db)
+        s.smtp_host, s.from_email, s.mode, s.test_recipients = "smtp.test", "pointage@exemple.com", "test", "qa@exemple.com"
+        db.commit()
+
+    def client(name):
+        c = TestClient(app)
+        c.post("/login", data={"username": name, "password": "motdepasse1"})
+        return c
+
+    pdf = b"%PDF-1.4 arret"
+    try:
+        moussa, awa, rh = client("n_moussa"), client("n_awa"), client("n_rh")
+        moussa.post("/arrets", data={"du": "2026-10-05", "au": "2026-10-06"}, files={"justificatif": ("a.pdf", pdf)})
+        assert results[-1]["status"] == "disabled" and not delivered  # désactivé par défaut
+
+        page = logged_client.post("/admin/arrets/notifications", data={"notify": "true"}, follow_redirects=True).text
+        assert "Notifications par e-mail activées" in page and "smtp.test" in page and "qa@exemple.com" in page
+        with SessionLocal() as db:
+            db.query(SickLeave).delete()
+            db.commit()
+
+        # Déclaration : le responsable N+1 est prévenu ; mode test → redirigé vers l'adresse de test.
+        moussa.post("/arrets", data={"du": "2026-10-05", "au": "2026-10-06", "commentaire": "Grippe"},
+                    files={"justificatif": ("a.pdf", pdf)})
+        assert results[-1] == {"status": "sent", "sent": 1, "to": ["awa@exemple.com"]}
+        msg = delivered[-1]
+        assert msg["To"] == "qa@exemple.com" and msg["Subject"] == "[TEST] Arrêt maladie à valider — Ndiaye Moussa"
+        body = msg.get_body(("html",)).get_content()
+        assert "MODE TEST" in body and "awa@exemple.com" in body and "Grippe" in body and "/arrets/" in body
+        with SessionLocal() as db:
+            lid = db.query(SickLeave).one().id
+
+        # Étape 1 validée par Awa → les RH ; étape 2 validée par les RH → l'employé (pas l'auteur de l'action).
+        awa.post(f"/arrets/{lid}/decision", data={"decision": "valider"})
+        assert results[-1]["to"] == ["rh@exemple.com"]
+        rh.post(f"/arrets/{lid}/decision", data={"decision": "valider"})
+        assert results[-1]["to"] == ["moussa@exemple.com"] and "validé" in delivered[-1]["Subject"]
+
+        # Production : le mail part vers la vraie adresse ; refus avec motif.
+        with SessionLocal() as db:
+            mails.get_settings(db).mode = "production"
+            db.commit()
+        moussa.post("/arrets", data={"du": "2026-10-12", "au": "2026-10-12"}, files={"justificatif": ("a.pdf", pdf)})
+        assert delivered[-1]["To"] == "awa@exemple.com" and not delivered[-1]["Subject"].startswith("[TEST]")
+        with SessionLocal() as db:
+            lid2 = db.query(SickLeave).filter(SickLeave.id != lid).one().id
+        awa.post(f"/arrets/{lid2}/decision", data={"decision": "refuser", "commentaire": "Justificatif illisible"})
+        msg = delivered[-1]
+        assert msg["To"] == "moussa@exemple.com" and msg["Subject"] == "Arrêt maladie refusé — Ndiaye Moussa"
+        assert "Justificatif illisible" in msg.get_body(("html",)).get_content()
+        for c in (moussa, awa, rh):
+            c.close()
+    finally:
+        with pg.begin() as c:
+            c.execute(text(f"DELETE FROM {SCHEMA}.pointage_arrets_maladie"))
+        with SessionLocal() as db:
+            db.query(SickLeaveAction).delete()
+            db.query(SickLeave).delete()
+            db.query(User).filter(User.username.like("n\\_%", escape="\\")).delete(synchronize_session=False)
+            s = db.query(MailSettings).first()
+            s.smtp_host, s.from_email, s.mode, s.test_recipients = "", "", "test", ""
+            arrets.set_notify(db, False, "test")
+            db.commit()

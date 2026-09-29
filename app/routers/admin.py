@@ -549,6 +549,10 @@ async def planning_import(request: Request, fichier: UploadFile = File(...), db:
                f"{period} : {result['employes']} employé(s), {result['jours']} jour(s) planifié(s)")
     flash(request, f"Planning « {fichier.filename} » importé {period} : {result['employes']} employé(s), "
                    f"{result['jours']} jour(s) planifié(s). Les calculs du suivi en tiennent compte immédiatement.", "ok")
+    if result["surcharges"]:
+        flash(request, f"Planning chargé (plus de {pointage.PLANNING_WEEKLY_MAX} h par semaine en moyenne) : " + ", ".join(
+            f"{mat} — {h['heures']:.0f} h sur la période, soit {h['hebdo']:.1f} h/semaine"
+            for mat, h in result["surcharges"]) + ". Vérifiez qu'il ne s'agit pas d'une erreur de saisie.", "warn")
     if result["codes_crees"]:
         flash(request, "Nouveaux codes créés depuis la légende du fichier (à vérifier ci-dessous) : "
                        + ", ".join(result["codes_crees"]) + ".", "warn")
@@ -687,6 +691,7 @@ def user_save(
     emp_matricule: str = Form(""),
     scope: str = Form("tous"),
     sick_leave_hr: bool = Form(False),
+    email: str = Form(""),
     db: Session = Depends(get_db),
 ):
     me = request.session.get("user", "")
@@ -694,6 +699,12 @@ def user_save(
         flash(request, "Rôle inconnu.", "err")
         return redirect("/admin/users")
     scope = scope if scope in ("tous", "equipe") else "tous"
+    from ..mails import valid_email
+
+    email = email.strip()
+    if email and not valid_email(email):
+        flash(request, f"Adresse e-mail invalide : « {email} ».", "err")
+        return redirect("/admin/users")
     if scope == "equipe" and not emp_matricule.strip():
         flash(request, "Pour limiter un compte à son équipe, indiquez le matricule de l'employé correspondant.", "err")
         return redirect("/admin/users")
@@ -716,12 +727,13 @@ def user_save(
     def describe(u: User) -> str:
         return (f"rôle {u.role}, {'actif' if u.active else 'inactif'}, matricule {u.emp_matricule or '—'}, "
                 f"périmètre {'équipe' if u.scope == 'equipe' else 'tous'}, "
-                f"RH arrêts maladie {'oui' if u.sick_leave_hr else 'non'}")
+                f"RH arrêts maladie {'oui' if u.sick_leave_hr else 'non'}, e-mail {u.email or '—'}")
 
     before = describe(user) if user_id else "création"
     user.full_name, user.role, user.active = full_name.strip(), role, active if user_id else True
     user.emp_matricule, user.scope = emp_matricule.strip() or None, scope
     user.sick_leave_hr = sick_leave_hr
+    user.email = email or None
     if not user_id:
         db.add(user)
     try:

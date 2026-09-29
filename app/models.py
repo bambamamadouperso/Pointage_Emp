@@ -251,6 +251,8 @@ class User(Base):
     scope: Mapped[Optional[str]] = mapped_column(String(20), nullable=True, default="tous")
     # Agent RH habilité à saisir les arrêts maladie (validés d'office) et à valider les étapes « RH ».
     sick_leave_hr: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True, default=False)
+    # Adresse e-mail du compte (notifications) ; à défaut, celle de la fiche employé (matricule).
+    email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 
     @property
     def role_label(self) -> str:
@@ -413,3 +415,5 @@ class SickLeaveSettings(Base):
     workflow: Mapped[str] = mapped_column(Text, default="")
     updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     updated_by: Mapped[str] = mapped_column(String(100), default="")
+    # Mails aux valideurs (arrêt à valider) et à l'employé (décision), via le serveur SMTP des mails de badge.
+    notify: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True, default=False)

@@ -42,6 +42,24 @@
   </div>
 </form>
 
+<form method="post" action="/admin/arrets/notifications" class="card form" id="notifications" style="max-width:860px">
+  <h2>Notifications par e-mail</h2>
+  <label class="check"><input type="checkbox" name="notify" value="true" {{ 'checked' if notify }}>
+    <span><strong>Prévenir par e-mail</strong> les valideurs de l'étape en cours quand un arrêt leur revient, puis l'employé
+      (et l'auteur de la déclaration) quand l'arrêt est validé ou refusé.</span></label>
+  <ul class="rule-list small">
+    <li>Envoi avec le serveur SMTP des <a href="/admin/mails">Mails de badge</a> :
+      {% if mail.smtp_host and mail.from_email %}<strong>{{ mail.smtp_host }}</strong>, expéditeur {{ mail.from_email }}
+      {% else %}<span class="warn-text">serveur non configuré — aucun mail ne partira</span>{% endif %}.</li>
+    <li>Mode : {% if mail.mode == 'production' %}<span class="badge ok">Production</span> — les mails partent vers les personnes concernées.
+      {% else %}<span class="badge warn">Test</span> — tous les mails partent vers les adresses de test
+      ({{ mail.test_recipients or 'aucune adresse de test' }}), avec un bandeau « MODE TEST ».{% endif %}</li>
+    <li>Adresse d'un compte : celle saisie dans <a href="/admin/users">Utilisateurs</a>, sinon celle de la fiche employé (matricule).
+      {% if without_email %}Sans adresse saisie : {{ without_email | map(attribute='username') | join(', ') }}.{% endif %}</li>
+  </ul>
+  <div class="form-actions"><button class="btn primary">Enregistrer</button></div>
+</form>
+
 <template id="wf_tpl">
   <li class="wf-step">
     <span class="wf-num"></span>

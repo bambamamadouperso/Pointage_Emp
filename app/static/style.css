@@ -809,3 +809,9 @@ table.planning th small { display: block; font-weight: 400; color: var(--muted);
 .legend-row { display: flex; flex-wrap: wrap; gap: .5rem 1rem; margin: .6rem 0 0; font-size: .8rem; color: var(--muted); }
 table.postes input, table.postes select { min-width: 0; width: 100%; }
 table.postes td { vertical-align: middle; }
+table.planning td.pl-hours { position: sticky; right: 0; background: var(--surface); text-align: right; border-left: 1px solid var(--border); }
+table.planning thead th:last-child { position: sticky; right: 0; z-index: 3; border-left: 1px solid var(--border); }
+table.planning td.pl-hours strong { display: block; font-variant-numeric: tabular-nums; }
+table.planning td.pl-hours small { color: var(--muted); }
+table.planning td.pl-hours.over, .pl-hours-over { background: var(--err-bg); color: var(--err); }
+table.planning td.pl-hours.over small { color: var(--err); }

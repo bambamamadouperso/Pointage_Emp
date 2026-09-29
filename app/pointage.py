@@ -1155,6 +1155,10 @@ DEFAULT_POSTES = [
     {"code": "P8", "libelle": "Formation", "type": "formation", "debut": None, "fin": None, "duree": "08:00"},
     {"code": "P11", "libelle": "Congés", "type": "conge", "debut": None, "fin": None, "duree": None},
 ]
+# Au-delà de cette moyenne d'heures planifiées par semaine, le planning d'un agent est signalé.
+PLANNING_WEEKLY_MAX = 48
+_POSTE_MINUTES = ("CASE WHEN po.type = 'travail' THEN extract(epoch FROM (po.fin - po.debut) + CASE WHEN po.fin <= po.debut "
+                  "THEN interval '24 hours' ELSE interval '0' END - po.pause) / 60 ELSE 0 END")
 _POSTE_KEYWORDS = [("repos", "repos"), ("conge", "conge"), ("formation", "formation"), ("ferie", "ferie"),
                    ("astreinte", "repos")]
 
@@ -1376,9 +1380,27 @@ def import_planning(engine: Engine, m: Mapping, plan: dict, author: str) -> dict
                 f"INSERT INTO {S}.pointage_planning (matricule, jour, code, auteur) VALUES (:m, :j, :c, :a) "
                 f"ON CONFLICT (matricule, jour) DO UPDATE SET code = EXCLUDED.code, auteur = EXCLUDED.auteur, "
                 f"modifie_le = now()"), {"m": mat, "j": day, "c": code, "a": author})
+        hours = _planned_hours(c, S, plan["du"], plan["au"], sorted({mat for mat, _ in rows}))
     return {"jours": len(rows), "employes": len({mat for mat, _ in rows}), "du": plan["du"], "au": plan["au"],
+            "surcharges": [(mat, h) for mat, h in hours.items() if h["hebdo"] > PLANNING_WEEKLY_MAX],
             "codes_crees": created, "codes_inconnus": unknown_codes,
             "matricules_inconnus": [mat for mat in mats if mat not in found]}
+
+
+def _planned_hours(c, S: str, du: date, au: date, mats: list[str]) -> dict[str, dict]:
+    """Heures de travail planifiées par matricule sur la période, et leur moyenne par semaine."""
+    if not mats:
+        return {}
+    days = (au - du).days + 1
+    out = {}
+    for mat, minutes, n in c.execute(text(
+            f"SELECT pp.matricule, COALESCE(sum({_POSTE_MINUTES}), 0), count(*) FILTER (WHERE po.type = 'travail') "
+            f"FROM {S}.pointage_planning pp JOIN {S}.pointage_postes po ON po.code = pp.code "
+            f"WHERE pp.jour BETWEEN :du AND :au AND pp.matricule IN :m GROUP BY 1")
+            .bindparams(bindparam("m", expanding=True)), {"du": du, "au": au, "m": mats}):
+        total = float(minutes) / 60
+        out[mat] = {"heures": total, "postes": n, "hebdo": total * 7 / days}
+    return out
 
 
 def planning_grid(engine: Engine, m: Mapping, du: date, au: date) -> dict:
@@ -1398,14 +1420,18 @@ def planning_grid(engine: Engine, m: Mapping, du: date, au: date) -> dict:
                 for ref in (mat, key):
                     people.setdefault(ref, {"nom": " ".join(x for x in (nom, prenom) if x), "service": service})
         bounds = c.execute(text(f"SELECT min(jour), max(jour), count(DISTINCT matricule) FROM {S}.pointage_planning")).one()
+        hours = _planned_hours(c, S, du, au, mats)
     grid: dict[str, dict] = {}
     for mat, day, code, kind in cells:
         grid.setdefault(mat, {})[day] = (code, kind or "inconnu")
-    employees = sorted(({"matricule": mat, **people.get(mat, {"nom": "(introuvable)", "service": None})} for mat in mats),
+    empty = {"heures": 0.0, "postes": 0, "hebdo": 0.0}
+    employees = sorted(({"matricule": mat, **people.get(mat, {"nom": "(introuvable)", "service": None}),
+                         **hours.get(mat, empty), "surcharge": hours.get(mat, empty)["hebdo"] > PLANNING_WEEKLY_MAX}
+                        for mat in mats),
                        key=lambda e: (e["nom"] or "").lower())
     days = [du + timedelta(days=i) for i in range((au - du).days + 1)]
     return {"employes": employees, "jours": days, "grille": grid,
-            "premier": bounds[0], "dernier": bounds[1], "planifies": bounds[2]}
+            "premier": bounds[0], "dernier": bounds[1], "planifies": bounds[2], "max_hebdo": PLANNING_WEEKLY_MAX}
 
 
 def delete_planning(engine: Engine, m: Mapping, du: date, au: date, matricule: str = "") -> int:
