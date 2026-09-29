@@ -182,7 +182,8 @@
           {% if r.poste %}<br><span class="poste-tag" title="Poste planifié (horaires postés)">{{ r.poste }}</span>{% endif %}</td>
         <td class="right">{% if r.duree_validee_min is not none %}<span class="dur {{ 'dur-ok' if r.duree_validee_min >= objectif_min else 'dur-ko' }}"
           title="{{ 'Objectif atteint' if r.duree_validee_min >= objectif_min else 'Sous l\'objectif' }} ({{ objectif_min // 60 }}h{{ '%02d' % (objectif_min % 60) }})">{{ hhmm(r.duree_validee) }}</span>{% else %}—{% endif %}</td>
-        <td class="right">{{ hhmm(r.duree_effective) }}</td>
+        <td class="right">{% if r.duree_effective_min is not none %}<span class="dur {{ 'dur-ok' if r.duree_effective_min >= objectif_min else 'dur-ko' }}"
+          title="{{ 'Objectif atteint' if r.duree_effective_min >= objectif_min else 'Sous l\'objectif' }} ({{ objectif_min // 60 }}h{{ '%02d' % (objectif_min % 60) }})">{{ hhmm(r.duree_effective) }}</span>{% else %}—{% endif %}</td>
       </tr>
     {% endfor %}
     </tbody>
@@ -193,8 +194,8 @@
       <td class="right"><strong>{{ hhmm(k.moy_validee) }}</strong></td><td class="right"><strong>{{ hhmm(k.moy_effective) }}</strong></td>
     </tr></tfoot>
   </table></div>
-  <p class="muted small dur-legend"><span class="dur dur-ok">≥ {{ objectif_min // 60 }}h{{ '%02d' % (objectif_min % 60) }}</span> objectif de durée validée atteint ·
-    <span class="dur dur-ko">&lt; {{ objectif_min // 60 }}h{{ '%02d' % (objectif_min % 60) }}</span> sous l'objectif
+  <p class="muted small dur-legend"><span class="dur dur-ok">≥ {{ objectif_min // 60 }}h{{ '%02d' % (objectif_min % 60) }}</span> objectif de durée atteint ·
+    <span class="dur dur-ko">&lt; {{ objectif_min // 60 }}h{{ '%02d' % (objectif_min % 60) }}</span> sous l'objectif (durées validée et effective)
     {% if can(role, 'admin') %}(<a href="/admin/parametres">modifier l'objectif</a>){% endif %}</p>
   {% include "_pager.html" with context %}
   {% endif %}

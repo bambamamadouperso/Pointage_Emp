@@ -24,7 +24,9 @@
     <li>Les pointages sont rattachés au poste s'ils ont lieu jusqu'à <strong>{{ marge | replace(':', 'h') }}</strong> avant son début ou
       après sa fin (<a href="/admin/parametres">Paramètres horaires</a> → « marge avant/après un poste »).</li>
     <li><span class="badge st-off">Repos (planning)</span>, <span class="badge st-leave">Congé Annuel</span>,
-      <span class="badge st-train">Formation</span>, férié payé : jamais d'absence. Repos et fériés ne comptent pas dans les jours attendus des rapports.</li>
+      <span class="badge st-train">Formation</span>, férié payé : jamais d'absence. Repos et fériés ne comptent pas dans les jours attendus des rapports.
+      Un jour de repos est crédité de <strong>{{ duree_repos | replace(':', 'h') }}</strong> de durée validée
+      (<a href="/admin/parametres">Paramètres horaires</a> → « durée validée attribuée par jour de repos » ; la « durée attribuée » d'un code l'emporte).</li>
     <li>Les jours sans planning pour un employé suivent l'horaire de bureau habituel.</li>
   </ul>
 </section>

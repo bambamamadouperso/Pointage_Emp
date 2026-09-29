@@ -795,6 +795,11 @@ def test_average_punches_and_duration_colours(configured, logged_client):
     ws = xlsx["Suivi journalier"]
     fills = {ws.cell(i, 2).value: ws.cell(i, 11).fill.fgColor.rgb for i in range(2, ws.max_row + 1) if ws.cell(i, 11).value}
     assert fills["E001"].endswith("C6EFCE") and fills["E002"].endswith("FFC7CE")  # 7h30 ≥ 7h ; 6h50 < 7h
+    # Durée effective colorée de la même façon : Awa 8h20 ≥ 7h (vert), Aminata 4h15 < 7h (rouge).
+    eff = {ws.cell(i, 2).value: ws.cell(i, 12).fill.fgColor.rgb for i in range(2, ws.max_row + 1) if ws.cell(i, 12).value}
+    assert eff["E001"].endswith("C6EFCE") and eff["E007"].endswith("FFC7CE")
+    cells = page.split("<tbody>")[1].split("</tbody>")[0]
+    assert cells.count('class="dur dur-ok"') == 2  # validée 7h30 et effective 8h20 d'Awa
     last = [c.value for c in ws[ws.max_row]]
     assert last[0] == "Moyenne" and last[6].strftime("%H:%M") == "07:42" and last[7].strftime("%H:%M") == "15:26"
     logged_client.post("/admin/parametres", data={**values, "objectif_duree": "08:00",
@@ -985,6 +990,7 @@ def test_shift_planning_import_and_calculations(configured, pg, logged_client):
         assert hm(night.duree_validee) == "12h00" and hm(night.duree_effective) == "12h10"
         rest = got[("E005", FRI)]
         assert rest.statut == "REPOS" and rest.nb_pointages == 0 and not rest.jour_ouvre
+        assert hm(rest.duree_validee) == "8h00" and rest.duree_effective is None  # repos crédité de 8h validées
         late = got[("E005", SAT)]  # 15h00 pour un poste de 14h (tolérance 45 min) : retard de 60 min
         assert late.statut == "RETARD" and late.retard_min == 60 and hm(late.duree_validee) == "7h00" and late.jour_ouvre
         assert got[("E005", SUN)].statut == "ABSENT" and got[("E005", SUN)].jour_ouvre

@@ -522,13 +522,15 @@ def planning_page(request: Request, du: str = "", au: str = "", db: Session = De
     cfg, mapping = _mapping_ready(db)
     context = dict(mapping=mapping, postes=[], grid=None, error=None, types=pointage.POSTE_TYPES,
                    marge=pointage.PARAM_DEFAULTS["marge_poste"], du=None, au=None, nuit=set(),
-                   tronque=False, raccourcis=None, max_jours=MAX_GRID_DAYS)
+                   tronque=False, raccourcis=None, max_jours=MAX_GRID_DAYS,
+                   duree_repos=pointage.PARAM_DEFAULTS["duree_repos"])
     if mapping is not None:
         engine = make_engine(cfg.conn, **pointage.WEB_LIMITS)
         try:
             context["postes"] = pointage.postes(engine, mapping)
             context["nuit"] = {p["code"] for p in context["postes"] if p["type"] == "travail" and p["fin"] <= p["debut"]}
-            context["marge"] = pointage.params_at(engine, mapping, date.today())["marge_poste"]
+            current = pointage.params_at(engine, mapping, date.today())
+            context["marge"], context["duree_repos"] = current["marge_poste"], current["duree_repos"]
             start, end = pointage.parse_day(du), pointage.parse_day(au)
             if not (start and end):
                 bounds = pointage.planning_grid(engine, mapping, date.today(), date.today())

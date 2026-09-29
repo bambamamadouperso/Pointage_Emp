@@ -29,6 +29,7 @@ PARAMS = [
     ("duree_terrain", "Durée validée minimale par jour pour un agent terrain", "duration", "08:00"),
     ("objectif_duree", "Objectif de durée validée (vert si atteint, rouge sinon)", "duration", "08:00"),
     ("duree_arret_maladie", "Durée attribuée par jour d'arrêt maladie", "duration", "08:00"),
+    ("duree_repos", "Horaires postés : durée validée attribuée par jour de repos (planning)", "duration", "08:00"),
     ("marge_poste", "Horaires postés : marge avant/après un poste pour y rattacher les pointages", "duration", "04:00"),
 ]
 PARAM_LABELS = {k: label for k, label, _, _ in PARAMS}
@@ -53,7 +54,7 @@ STATUTS = {
 }
 CONGES = ("CONGE_ANNUEL", "CONGE_EXCEP")
 # Version des objets PostgreSQL : si elle change, ils sont réinstallés automatiquement.
-SQL_VERSION = 14
+SQL_VERSION = 15
 # Limites des requêtes lancées depuis les pages web : une attente de verrou ou une requête lente ne doit jamais
 # bloquer le site (au pire, la page affiche une erreur au bout de 2 minutes).
 WEB_LIMITS = {"lock_timeout_s": 15, "statement_timeout_s": 120}
@@ -582,6 +583,7 @@ par AS (
         {param('duree_teletravail', '::interval')} AS duree_teletravail,
         {param('duree_terrain', '::interval')} AS duree_terrain,
         {param('duree_arret_maladie', '::interval')} AS duree_maladie,
+        {param('duree_repos', '::interval')} AS duree_repos,
         EXISTS (SELECT 1 FROM {S}.pointage_jours_feries f WHERE f.jour = d::date) AS ferie
     FROM generate_series(p_du::timestamp, LEAST(p_au, current_date)::timestamp, interval '1 day') AS d
 ),
@@ -607,7 +609,7 @@ g AS (
     SELECT b.emp_key, b.jour, e.matricule, e.nom, e.prenom, e.service, e.responsable_key, e.responsable, e.categorie,
            a.p1, a.p2, a.n, (e.emp_key IS NULL) AS hors_liste,
            p.debut_journee, p.debut_pause, p.fin_pause, p.fin_journee, p.seuil_retard, p.duree_pause,
-           p.duree_conge, p.duree_teletravail, p.duree_terrain, p.duree_maladie, k.statut AS conge, t.statut AS tele,
+           p.duree_conge, p.duree_teletravail, p.duree_terrain, p.duree_maladie, p.duree_repos, k.statut AS conge, t.statut AS tele,
            (mal.emp_key IS NOT NULL) AS maladie,
            COALESCE(e.terrain, false) AS terrain,
            s.code AS poste_code, s.type AS poste_type, s.libelle AS poste_libelle, s.s_debut, s.s_fin,
@@ -679,7 +681,9 @@ SELECT c.emp_key, COALESCE(c.matricule, c.emp_key), COALESCE(c.nom, 'Hors liste'
 FROM c
 CROSS JOIN LATERAL (
     SELECT CASE WHEN c.poste_type = 'travail' AND c.statut IN ('A_L_HEURE', 'RETARD') THEN c.hv_poste
-                WHEN c.poste_type IN ('formation', 'ferie', 'repos') THEN nullif(c.s_duree, interval '0')
+                -- Repos du planning : durée du code s'il en a une, sinon le paramètre « durée attribuée par jour de repos ».
+                WHEN c.poste_type = 'repos' THEN COALESCE(nullif(c.s_duree, interval '0'), c.duree_repos)
+                WHEN c.poste_type IN ('formation', 'ferie') THEN nullif(c.s_duree, interval '0')
                 WHEN c.statut IN ('CONGE_ANNUEL', 'CONGE_EXCEP') THEN c.duree_conge
                 WHEN c.statut = 'TELETRAVAIL' THEN c.duree_teletravail
                 WHEN c.statut = 'ARRET_MALADIE' THEN c.duree_maladie

@@ -237,10 +237,11 @@ def export(request: Request, db: Session = Depends(get_db)):
         for col in (11, 12):
             ws.cell(row, col).number_format = "[H]:MM"
         ws.cell(row, 10).fill = PatternFill("solid", fgColor=fills.get(r["statut"], "FFFFFF"))
-        if r["duree_validee_min"] is not None:  # objectif de durée validée : vert atteint, rouge sinon
-            ok = float(r["duree_validee_min"]) >= objectif
-            ws.cell(row, 11).fill = PatternFill("solid", fgColor="C6EFCE" if ok else "FFC7CE")
-            ws.cell(row, 11).font = Font(color="006100" if ok else "9C0006", bold=True)
+        for col, key in ((11, "duree_validee_min"), (12, "duree_effective_min")):  # objectif : vert atteint, rouge sinon
+            if r[key] is not None:
+                ok = float(r[key]) >= objectif
+                ws.cell(row, col).fill = PatternFill("solid", fgColor="C6EFCE" if ok else "FFC7CE")
+                ws.cell(row, col).font = Font(color="006100" if ok else "9C0006", bold=True)
     for i, h in enumerate(headers, 1):
         ws.cell(1, i).font = Font(bold=True)
         ws.cell(1, i).alignment = Alignment(wrap_text=True, vertical="top")
