@@ -1131,3 +1131,143 @@ def test_sick_leave_email_notifications(configured, pg, logged_client, monkeypat
             s.smtp_host, s.from_email, s.mode, s.test_recipients = "", "", "test", ""
             arrets.set_notify(db, False, "test")
             db.commit()
+
+
+def test_missions_from_authorisation_table(configured, pg, logged_client):
+    """Autorisations de mission (ex. feuille Smartsheet synchronisée) : « En mission », 8h validées, même si la
+    personne a badgé ; seulement les missions approuvées et les jours ouvrés."""
+    import dataclasses
+
+    with pg.begin() as c:
+        c.execute(text(f"DROP TABLE IF EXISTS {SCHEMA}.missions_ss"))
+        c.execute(text(f"""CREATE TABLE {SCHEMA}.missions_ss (row_id bigint, matricule text, date_de_depart date,
+                          date_de_retour date, statut text)"""))
+        c.execute(text(f"""INSERT INTO {SCHEMA}.missions_ss VALUES
+            (1, 'E002', '2026-09-21', '2026-09-22', 'Approuvée'),   -- a badgé lundi : en mission quand même
+            (2, 'E005', '2026-09-21', NULL, ' APPROUVE '),          -- sans date de retour : un jour ; casse ignorée
+            (3, 'E003', '2026-09-21', '2026-09-21', 'En attente'),  -- non approuvée
+            (4, 'E004', '2026-09-26', '2026-09-26', 'Validée')      -- samedi : reste non ouvré"""))
+    with SessionLocal() as db:
+        m = pointage.Mapping.from_json(db.query(PointageConfig).one().data)
+    m = dataclasses.replace(m, objects_schema="pt_test_mission", mission_table="missions_ss", mission_emp_col="matricule",
+                            mission_start_col="date_de_depart", mission_end_col="date_de_retour",
+                            mission_state_col="statut")
+    assert m.mission_ref == "matricule" and "Approuvée" in m.mission_state_values
+    with pg.begin() as c:
+        c.execute(text("DROP SCHEMA IF EXISTS pt_test_mission CASCADE"))
+    pointage.install(pg, m, "test")
+    try:
+        with pg.connect() as c:
+            r = {(x.matricule, x.jour): x for x in c.execute(text(
+                "SELECT * FROM pt_test_mission.f_pointage_journalier(:du, :au)"), {"du": MON, "au": SAT}).mappings()}
+        moussa = r[("E002", MON)]
+        assert (moussa.statut, moussa.statut_libelle) == ("MISSION", "En mission")
+        assert hm(moussa.duree_validee) == "8h00" and hm(moussa.duree_effective) == "7h05"  # effective : ses pointages
+        assert r[("E002", TUE)].statut == "MISSION" and r[("E002", WED)].statut != "MISSION"
+        khady = r[("E005", MON)]
+        assert khady.statut == "MISSION" and hm(khady.duree_validee) == "8h00" and hm(khady.duree_effective) == "8h00"
+        assert r[("E005", TUE)].statut == "ABSENT"
+        assert r[("E003", MON)].statut == "A_L_HEURE" and r[("E004", SAT)].statut == "NON_OUVRE"
+        assert r[("E002", MON)].retard_min is None
+
+        # Administration : section Missions avec colonnes proposées.
+        admin = logged_client.get(f"/admin/pointage?conn_id={configured}&schema={SCHEMA}&punch_table=punchlog"
+                                  f"&emp_table=Employes&mission_table=missions_ss").text
+        section = admin.split("Table des autorisations de mission")[1]
+        assert '<option value="date_de_depart" selected' in section and '<option value="date_de_retour" selected' in section
+        assert '<option value="statut" selected' in section
+    finally:
+        with pg.begin() as c:
+            c.execute(text("DROP SCHEMA IF EXISTS pt_test_mission CASCADE"))
+            c.execute(text(f"DROP TABLE IF EXISTS {SCHEMA}.missions_ss"))
+
+
+def test_manager_digests(configured, pg, logged_client, monkeypatch):
+    """Résumés par mail aux responsables : équipe N-1 (sans le responsable), constats, planification, mode test,
+    un seul envoi par période, journal."""
+    from app import digests, mails
+    from app.models import DigestLog, DigestSubscriber, MailSettings
+
+    # Périodes et heures d'envoi.
+    assert digests.period("quotidien", date(2026, 9, 22)) == (MON, MON)
+    assert digests.period("hebdomadaire", date(2026, 9, 29)) == (MON, date(2026, 9, 27))
+    with SessionLocal() as db:
+        s = digests.get_settings(db)
+        s.daily_enabled, s.daily_time, s.weekly_enabled, s.weekly_day, s.weekly_time = True, "07:30", True, 1, "08:00"
+        db.commit()
+        assert digests.due_kinds(s, datetime(2026, 9, 28, 7, 0)) == []
+        assert digests.due_kinds(s, datetime(2026, 9, 28, 7, 45)) == ["quotidien"]
+        assert digests.due_kinds(s, datetime(2026, 9, 29, 6, 0)) == ["hebdomadaire"]  # lundi manqué : rattrapé mardi
+
+    # Contenu : équipe directe de Diallo (Ndiaye, Sow ; Gueye inactif), sans Diallo elle-même.
+    engine = create_engine(POSTGRES_URL)
+    with SessionLocal() as db:
+        m = pointage.Mapping.from_json(db.query(PointageConfig).one().data)
+    data = digests.collect(pg, m, "1", "quotidien", MON, MON)
+    assert [r["matricule"] for r in data["rows"]] == ["E002", "E003"]  # retard d'abord, puis par nom
+    notes = " ".join(t for _, t in digests.insights(data))
+    assert "1 retard(s) : Ndiaye Moussa (40 min)" in notes and "Taux de présence de 100 %" in notes
+    subject, body, _ = digests.render(data, "Diallo Awa", "ACME", "http://pointage:8000")
+    assert subject == "Pointages de votre équipe — lundi 21 septembre 2026"
+    assert "Point du jour — équipe de Diallo Awa" in body and "http://pointage:8000/suivi?du=2026-09-21" in body
+    assert "<strong>Diallo Awa</strong>" not in body and "<strong>Ndiaye Moussa</strong>" in body
+    week = digests.collect(pg, m, "1", "hebdomadaire", MON, date(2026, 9, 27))
+    subject, body, _ = digests.render(week, "Diallo Awa")
+    assert subject.startswith("Bilan hebdomadaire des pointages de votre équipe — semaine du 21 septembre au 27")
+    assert "Détail par collaborateur" in body
+    engine.dispose()
+
+    # Administration : responsables proposés, abonnements, aperçu.
+    page = logged_client.get("/admin/resumes").text
+    assert "Diallo Awa" in page and "Sow Fatou" in page and 'name="freq_1"' in page
+    r = logged_client.post("/admin/resumes/abonnes", data={"freq_1": "les_deux", "email_1": "awa@exemple.com",
+                                                          "freq_3": "hebdomadaire", "email_3": "pas-une-adresse"},
+                           follow_redirects=True)
+    assert "2 responsable(s) abonné(s)" in r.text and "Adresse(s) invalide(s) ignorée(s)" in r.text
+    preview = logged_client.get("/admin/resumes/apercu?manager=1&kind=hebdomadaire").text
+    assert "Point de la semaine — équipe de Diallo Awa" in preview
+
+    # Envoi planifié : SMTP simulé, mode test → adresses de test ; un seul envoi par période.
+    delivered = []
+
+    class FakeSMTP:
+        def __init__(self, host, port, timeout=None): pass
+        def ehlo(self): pass
+        def starttls(self, context=None): pass
+        def login(self, user, pwd): pass
+        def send_message(self, msg): delivered.append(msg)
+        def quit(self): pass
+
+    monkeypatch.setattr(mails.smtplib, "SMTP", FakeSMTP)
+    with SessionLocal() as db:
+        ms = mails.get_settings(db)
+        ms.smtp_host, ms.from_email, ms.mode, ms.test_recipients = "smtp.test", "pointage@exemple.com", "test", "qa@exemple.com"
+        db.commit()
+    try:
+        result = digests.run_due(datetime(2026, 9, 28, 8, 30))  # lundi : veille = dimanche, semaine du 21 au 27
+        assert result == {"status": "done", "sent": 1, "skipped": 2, "failed": 0}, result
+        # Diallo : hebdomadaire envoyé, quotidien du dimanche ignoré (personne attendu) ; Sow : aucune adresse
+        # valide → ignoré, comme il le serait en production.
+        subjects = [msg["Subject"] for msg in delivered]
+        assert len(subjects) == 1 and subjects[0].startswith("[TEST] Bilan hebdomadaire")
+        assert all(msg["To"] == "qa@exemple.com" for msg in delivered)
+        assert "MODE TEST" in delivered[0].get_body(("html",)).get_content()
+        assert digests.run_due(datetime(2026, 9, 28, 9, 0)) == {"status": "idle"}  # déjà traité
+        page = logged_client.get("/admin/resumes").text
+        assert "Journal des envois" in page and "Envoyé" in page and "personne n&#39;était attendu" in page
+        assert "aucune adresse e-mail" in page
+
+        # Essai depuis l'administration, vers une adresse choisie.
+        r = logged_client.post("/admin/resumes/essai", data={"manager": "1", "kind": "quotidien", "to": "moi@exemple.com"},
+                               follow_redirects=True)
+        assert "Résumé quotidien d&#39;essai envoyé à moi@exemple.com" in r.text
+        assert delivered[-1]["To"] == "moi@exemple.com" and delivered[-1]["Subject"].startswith("[TEST] Pointages")
+    finally:
+        with SessionLocal() as db:
+            db.query(DigestLog).delete()
+            db.query(DigestSubscriber).delete()
+            s = digests.get_settings(db)
+            s.daily_enabled = s.weekly_enabled = False
+            ms = db.query(MailSettings).first()
+            ms.smtp_host, ms.from_email, ms.mode, ms.test_recipients = "", "", "test", ""
+            db.commit()

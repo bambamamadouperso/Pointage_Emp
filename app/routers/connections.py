@@ -1,5 +1,6 @@
 """Gestion des connexions : sources (MariaDB, Google Sheets) et cibles (PostgreSQL)."""
 import json
+import re
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import JSONResponse
@@ -7,7 +8,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from .. import dbadmin, gsheet
+from .. import dbadmin, gsheet, smartsheet
 from ..crypto import decrypt, encrypt
 from ..database import get_db
 from ..errors import friendly
@@ -33,7 +34,7 @@ def new_connection(request: Request, kind: str = "mariadb"):
 
 
 def _form(request: Request, conn: Connection, **extra):
-    return render(request, "connection_form.html", conn=conn, kinds=KIND_LABELS,
+    return render(request, "connection_form.html", conn=conn, kinds=KIND_LABELS, ss_hosts=smartsheet.HOSTS,
                   sheet_auths=gsheet.AUTH_LABELS, sa_email=gsheet.service_account_email(conn)
                   if conn.is_gsheet and conn.password_enc else "", **extra)
 
@@ -61,6 +62,9 @@ def save_connection(
     sheet_link: str = Form(""),
     sheet_auth: str = Form(gsheet.AUTH_PUBLIC),
     sa_json: str = Form(""),
+    ss_host: str = Form(smartsheet.DEFAULT_HOST),
+    ss_sheets: str = Form(""),
+    ss_token: str = Form(""),
     options: str = Form(""),
     action: str = Form("save"),
     db: Session = Depends(get_db),
@@ -93,6 +97,16 @@ def save_connection(
                 error = "Collez la clé JSON du compte de service."
         if not database:
             error = "Indiquez le lien ou l'identifiant du classeur Google Sheets."
+    elif kind == "smartsheet":
+        # Smartsheet : host = serveur de l'API, database = feuille(s), mot de passe = jeton d'accès API.
+        host = ss_host if ss_host in smartsheet.HOSTS else smartsheet.DEFAULT_HOST
+        port, username, password = 443, "token", ss_token.strip()
+        database = ", ".join(r.strip() for r in re.split(r"[,;\n]+", ss_sheets) if r.strip())
+        if not password and not (existing and existing.is_smartsheet and existing.password_enc):
+            error = "Collez le jeton d'accès API Smartsheet."
+        elif not database and action != "test":
+            error = ("Indiquez la ou les feuilles à lire (identifiant ou nom). « Tester la connexion » sans feuille "
+                     "liste les feuilles accessibles avec le jeton.")
     elif not (host.strip() and port and database.strip() and username.strip()):
         error = "Hôte, port, base de données et utilisateur sont obligatoires."
 
@@ -207,7 +221,7 @@ def test_saved_connection(conn_id: int, request: Request, db: Session = Depends(
     else:
         try:
             version = test_connection(conn)
-            if conn.is_gsheet:
+            if conn.is_sheet:
                 flash(request, f"« {conn.name} » : {version}.", "ok")
             else:
                 count = len(list_tables(conn))

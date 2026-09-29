@@ -12,7 +12,7 @@
 </div>
 <section class="card">
   {% if not connections %}
-    <p class="empty">Aucune connexion. Ajoutez une source (MariaDB, HFSQL ou Google Sheets) et une base cible PostgreSQL.</p>
+    <p class="empty">Aucune connexion. Ajoutez une source (MariaDB, HFSQL, Google Sheets ou Smartsheet) et une base cible PostgreSQL.</p>
   {% else %}
   <div class="table-wrap"><table>
     <thead><tr><th>Nom</th><th>Type</th><th>Hôte</th><th>Base</th><th>Utilisateur</th><th></th></tr></thead>
@@ -24,6 +24,8 @@
         {% if c.is_gsheet %}
         <td colspan="2"><a href="{{ c.sheet_url }}" target="_blank" rel="noopener">Ouvrir le classeur ↗</a></td>
         <td>{{ 'compte de service' if c.username == 'service_account' else 'lien public' }}</td>
+        {% elif c.is_smartsheet %}
+        <td>{{ c.host }}</td><td>{{ c.database }}</td><td>jeton API</td>
         {% else %}
         <td>{{ c.host }}:{{ c.port }}</td>
         <td>{{ c.database }}</td>

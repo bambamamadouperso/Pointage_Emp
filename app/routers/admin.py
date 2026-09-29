@@ -70,7 +70,7 @@ def pointage_config(request: Request, db: Session = Depends(get_db)):
     conn = db.get(Connection, conn_id) if conn_id else (connections[0] if connections else None)
     schemas, tables, punch_cols, emp_cols, service_cols, error, installed = [], [], {}, {}, {}, None, False
     person_cols, hier_cols, leave_cols, tw_cols, diag, stale = {}, {}, {}, {}, None, False
-    cat_cols, cat_values = {}, []
+    cat_cols, cat_values, mission_cols = {}, [], {}
     if conn is not None:
         engine = make_engine(conn, **pointage.WEB_LIMITS)
         try:
@@ -88,6 +88,7 @@ def pointage_config(request: Request, db: Session = Depends(get_db)):
             hier_cols = pointage.column_types(engine, mapping.schema, mapping.hier_table)
             leave_cols = pointage.column_types(engine, mapping.schema, mapping.leave_table)
             tw_cols = pointage.column_types(engine, mapping.schema, mapping.tw_table)
+            mission_cols = pointage.column_types(engine, mapping.schema, mapping.mission_table)
             cat_cols = pointage.column_types(engine, mapping.schema, mapping.cat_table)
             for key in ("cat_key_col", "cat_label_col"):
                 if cat_cols and not getattr(mapping, key):
@@ -99,7 +100,9 @@ def pointage_config(request: Request, db: Session = Depends(get_db)):
                               ("leave_start_col", leave_cols), ("leave_end_col", leave_cols),
                               ("leave_state_col", leave_cols), ("leave_type_col", leave_cols),
                               ("tw_emp_col", tw_cols), ("tw_start_col", tw_cols), ("tw_end_col", tw_cols),
-                              ("tw_state_col", tw_cols)):
+                              ("tw_state_col", tw_cols), ("mission_emp_col", mission_cols),
+                              ("mission_start_col", mission_cols), ("mission_end_col", mission_cols),
+                              ("mission_state_col", mission_cols)):
                 if cols and not getattr(mapping, key):
                     setattr(mapping, key, pointage.guess(key, list(cols)))
             if person_cols and not mapping.emp_person_col:
@@ -148,7 +151,8 @@ def pointage_config(request: Request, db: Session = Depends(get_db)):
         person_cols=person_cols, hier_cols=hier_cols, leave_cols=leave_cols, diag=diag, stale=stale,
         leave_guess=pointage.guess("leave_table", tables) if not mapping.leave_table else "",
         tw_cols=tw_cols, cat_cols=cat_cols, cat_values=cat_values, tw_guess=pointage.guess("tw_table", tables) if not mapping.tw_table else "",
-        installed=installed, exploring=exploring,
+        installed=installed, exploring=exploring, mission_cols=mission_cols,
+        mission_guess=pointage.guess("mission_table", tables) if not mapping.mission_table else "",
     )
 
 

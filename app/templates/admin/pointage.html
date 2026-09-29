@@ -258,6 +258,42 @@
     {% endif %}
   </fieldset>
 
+  <fieldset class="limits" id="missions"><legend>Missions <span class="muted small">(un jour travaillé couvert par une autorisation de mission approuvée devient « En mission »)</span></legend>
+    <div class="row">
+      <label>Table des autorisations de mission
+        {{ tableselect('mission_table', m.mission_table, True) }}
+        {% if mission_guess %}<span class="muted small">Suggestion : <code>{{ mission_guess }}</code></span>{% endif %}</label>
+      {% if m.mission_table %}
+      <label>La colonne de l'employé contient
+        <select name="mission_ref">
+          <option value="matricule" {{ 'selected' if m.mission_ref in ('matricule', '') }}>le matricule</option>
+          <option value="key" {{ 'selected' if m.mission_ref == 'key' }}>la clé employé ({{ m.emp_key_col or 'colonne de correspondance' }})</option>
+          <option value="person" {{ 'selected' if m.mission_ref == 'person' }}>l'identifiant de la table des noms</option>
+        </select></label>
+      {% endif %}
+    </div>
+    {% if m.mission_table %}
+    <div class="row">
+      <label>Colonne de l'employé {{ colselect('mission_emp_col', mission_cols, m.mission_emp_col) }}</label>
+      <label>Date de début (départ) {{ colselect('mission_start_col', mission_cols, m.mission_start_col) }}</label>
+      <label>Date de fin (retour) {{ colselect('mission_end_col', mission_cols, m.mission_end_col) }}</label>
+    </div>
+    <div class="row">
+      <label>Colonne de l'état <span class="muted small">(facultatif)</span> {{ colselect('mission_state_col', mission_cols, m.mission_state_col, True) }}</label>
+      <label>Valeur(s) « approuvé » <span class="muted small">(séparées par des virgules, sans tenir compte des accents ni des majuscules)</span>
+        <input name="mission_state_values" value="{{ m.mission_state_values }}" placeholder="Approuvée, Validée"></label>
+    </div>
+    {% endif %}
+    <p class="muted small">Source typique : une <strong>feuille Smartsheet</strong> d'autorisations de mission, synchronisée par un job
+      (<a href="/connections/new?kind=smartsheet">nouvelle connexion Smartsheet</a>) ; choisissez ensuite ici la table créée par le job.
+      Chaque jour ouvré (ou poste planifié) de la mission reçoit la « Durée attribuée par jour de mission » (8h par défaut, voir Paramètres horaires)
+      en durée validée — même si la personne a badgé. Un arrêt maladie ou un congé approuvé le même jour l'emporte ; les jours non ouvrés restent non ouvrés.</p>
+    {% if not m.mission_table %}
+    <input type="hidden" name="mission_ref" value="{{ m.mission_ref or 'matricule' }}">
+    <input type="hidden" name="mission_state_values" value="{{ m.mission_state_values }}">
+    {% endif %}
+  </fieldset>
+
   <p class="muted small">Enregistrer crée ou met à jour dans PostgreSQL : <code>pointage_parametres</code> (paramètres historisés),
     <code>pointage_jours_feries</code>, les fonctions <code>f_pointage_journalier(du, au)</code> et
     <code>f_pointage_equipe(responsable)</code>, et les vues <code>v_pointage_journalier</code>,

@@ -29,6 +29,7 @@ PARAMS = [
     ("duree_terrain", "Durée validée minimale par jour pour un agent terrain", "duration", "08:00"),
     ("objectif_duree", "Objectif de durée validée (vert si atteint, rouge sinon)", "duration", "08:00"),
     ("duree_arret_maladie", "Durée attribuée par jour d'arrêt maladie", "duration", "08:00"),
+    ("duree_mission", "Durée attribuée par jour de mission (autorisation de mission approuvée)", "duration", "08:00"),
     ("duree_repos", "Horaires postés : durée validée attribuée par jour de repos (planning)", "duration", "08:00"),
     ("marge_poste", "Horaires postés : marge avant/après un poste pour y rattacher les pointages", "duration", "04:00"),
 ]
@@ -51,10 +52,11 @@ STATUTS = {
     "ARRET_MALADIE": ("Arrêt maladie", "st-sick"),
     "REPOS": ("Repos (planning)", "st-off"),
     "FORMATION": ("Formation", "st-train"),
+    "MISSION": ("En mission", "st-mission"),
 }
 CONGES = ("CONGE_ANNUEL", "CONGE_EXCEP")
 # Version des objets PostgreSQL : si elle change, ils sont réinstallés automatiquement.
-SQL_VERSION = 15
+SQL_VERSION = 16
 # Limites des requêtes lancées depuis les pages web : une attente de verrou ou une requête lente ne doit jamais
 # bloquer le site (au pire, la page affiche une erreur au bout de 2 minutes).
 WEB_LIMITS = {"lock_timeout_s": 15, "statement_timeout_s": 120}
@@ -165,11 +167,20 @@ class Mapping:
     tw_end_col: str = ""
     tw_state_col: str = ""
     tw_state_values: str = "Approuvée"
+    # Facultatif : autorisations de mission (ex. feuille Smartsheet synchronisée) : un jour ouvré couvert par une
+    # mission approuvée devient « En mission » (durée attribuée par jour de mission, 8h par défaut).
+    mission_table: str = ""
+    mission_emp_col: str = ""
+    mission_ref: str = "matricule"
+    mission_start_col: str = ""
+    mission_end_col: str = ""
+    mission_state_col: str = ""
+    mission_state_values: str = "Approuvée, Approuvé, Validée, Validé, Autorisée, Autorisé"
 
     def __post_init__(self) -> None:
         # Configuration enregistrée avant l'ajout des congés (ou champ laissé vide) : valeurs par défaut.
         for name in ("leave_state_values", "leave_annual_values", "leave_excep_values", "leave_ref",
-                     "tw_state_values", "tw_ref", "cat_in", "email_in"):
+                     "tw_state_values", "tw_ref", "cat_in", "email_in", "mission_ref", "mission_state_values"):
             if not getattr(self, name):
                 setattr(self, name, type(self).__dataclass_fields__[name].default)
 
@@ -214,6 +225,10 @@ class Mapping:
             out.append("colonnes employé, date de début et date de fin du télétravail")
         if self.tw_table and self.tw_ref == "person" and not self.person_table:
             out.append("table des noms (le télétravail désigne les personnes)")
+        if self.mission_table and not (self.mission_emp_col and self.mission_start_col and self.mission_end_col):
+            out.append("colonnes employé, date de début et date de fin des missions")
+        if self.mission_table and self.mission_ref == "person" and not self.person_table:
+            out.append("table des noms (les missions désignent les personnes)")
         return out
 
 
@@ -277,6 +292,10 @@ _GUESSES = {
     "hier_emp_col": [r"^id_?employ", r"employ", r"^id_?agent", r"collab", r"^id_?person", r"matric"],
     "leave_table": [r"demande_?cong", r"cong[ée]", r"absence", r"leave"],
     "tw_table": [r"t[ée]l[ée]_?travail", r"remote", r"home_?office"],
+    "mission_table": [r"mission", r"d[ée]placement", r"voyage", r"travel"],
+    "mission_start_col": [r"d[ée]part", r"^date_?d[ée]but", r"d[ée]but", r"^du$", r"start", r"aller"],
+    "mission_end_col": [r"retour", r"^date_?fin", r"fin", r"^au$", r"end"],
+    "mission_state_col": [r"^[ée]tat", r"statut", r"approb", r"autoris", r"valid", r"state"],
     "leave_emp_col": [r"^id_?employ", r"employ", r"matric", r"^id_?person", r"person", r"^id_?agent", r"agent"],
     "leave_start_col": [r"^date_?d[ée]but", r"d[ée]but", r"start"],
     "leave_end_col": [r"^date_?fin", r"fin", r"end"],
@@ -289,7 +308,8 @@ _GUESSES = {
 
 def guess(kind: str, names: list[str], exclude: tuple = ()) -> str:
     # Colonnes du télétravail : mêmes noms habituels que celles des congés (datedebut, Datefin, etat...).
-    for pattern in _GUESSES.get(kind) or _GUESSES.get(kind.replace("tw_", "leave_", 1), []):
+    fallback = kind.replace("tw_", "leave_", 1).replace("mission_", "leave_", 1)
+    for pattern in _GUESSES.get(kind) or _GUESSES.get(fallback, []):
         for name in names:
             if name not in exclude and re.search(pattern, name, re.I):
                 return name
@@ -393,7 +413,8 @@ def _requests_cte(m: Mapping, prefix: str, types: dict[str, str], default_status
 
 
 def build_sql(m: Mapping, punch_types: dict[str, str], emp_types: dict[str, str],
-              leave_types: Optional[dict[str, str]] = None, tw_types: Optional[dict[str, str]] = None) -> dict[str, str]:
+              leave_types: Optional[dict[str, str]] = None, tw_types: Optional[dict[str, str]] = None,
+              mission_types: Optional[dict[str, str]] = None) -> dict[str, str]:
     """SQL des objets PostgreSQL du module (tables de paramètres, vue des employés, fonctions, vues)."""
     S = qi(m.objs)
     punch = qt(m.schema, m.punch_table)
@@ -584,6 +605,7 @@ par AS (
         {param('duree_terrain', '::interval')} AS duree_terrain,
         {param('duree_arret_maladie', '::interval')} AS duree_maladie,
         {param('duree_repos', '::interval')} AS duree_repos,
+        {param('duree_mission', '::interval')} AS duree_mission,
         EXISTS (SELECT 1 FROM {S}.pointage_jours_feries f WHERE f.jour = d::date) AS ferie
     FROM generate_series(p_du::timestamp, LEAST(p_au, current_date)::timestamp, interval '1 day') AS d
 ),
@@ -592,6 +614,9 @@ conge AS (
 ),
 tele AS (
     {_requests_cte(m, "tw", tw_types or {}, "TELETRAVAIL")}
+),
+mission AS (  -- autorisations de mission approuvées (ex. feuille Smartsheet synchronisée)
+    {_requests_cte(m, "mission", mission_types or {}, "MISSION")}
 ),
 maladie AS (  -- arrêts maladie validés dans l'application (déclarés par l'employé ou saisis par les RH)
     SELECT DISTINCT a.emp_key, d::date AS jour
@@ -609,8 +634,8 @@ g AS (
     SELECT b.emp_key, b.jour, e.matricule, e.nom, e.prenom, e.service, e.responsable_key, e.responsable, e.categorie,
            a.p1, a.p2, a.n, (e.emp_key IS NULL) AS hors_liste,
            p.debut_journee, p.debut_pause, p.fin_pause, p.fin_journee, p.seuil_retard, p.duree_pause,
-           p.duree_conge, p.duree_teletravail, p.duree_terrain, p.duree_maladie, p.duree_repos, k.statut AS conge, t.statut AS tele,
-           (mal.emp_key IS NOT NULL) AS maladie,
+           p.duree_conge, p.duree_teletravail, p.duree_terrain, p.duree_maladie, p.duree_repos, p.duree_mission, k.statut AS conge, t.statut AS tele,
+           (mal.emp_key IS NOT NULL) AS maladie, (mi.emp_key IS NOT NULL) AS mission,
            COALESCE(e.terrain, false) AS terrain,
            s.code AS poste_code, s.type AS poste_type, s.libelle AS poste_libelle, s.s_debut, s.s_fin,
            COALESCE(s.s_pause, interval '0') AS s_pause, s.s_duree,
@@ -625,6 +650,7 @@ g AS (
     LEFT JOIN agg a ON a.emp_key = b.emp_key AND a.jour = b.jour
     LEFT JOIN conge k ON k.emp_key = b.emp_key AND k.jour = b.jour
     LEFT JOIN tele t ON t.emp_key = b.emp_key AND t.jour = b.jour
+    LEFT JOIN mission mi ON mi.emp_key = b.emp_key AND mi.jour = b.jour
     LEFT JOIN maladie mal ON mal.emp_key = b.emp_key AND mal.jour = b.jour
     LEFT JOIN plan s ON s.emp_key = b.emp_key AND s.jour = b.jour
 ),
@@ -635,6 +661,9 @@ c AS (
              WHEN g.poste_type = 'formation' THEN 'FORMATION'
              WHEN g.poste_type = 'ferie' THEN 'NON_OUVRE'
              WHEN g.poste_type = 'repos' THEN 'REPOS'
+             -- Mission approuvée un jour travaillé (planifié ou ouvré) : « En mission », même si la personne a badgé ;
+             -- un arrêt maladie ou un congé approuvé le même jour l'emporte.
+             WHEN g.mission AND g.jour_ouvre AND NOT g.maladie AND g.conge IS NULL THEN 'MISSION'
              WHEN g.poste_type = 'travail' THEN
                  CASE WHEN g.n IS NULL THEN COALESCE(CASE WHEN g.maladie THEN 'ARRET_MALADIE' END, g.conge, g.tele, 'ABSENT')
                       WHEN g.n < 2 THEN 'INCOMPLET'
@@ -687,6 +716,7 @@ CROSS JOIN LATERAL (
                 WHEN c.statut IN ('CONGE_ANNUEL', 'CONGE_EXCEP') THEN c.duree_conge
                 WHEN c.statut = 'TELETRAVAIL' THEN c.duree_teletravail
                 WHEN c.statut = 'ARRET_MALADIE' THEN c.duree_maladie
+                WHEN c.statut = 'MISSION' THEN c.duree_mission
                 -- Agent terrain : au moins la durée prévue, davantage si ses pointages le justifient.
                 WHEN c.statut = 'TERRAIN' THEN GREATEST(c.duree_terrain, CASE WHEN c.n >= 2 THEN
                     (LEAST(c.p2::time, c.fin_journee) - LEAST(c.p1::time, c.debut_journee)) - c.pause END)
@@ -695,6 +725,7 @@ CROSS JOIN LATERAL (
                 WHEN c.statut = 'TELETRAVAIL' THEN c.duree_teletravail
                 WHEN c.statut = 'ARRET_MALADIE' THEN c.duree_maladie
                 WHEN c.statut = 'FORMATION' AND c.n IS NULL THEN nullif(c.s_duree, interval '0')
+                WHEN c.statut = 'MISSION' AND c.n IS NULL THEN c.duree_mission
                 WHEN c.n >= 2 THEN GREATEST((c.p2 - c.p1) - COALESCE(c.pause, interval '0'), interval '0') END AS de
 ) v
 WHERE c.statut IS NOT NULL
@@ -799,7 +830,9 @@ def install(engine: Engine, m: Mapping, author: str) -> None:
                         (m.hier_table, (m.hier_emp_col, m.hier_manager_col)),
                         (m.leave_table, (m.leave_emp_col, m.leave_start_col, m.leave_end_col, m.leave_state_col,
                                          m.leave_type_col)),
-                        (m.tw_table, (m.tw_emp_col, m.tw_start_col, m.tw_end_col, m.tw_state_col))):
+                        (m.tw_table, (m.tw_emp_col, m.tw_start_col, m.tw_end_col, m.tw_state_col)),
+                        (m.mission_table, (m.mission_emp_col, m.mission_start_col, m.mission_end_col,
+                                           m.mission_state_col))):
         if not table:
             continue
         types = column_types(engine, m.schema, table)
@@ -811,7 +844,7 @@ def install(engine: Engine, m: Mapping, author: str) -> None:
     if m.hier_ref == "person" and not m.person_table:
         raise PointageError("La hiérarchie désigne les personnes : choisissez aussi la table des noms.")
     sql = build_sql(m, punch_types, emp_types, column_types(engine, m.schema, m.leave_table),
-                    column_types(engine, m.schema, m.tw_table))
+                    column_types(engine, m.schema, m.tw_table), column_types(engine, m.schema, m.mission_table))
     S = qi(m.objs)
     with engine.begin() as c:
         raw = _raw_day_col(m, punch_types)
@@ -1485,6 +1518,7 @@ class Filters:
     scope_root: Optional[str] = None  # périmètre imposé par le compte (manager : son équipe)
     population: str = ""              # « liste » : employés de la liste ; « hors » : badges hors liste
     categorie: list[str] = field(default_factory=list)  # statut(s) du personnel : cadre, non cadre… (vide = tous)
+    exclude: str = ""                 # clé d'un employé à écarter (ex. le responsable dans le résumé de son équipe)
 
 
 def _where(f: Filters, S: str = "") -> tuple[str, dict, list]:
@@ -1496,6 +1530,9 @@ def _where(f: Filters, S: str = "") -> tuple[str, dict, list]:
         levels = " WHERE niveau <= 1" if f.directs else ""
         clauses.append(f"emp_key IN (SELECT emp_key FROM {S}.f_pointage_equipe(:team){levels})")
         params["team"] = f.team
+    if f.exclude:
+        clauses.append("emp_key <> :exclude")
+        params["exclude"] = f.exclude
     if f.q:
         clauses.append("(matricule ILIKE :q OR nom ILIKE :q OR prenom ILIKE :q "
                        "OR concat_ws(' ', nom, prenom) ILIKE :q OR concat_ws(' ', prenom, nom) ILIKE :q)")
@@ -1553,14 +1590,15 @@ def daily(engine: Engine, m: Mapping, f: Filters, page: int = 1, size: int = 100
         count(*) FILTER (WHERE statut = 'ARRET_MALADIE') AS maladies,
         count(*) FILTER (WHERE statut = 'REPOS') AS repos,
         count(*) FILTER (WHERE statut = 'FORMATION') AS formations,
+        count(*) FILTER (WHERE statut = 'MISSION') AS missions,
         count(DISTINCT emp_key) FILTER (WHERE hors_liste) AS hors_liste,
-        avg(duree_validee) FILTER (WHERE statut NOT IN ('CONGE_ANNUEL', 'CONGE_EXCEP', 'TELETRAVAIL', 'TERRAIN', 'ARRET_MALADIE', 'FORMATION', 'REPOS')) AS moy_validee,
+        avg(duree_validee) FILTER (WHERE statut NOT IN ('CONGE_ANNUEL', 'CONGE_EXCEP', 'TELETRAVAIL', 'TERRAIN', 'ARRET_MALADIE', 'FORMATION', 'REPOS', 'MISSION')) AS moy_validee,
         -- Heures moyennes de premier et de dernier pointage des personnes venues au bureau.
         time '00:00' + avg(premier_pointage::time - time '00:00')
             FILTER (WHERE statut IN ('A_L_HEURE', 'RETARD', 'INCOMPLET') AND poste IS NULL) AS moy_premier,
         time '00:00' + avg(dernier_pointage::time - time '00:00')
             FILTER (WHERE statut IN ('A_L_HEURE', 'RETARD') AND nb_pointages >= 2 AND poste IS NULL) AS moy_dernier,
-        avg(duree_effective) FILTER (WHERE statut NOT IN ('CONGE_ANNUEL', 'CONGE_EXCEP', 'TELETRAVAIL', 'TERRAIN', 'ARRET_MALADIE', 'FORMATION', 'REPOS')) AS moy_effective,
+        avg(duree_effective) FILTER (WHERE statut NOT IN ('CONGE_ANNUEL', 'CONGE_EXCEP', 'TELETRAVAIL', 'TERRAIN', 'ARRET_MALADIE', 'FORMATION', 'REPOS', 'MISSION')) AS moy_effective,
         count(DISTINCT emp_key) AS employes
         FROM {source}{where}""").bindparams(*binds)
     rows_sql = text(f"SELECT * FROM {source}{where}{_order(f)} LIMIT :lim OFFSET :off").bindparams(*binds)

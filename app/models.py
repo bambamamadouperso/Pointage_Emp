@@ -9,10 +9,13 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .crypto import decrypt
 from .database import Base
 
-SOURCE_KINDS = {"mariadb": "MariaDB / MySQL", "hfsql": "HFSQL Client/Serveur", "gsheet": "Google Sheets"}
+SOURCE_KINDS = {"mariadb": "MariaDB / MySQL", "hfsql": "HFSQL Client/Serveur", "gsheet": "Google Sheets",
+                "smartsheet": "Smartsheet"}
+# Sources de type « feuille » : chaque onglet / feuille est lu comme une table.
+SHEET_KINDS = ("gsheet", "smartsheet")
 TARGET_KINDS = {"postgresql": "PostgreSQL"}
 KIND_LABELS = {**SOURCE_KINDS, **TARGET_KINDS}
-DEFAULT_PORTS = {"mariadb": 3306, "hfsql": 4900, "postgresql": 5432, "gsheet": 443}
+DEFAULT_PORTS = {"mariadb": 3306, "hfsql": 4900, "postgresql": 5432, "gsheet": 443, "smartsheet": 443}
 
 MODE_FULL = "full"
 MODE_INCREMENTAL = "incremental"
@@ -56,10 +59,21 @@ class Connection(Base):
         return self.kind == "gsheet"
 
     @property
+    def is_smartsheet(self) -> bool:
+        return self.kind == "smartsheet"
+
+    @property
+    def is_sheet(self) -> bool:
+        """Google Sheets ou Smartsheet : onglets / feuilles lus comme des tables."""
+        return self.kind in SHEET_KINDS
+
+    @property
     def location(self) -> str:
         """Description courte affichée dans le tableau de bord."""
         if self.is_gsheet:
             return f"Google Sheets {self.database[:12]}…"
+        if self.is_smartsheet:
+            return f"Smartsheet {self.database[:24]}"
         return f"{self.host}/{self.database}"
 
     @property
@@ -417,3 +431,63 @@ class SickLeaveSettings(Base):
     updated_by: Mapped[str] = mapped_column(String(100), default="")
     # Mails aux valideurs (arrêt à valider) et à l'employé (décision), via le serveur SMTP des mails de badge.
     notify: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True, default=False)
+
+
+DIGEST_KINDS = {"quotidien": "Quotidien", "hebdomadaire": "Hebdomadaire"}
+DIGEST_FREQUENCIES = {"quotidien": "Quotidien", "hebdomadaire": "Hebdomadaire", "les_deux": "Quotidien et hebdomadaire"}
+
+
+class DigestSettings(Base):
+    """Résumés des pointages envoyés aux responsables (équipe N-1) : planification et contenu (une seule ligne)."""
+
+    __tablename__ = "digest_settings"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    daily_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    daily_time: Mapped[str] = mapped_column(String(5), default="07:30")      # résumé de la veille
+    weekly_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    weekly_day: Mapped[int] = mapped_column(Integer, default=1)              # 1 = lundi : résumé de la semaine passée
+    weekly_time: Mapped[str] = mapped_column(String(5), default="07:30")
+    scope: Mapped[str] = mapped_column(String(20), default="directs")        # directs (N-1) ou equipe (toute la hiérarchie)
+    skip_empty: Mapped[bool] = mapped_column(Boolean, default=True)          # pas de mail si personne n'était attendu
+    app_url: Mapped[str] = mapped_column(String(255), default="")           # lien « Ouvrir le suivi » dans les mails
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    updated_by: Mapped[str] = mapped_column(String(100), default="")
+    last_run_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    last_run_summary: Mapped[str] = mapped_column(Text, default="")
+
+
+class DigestSubscriber(Base):
+    """Responsable qui reçoit le résumé de son équipe (adresse de sa fiche employé, ou adresse saisie ici)."""
+
+    __tablename__ = "digest_subscribers"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    manager_key: Mapped[str] = mapped_column(String(100), unique=True)
+    matricule: Mapped[str] = mapped_column(String(100), default="")
+    name: Mapped[str] = mapped_column(String(255), default="")
+    email: Mapped[str] = mapped_column(String(255), default="")
+    frequency: Mapped[str] = mapped_column(String(20), default="hebdomadaire")
+    added_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    added_by: Mapped[str] = mapped_column(String(100), default="")
+
+
+class DigestLog(Base):
+    """Un résumé envoyé (ou en échec) : un seul envoi par responsable, type et période."""
+
+    __tablename__ = "digest_log"
+    __table_args__ = (UniqueConstraint("kind", "period_start", "manager_key", name="uq_digest_period"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+    kind: Mapped[str] = mapped_column(String(20))
+    period_start: Mapped[datetime] = mapped_column(DateTime)
+    period_end: Mapped[datetime] = mapped_column(DateTime)
+    manager_key: Mapped[str] = mapped_column(String(100))
+    name: Mapped[str] = mapped_column(String(255), default="")
+    mode: Mapped[str] = mapped_column(String(20), default="test")
+    recipient: Mapped[str] = mapped_column(Text, default="")
+    intended: Mapped[str] = mapped_column(String(255), default="")
+    status: Mapped[str] = mapped_column(String(20), default="sent")  # sent, failed, skipped
+    error: Mapped[str] = mapped_column(Text, default="")
+    attempts: Mapped[int] = mapped_column(Integer, default=1)

@@ -230,6 +230,32 @@ def build_message(s: MailSettings, ctx: dict, to: list[str], test_for: Optional[
     return msg
 
 
+def compose(s: MailSettings, subject: str, html_body: str, text_body: str, email: str, name: str) -> Optional[EmailMessage]:
+    """Message pour une personne, selon le mode : production → son adresse ; test → les adresses de test, avec un
+    bandeau « MODE TEST » qui indique le destinataire prévu. None si le mode test n'a pas d'adresse de test."""
+    production = s.mode == "production"
+    test_to = [a for a in parse_addresses(s.test_recipients) if valid_email(a)]
+    if not production and not test_to:
+        return None
+    msg = EmailMessage()
+    msg["Subject"] = subject if production else f"[TEST] {subject}"
+    msg["From"] = formataddr((s.from_name or "", s.from_email))
+    msg["To"] = email if production else ", ".join(test_to)
+    if s.reply_to:
+        msg["Reply-To"] = s.reply_to
+    msg["Date"] = formatdate(localtime=True)
+    msg["Message-ID"] = make_msgid(domain=(parseaddr(s.from_email)[1].split("@")[-1] or None))
+    msg["Auto-Submitted"] = "auto-generated"
+    if not production:
+        banner = test_banner(email, name)
+        html_body = re.sub(r"(<body[^>]*>)", lambda m: m.group(1) + banner, html_body, count=1, flags=re.I) \
+            if re.search(r"<body[^>]*>", html_body, re.I) else banner + html_body
+        text_body = f"[MODE TEST — destinataire prévu : {name} <{email}>]\n\n" + text_body
+    msg.set_content(text_body)
+    msg.add_alternative(html_body, subtype="html")
+    return msg
+
+
 # --------------------------------------------------------------------------- SMTP
 
 

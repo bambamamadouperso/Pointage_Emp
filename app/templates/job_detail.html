@@ -9,7 +9,7 @@
       {% if running %}{{ status_badge('running') }}{% endif %}
     </h1>
     <p class="muted">
-      {{ job.source.name }} {% if job.source.is_gsheet %}<a href="{{ job.source.sheet_url }}" target="_blank" rel="noopener">(Google Sheets ↗)</a>{% else %}<code>{{ job.source.host }}/{{ job.source.database }}</code>{% endif %} →
+      {{ job.source.name }} {% if job.source.is_gsheet %}<a href="{{ job.source.sheet_url }}" target="_blank" rel="noopener">(Google Sheets ↗)</a>{% elif job.source.is_smartsheet %}<span class="muted">(Smartsheet : {{ job.source.database }})</span>{% else %}<code>{{ job.source.host }}/{{ job.source.database }}</code>{% endif %} →
       {{ job.target.name }} <code>{{ job.target.host }}/{{ job.target.database }}.{{ job.target_schema }}</code>
     </p>
   </div>
@@ -67,7 +67,7 @@
     <p class="empty">Aucune table configurée. Ajoutez-en ci-dessous.</p>
   {% else %}
   <div class="table-wrap"><table>
-    <thead><tr><th>{{ 'Onglet' if job.source.is_gsheet else 'Source' }}</th><th>Cible</th><th>Mode</th><th>Colonne de suivi</th><th>Clé (upsert)</th><th>Curseur</th><th>Dernière synchro</th><th></th></tr></thead>
+    <thead><tr><th>{{ 'Onglet' if job.source.is_sheet else 'Source' }}</th><th>Cible</th><th>Mode</th><th>Colonne de suivi</th><th>Clé (upsert)</th><th>Curseur</th><th>Dernière synchro</th><th></th></tr></thead>
     <tbody>
     {% for m in job.tables %}
       <tr class="{{ 'disabled' if not m.enabled }}">
@@ -75,7 +75,7 @@
         <td>{{ job.target_schema }}.{{ m.target_table }}</td>
         <td>{{ 'Incrémental' if m.mode == 'incremental' else 'Complet' }}</td>
         <td>{{ m.incremental_column or '—' }}</td>
-        <td>{{ m.key_columns or ('—' if job.source.is_gsheet else 'clé primaire') }}</td>
+        <td>{{ m.key_columns or ('—' if job.source.is_sheet else 'clé primaire') }}</td>
         <td class="mono">{{ m.last_value_display or '—' }}</td>
         <td>{{ m.last_sync_at | dt }}{% if m.last_rows is not none %}<br><span class="muted small">{{ m.last_rows | num }} ligne(s)</span>{% endif %}</td>
         <td class="actions">
@@ -88,7 +88,7 @@
                 <select name="mode">{% for k, l in modes.items() %}<option value="{{ k }}" {{ 'selected' if m.mode == k }}>{{ l }}</option>{% endfor %}</select>
               </label>
               <label>Colonne de suivi <input name="incremental_column" value="{{ m.incremental_column or '' }}"></label>
-              <label>Colonnes clés <input name="key_columns" value="{{ m.key_columns or '' }}" placeholder="{{ 'vide = pas de clé' if job.source.is_gsheet else 'vide = clé primaire' }}"></label>
+              <label>Colonnes clés <input name="key_columns" value="{{ m.key_columns or '' }}" placeholder="{{ 'vide = pas de clé' if job.source.is_sheet else 'vide = clé primaire' }}"></label>
               <button class="btn small primary">Enregistrer</button>
             </form>
           </details>
@@ -120,11 +120,11 @@
   <h3>Ajouter une table</h3>
   <form method="post" action="/jobs/{{ job.id }}/tables" class="form add-table">
     <div class="row">
-      <label>{{ 'Onglet' if job.source.is_gsheet else 'Table source' }}
-        <input name="source_table" id="source_table" list="source_tables" required autocomplete="off" placeholder="{{ "nom de l'onglet" if job.source.is_gsheet else 'nom de la table' }}">
+      <label>{{ 'Onglet' if job.source.is_sheet else 'Table source' }}
+        <input name="source_table" id="source_table" list="source_tables" required autocomplete="off" placeholder="{{ "nom de l'onglet" if job.source.is_sheet else 'nom de la table' }}">
         <datalist id="source_tables">{% for t in unmapped %}<option value="{{ t }}">{% endfor %}</datalist>
       </label>
-      <label>Table cible <input name="target_table" id="target_table" placeholder="{{ 'nom de l’onglet simplifié' if job.source.is_gsheet else 'identique à la source' }}"></label>
+      <label>Table cible <input name="target_table" id="target_table" placeholder="{{ 'nom de l’onglet simplifié' if job.source.is_sheet else 'identique à la source' }}"></label>
       <label>Mode
         <select name="mode" id="mode">{% for k, l in modes.items() %}<option value="{{ k }}">{{ l }}</option>{% endfor %}</select>
       </label>
@@ -134,7 +134,7 @@
         <input name="incremental_column" id="incremental_column" list="columns" autocomplete="off" placeholder="ex. id ou updated_at">
       </label>
       <label>Colonnes clés pour l'upsert
-        <input name="key_columns" id="key_columns" autocomplete="off" placeholder="{{ 'ex. matricule (vide = pas de clé)' if job.source.is_gsheet else 'vide = clé primaire de la source' }}">
+        <input name="key_columns" id="key_columns" autocomplete="off" placeholder="{{ 'ex. matricule (vide = pas de clé)' if job.source.is_sheet else 'vide = clé primaire de la source' }}">
       </label>
       <datalist id="columns"></datalist>
     </div>
@@ -143,9 +143,15 @@
   </form>
   {% endif %}
   <div class="help muted small">
-    {% if job.source.is_gsheet %}
+    {% if job.source.is_sheet %}
+    {% if job.source.is_smartsheet %}
+    <p><strong>Smartsheet</strong> : les feuilles sont lues par l'API à chaque exécution ; chaque feuille est une table, avec une colonne
+      <code>row_id</code> (identifiant stable de la ligne) à utiliser comme clé. Le mode <strong>Complet</strong> est conseillé
+      (les lignes supprimées ou modifiées dans Smartsheet sont alors toujours reflétées).</p>
+    {% else %}
     <p><strong>Google Sheets</strong> : le classeur est téléchargé à chaque exécution ; la première ligne de chaque onglet contient les en-têtes.
       Les types (nombre, date, booléen, texte) sont déduits des cellules ; une valeur illisible devient NULL et est signalée dans les logs.</p>
+    {% endif %}
     {% endif %}
     <p><strong>Complet</strong> : la table cible est vidée puis rechargée entièrement à chaque passage (dans une transaction : la cible n'est jamais vue vide).</p>
     <p><strong>Incrémental</strong> : seules les lignes dont la colonne de suivi (un id auto-incrémenté ou une date <code>updated_at</code>) a progressé sont copiées.
@@ -175,7 +181,7 @@
       list.replaceChildren(...data.columns.map(c => Object.assign(document.createElement('option'), {value: c.name})));
       const pk = data.columns.filter(c => c.pk).map(c => c.name);
       info.textContent = `${data.columns.length} colonne(s) : ` + data.columns.map(c => `${c.name}${c.pk ? ' 🔑' : ''} (${c.type})`).join(', ')
-        + (pk.length ? '' : {{ ("' — Précisez des colonnes clés (ex. matricule) pour mettre à jour les lignes existantes en mode incrémental.'" if job.source.is_gsheet else "' — ⚠ pas de clé primaire : précisez des colonnes clés pour éviter les doublons en mode incrémental.'") | safe }});
+        + (pk.length ? '' : {{ ("' — Précisez des colonnes clés (ex. matricule) pour mettre à jour les lignes existantes en mode incrémental.'" if job.source.is_sheet else "' — ⚠ pas de clé primaire : précisez des colonnes clés pour éviter les doublons en mode incrémental.'") | safe }});
       const guess = data.columns.find(c => /^(updated_at|modified_at|date_modif|last_update)$/i.test(c.name))
         || data.columns.find(c => c.pk && /int/i.test(c.type));
       const inc = document.getElementById('incremental_column');

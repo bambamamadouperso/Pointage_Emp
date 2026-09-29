@@ -1,0 +1,134 @@
+{% extends "base.html" %}
+{% block title %}Résumés par mail{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Résumés par mail aux responsables</h1>
+    <p class="muted">Chaque responsable abonné reçoit le point des pointages de son équipe : la veille (quotidien) et/ou la semaine
+      passée (hebdomadaire), avec taux de présence et de ponctualité, absences, retards, oublis de badge et constats.</p></div>
+  <a href="/admin" class="muted">← Administration</a>
+</div>
+{% if error %}<div class="flash warn">{{ error }}</div>{% endif %}
+
+<section class="card rules">
+  <h2>Envoi</h2>
+  <ul class="rule-list">
+    <li>Serveur SMTP des <a href="/admin/mails">Mails de badge</a> :
+      {% if mail.smtp_host and mail.from_email %}<strong>{{ mail.smtp_host }}</strong>, expéditeur {{ mail.from_email }}
+      {% else %}<span class="warn-text">non configuré — aucun résumé ne partira</span>{% endif %}.</li>
+    <li>Mode : {% if mail.mode == 'production' %}<span class="badge ok">Production</span> — chaque résumé part vers le responsable.
+      {% else %}<span class="badge warn">Test</span> — tous les résumés partent vers les adresses de test ({{ mail.test_recipients or 'aucune' }}),
+      avec un bandeau « MODE TEST » indiquant le destinataire prévu.{% endif %}</li>
+    <li>Un seul envoi par responsable, type et période ; 3 tentatives au plus en cas d'échec. Vérification toutes les 10 minutes.
+      {% if s.last_run_at %}Dernier passage : {{ s.last_run_at | dt }} — {{ s.last_run_summary }}.{% endif %}</li>
+  </ul>
+</section>
+
+<form method="post" action="/admin/resumes/parametres" class="card form">
+  <h2>Planification et contenu</h2>
+  <div class="digest-plan">
+    <label class="check"><input type="checkbox" name="daily_enabled" value="true" {{ 'checked' if s.daily_enabled }}>
+      <span><strong>Résumé quotidien</strong> — la journée de la veille (aujourd'hui : le {{ periods.quotidien[0].strftime('%d/%m') }})</span></label>
+    <div class="inline"><label>Heure d'envoi <input name="daily_time" value="{{ s.daily_time }}" size="5" placeholder="07:30"></label></div>
+  </div>
+  <div class="digest-plan">
+    <label class="check"><input type="checkbox" name="weekly_enabled" value="true" {{ 'checked' if s.weekly_enabled }}>
+      <span><strong>Résumé hebdomadaire</strong> — la semaine passée, du lundi au dimanche
+        (actuellement du {{ periods.hebdomadaire[0].strftime('%d/%m') }} au {{ periods.hebdomadaire[1].strftime('%d/%m') }})</span></label>
+    <div class="inline">
+      <label>Jour d'envoi <select name="weekly_day">{% for n, label in weekdays.items() %}<option value="{{ n }}" {{ 'selected' if s.weekly_day == n }}>{{ label | capitalize }}</option>{% endfor %}</select></label>
+      <label>Heure <input name="weekly_time" value="{{ s.weekly_time }}" size="5" placeholder="07:30"></label>
+    </div>
+  </div>
+  <div class="row">
+    <label>Équipe présentée
+      <select name="scope">
+        <option value="directs" {{ 'selected' if s.scope != 'equipe' }}>Collaborateurs directs (N-1)</option>
+        <option value="equipe" {{ 'selected' if s.scope == 'equipe' }}>Toute l'équipe (N-1, N-2…)</option>
+      </select></label>
+    <label>Adresse de l'application <span class="muted small">(bouton « Ouvrir le suivi » dans le mail)</span>
+      <input name="app_url" value="{{ s.app_url }}" placeholder="http://10.192.140.65:8000"></label>
+  </div>
+  <label class="check"><input type="checkbox" name="skip_empty" value="true" {{ 'checked' if s.skip_empty }}>
+    Ne rien envoyer quand personne de l'équipe n'était attendu (week-end, jour férié, équipe en repos ou en congé)</label>
+  <div class="form-actions"><button class="btn primary">Enregistrer</button></div>
+</form>
+
+<form method="post" action="/admin/resumes/abonnes" class="card form" id="abonnes">
+  <div class="card-head"><div><h2>Responsables destinataires</h2>
+    <p class="muted small">Responsables qui ont au moins un collaborateur actif dans la hiérarchie. Adresse : celle de la fiche employé,
+      ou celle saisie ici (prioritaire).</p></div>
+    <div class="actions"><button type="button" class="btn small ghost" data-all="hebdomadaire">Tous en hebdomadaire</button>
+      <button type="button" class="btn small ghost" data-all="">Aucun</button></div></div>
+  {% if not managers %}<p class="empty">Aucun responsable trouvé.</p>{% else %}
+  <div class="table-wrap"><table>
+    <thead><tr><th>Responsable</th><th class="right">Équipe</th><th>Adresse de la fiche</th><th>Autre adresse</th><th>Résumé</th></tr></thead>
+    <tbody>{% for key, info in managers.items() %}{% set sub = subs.get(key) %}
+      <tr><td><span class="mono small">{{ info.matricule }}</span> {{ info.nom }}</td>
+        <td class="right">{{ info.n }}</td>
+        <td class="small">{{ info.email or '—' }}</td>
+        <td><input type="email" name="email_{{ key }}" value="{{ sub.email if sub else '' }}" placeholder="facultatif" aria-label="Autre adresse de {{ info.nom }}"></td>
+        <td><select name="freq_{{ key }}" class="freq" aria-label="Résumé pour {{ info.nom }}">
+          <option value="">— aucun —</option>
+          {% for k, label in frequencies.items() %}<option value="{{ k }}" {{ 'selected' if sub and sub.frequency == k }}>{{ label }}</option>{% endfor %}
+        </select>{% if sub and not (sub.email or info.email) %} <span class="badge warn" title="Aucune adresse : le résumé ne peut pas partir en production">sans adresse</span>{% endif %}</td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+  <div class="form-actions"><button class="btn primary">Enregistrer les destinataires</button></div>
+  {% endif %}
+</form>
+
+{% if managers %}
+<section class="card">
+  <h2>Aperçu et essai</h2>
+  <form method="get" action="/admin/resumes/apercu" target="apercu" class="inline" id="preview_form">
+    <label>Responsable <select name="manager">{% for key, info in managers.items() %}<option value="{{ key }}">{{ info.nom }} ({{ info.n }})</option>{% endfor %}</select></label>
+    <label>Résumé <select name="kind">{% for k, label in kinds.items() %}<option value="{{ k }}" {{ 'selected' if k == 'hebdomadaire' }}>{{ label }}</option>{% endfor %}</select></label>
+    <button class="btn">Afficher l'aperçu</button>
+  </form>
+  <iframe name="apercu" id="apercu" title="Aperçu du résumé" class="mail-preview" style="width:100%;height:760px;border:1px solid var(--border);border-radius:10px;margin-top:.8rem;background:#f2f5f9"></iframe>
+  <form method="post" action="/admin/resumes/essai" class="inline" style="margin-top:.8rem">
+    <input type="hidden" name="manager" id="essai_manager"><input type="hidden" name="kind" id="essai_kind">
+    <label>Envoyer cet aperçu à <input type="email" name="to" required placeholder="moi@exemple.com"></label>
+    <button class="btn">Envoyer un essai</button>
+  </form>
+</section>
+{% endif %}
+
+<section class="card" id="journal">
+  <div class="card-head"><div><h2>Journal des envois</h2></div>
+    <form method="post" action="/admin/resumes/envoyer" data-confirm="Envoyer maintenant les résumés dus (heure d'envoi passée, pas encore envoyés) ?">
+      <button class="btn small">Envoyer les résumés dus maintenant</button></form></div>
+  {% if not logs %}<p class="empty">Aucun résumé envoyé pour l'instant.</p>{% else %}
+  <div class="table-wrap"><table>
+    <thead><tr><th>Date</th><th>Résumé</th><th>Période</th><th>Responsable</th><th>Destinataire</th><th>Mode</th><th>État</th></tr></thead>
+    <tbody>{% for l in logs %}
+      <tr><td class="small nowrap">{{ l.created_at | dt }}</td><td>{{ kinds.get(l.kind, l.kind) }}</td>
+        <td class="small nowrap">{{ l.period_start.strftime('%d/%m') }}{% if l.period_end != l.period_start %} → {{ l.period_end.strftime('%d/%m') }}{% endif %}</td>
+        <td>{{ l.name or l.manager_key }}</td><td class="small">{{ l.recipient or l.intended or '—' }}</td>
+        <td class="small">{{ 'Production' if l.mode == 'production' else 'Test' }}</td>
+        <td><span class="badge {{ {'sent': 'ok', 'failed': 'err', 'skipped': ''}[l.status] }}">{{ {'sent': 'Envoyé', 'failed': 'Échec', 'skipped': 'Ignoré'}[l.status] }}</span>
+          {% if l.error %}<span class="muted small">{{ l.error }}</span>{% endif %}</td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+  {% endif %}
+</section>
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  document.querySelectorAll('[data-all]').forEach(b => b.addEventListener('click', () => {
+    document.querySelectorAll('select.freq').forEach(s => { s.value = b.dataset.all; });
+  }));
+  const pf = document.getElementById('preview_form');
+  if (!pf) return;
+  function sync() {
+    document.getElementById('essai_manager').value = pf.manager.value;
+    document.getElementById('essai_kind').value = pf.kind.value;
+  }
+  pf.addEventListener('change', sync);
+  pf.addEventListener('submit', sync);
+  sync();
+  pf.requestSubmit ? pf.requestSubmit() : pf.submit();
+})();
+</script>
+{% endblock %}

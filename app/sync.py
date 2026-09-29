@@ -36,7 +36,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.schema import CreateSchema
 from sqlalchemy.types import JSON, TypeEngine
 
-from . import gsheet, hfsql, watermark
+from . import gsheet, hfsql, smartsheet, watermark
 from .config import settings
 from .database import SessionLocal
 from .errors import friendly
@@ -263,10 +263,17 @@ def make_engine(conn: Connection, lock_wait_minutes: Optional[int] = None,
     return create_engine(conn.sqlalchemy_url(), **kwargs)
 
 
+def load_sheets(conn: Connection) -> dict:
+    """Onglets (Google Sheets) ou feuilles (Smartsheet) d'une source de type feuille."""
+    return smartsheet.load_sheets(conn) if conn.is_smartsheet else gsheet.load_sheets(conn)
+
+
 def test_connection(conn: Connection) -> str:
     """Teste la connexion et renvoie la version du serveur (ou un résumé du classeur)."""
     if conn.kind == "gsheet":
         return gsheet.describe(conn)
+    if conn.kind == "smartsheet":
+        return smartsheet.describe(conn)
     if conn.kind == "hfsql":
         with hfsql.Source(conn) as src:
             summary = src.describe()
@@ -285,8 +292,8 @@ def test_connection(conn: Connection) -> str:
 
 
 def list_tables(conn: Connection) -> list[str]:
-    if conn.kind == "gsheet":
-        return list(gsheet.load_sheets(conn))
+    if conn.is_sheet:
+        return list(load_sheets(conn))
     if conn.kind == "hfsql":
         with hfsql.Source(conn) as src:
             return src.tables()
@@ -298,8 +305,8 @@ def list_tables(conn: Connection) -> list[str]:
 
 
 def list_columns(conn: Connection, table: str) -> list[dict]:
-    if conn.kind == "gsheet":
-        sheets = gsheet.load_sheets(conn)
+    if conn.is_sheet:
+        sheets = load_sheets(conn)
         if table not in sheets:
             raise ValueError(f"Onglet « {table} » introuvable.")
         data = sheets[table]
@@ -840,8 +847,8 @@ def _run_job_locked(
         src_engine = dst_engine = odbc_src = None
         try:
             if job.source.kind not in SOURCE_KINDS or job.target.kind != "postgresql":
-                raise ValueError("La source doit être MariaDB, HFSQL ou Google Sheets et la cible PostgreSQL.")
-            is_sheet = job.source.kind == "gsheet"
+                raise ValueError("La source doit être MariaDB, HFSQL, Google Sheets ou Smartsheet et la cible PostgreSQL.")
+            is_sheet = job.source.is_sheet
             is_odbc = job.source.kind == "hfsql"
             dst_engine = control.watch(make_engine(job.target, job.effective_lock_wait_minutes))
             checks = [("cible", dst_engine)]
@@ -882,10 +889,10 @@ def _run_job_locked(
             sheets = None
             if is_sheet and mappings:
                 try:
-                    sheets = gsheet.load_sheets(job.source)
+                    sheets = load_sheets(job.source)
                 except Exception as exc:
-                    raise RuntimeError(f"classeur Google Sheets inaccessible : {_short_error(exc)}") from exc
-                log.info(f"Classeur Google Sheets téléchargé : {len(sheets)} onglet(s).")
+                    raise RuntimeError(f"{job.source.kind_label} inaccessible : {_short_error(exc)}") from exc
+                log.info(f"{job.source.kind_label} lu : {len(sheets)} onglet(s) / feuille(s).")
             if not mappings:
                 log.warning("Aucune table active à synchroniser.")
             for mapping in mappings:

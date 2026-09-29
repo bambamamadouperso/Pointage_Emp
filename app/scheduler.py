@@ -138,6 +138,10 @@ def start() -> None:
                       id="watchdog", executor="watchdog", replace_existing=True)
     scheduler.add_job(purge_old_logs, IntervalTrigger(hours=6), id="purge-logs", replace_existing=True,
                       next_run_time=datetime.now())
+    from . import digests  # résumés par mail aux responsables (quotidien / hebdomadaire)
+
+    scheduler.add_job(digests.run_due, IntervalTrigger(minutes=10), id="digests", replace_existing=True,
+                      next_run_time=datetime.now() + timedelta(minutes=1))
     write_log("INFO", f"Planificateur démarré ({sum(j.enabled for j in jobs)} job(s) actif(s)).")
 
 

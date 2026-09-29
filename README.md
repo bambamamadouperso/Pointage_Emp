@@ -113,6 +113,15 @@ formation → « Formation », absence possible un week-end planifié. Tables Po
 (codes modifiables) et `pointage_planning` ; colonne `poste` dans `v_pointage_journalier`. La grille affiche les heures
 planifiées de chaque agent ; au-delà de 48 h par semaine en moyenne, l'agent est signalé (à l'import et en rouge).
 
+**Missions** (*Source des pointages → Missions*) : table des autorisations de mission (ex. feuille Smartsheet
+synchronisée) ; un jour ouvré ou un poste planifié couvert par une mission approuvée devient « En mission », avec la
+« durée attribuée par jour de mission » (8h par défaut) en durée validée. Congé et arrêt maladie l'emportent.
+
+**Résumés par mail** (*Administration → Résumés par mail*) : chaque responsable abonné reçoit le point de la veille
+(quotidien) et/ou de la semaine passée (hebdomadaire) sur son équipe N-1 (ou toute sa hiérarchie) : taux de présence
+et de ponctualité avec l'évolution, absences, retards, oublis de badge, autres situations, détail par collaborateur.
+Serveur SMTP et mode test/production des mails de badge ; un seul envoi par responsable et par période.
+
 **Arrêts maladie** (*Arrêts maladie*, *Administration → Circuit arrêts maladie*) : déclaration par l'employé avec
 justificatif, circuit de validation paramétrable, saisie RH validée d'office. **Notifications par e-mail**
 (facultatives) : le valideur de l'étape en cours est prévenu, puis l'employé quand l'arrêt est validé ou refusé ;
@@ -165,6 +174,14 @@ hôte du serveur HFSQL, port (**4900** par défaut), base, utilisateur (souvent 
   fonctionnent comme pour MariaDB. Les dates vides HFSQL deviennent `NULL`.
 - Sous Docker, il faut aussi le pilote ODBC HFSQL pour Linux dans l'image ; l'installation Windows
   sans Docker est la plus simple pour HFSQL.
+
+## Source Smartsheet
+
+*Connexions → Nouvelle connexion → Smartsheet* : jeton d'accès API (Smartsheet → Compte → Applications et
+intégrations → Accès à l'API), serveur (app.smartsheet.com ou .eu) et feuille(s) (identifiant ou nom exact).
+« Tester la connexion » sans feuille liste les feuilles accessibles. Chaque feuille devient une table (en-têtes
+simplifiés, dates et cases à cocher typées, colonne `row_id` pour la clé) ; synchronisation par un job, mode Complet
+conseillé.
 
 ## Source Google Sheets
 

@@ -82,7 +82,7 @@
     <span class="hint">journées avec un seul pointage</span></div>
 </section>
 <p class="muted small kpi-note">{{ k.employes | num }} employé(s) · {{ k.attendus | num }} journées ouvrées attendues ·
-  {{ k.conges | num }} en congé · {{ k.maladies | num }} en arrêt maladie · {{ k.teletravail | num }} en télétravail · {{ k.terrain | num }} sur le terrain
+  {{ k.conges | num }} en congé · {{ k.maladies | num }} en arrêt maladie · {{ k.teletravail | num }} en télétravail · {{ k.terrain | num }} sur le terrain{% if k.missions %} · {{ k.missions | num }} en mission{% endif %}
   {% if data.precedent_du %}· évolution comparée au {{ data.precedent_du.strftime('%d/%m') }}–{{ data.precedent_au.strftime('%d/%m/%Y') }}{% endif %}</p>
 
 {% set t = data.trend %}

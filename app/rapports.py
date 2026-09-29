@@ -32,6 +32,7 @@ SERIES = [
     ("INCOMPLET", "Pointage incomplet", "#94a3b8"),
     ("TERRAIN", "Sur le terrain", "#3b82f6"),
     ("TELETRAVAIL", "Télétravail", "#14b8a6"),
+    ("MISSION", "En mission", "#a855f7"),
     ("CONGE", "Congé", "#84cc16"),
     ("ARRET_MALADIE", "Arrêt maladie", "#78716c"),
     ("ABSENT", "Absent", "#e11d48"),
@@ -41,7 +42,7 @@ _WEEKDAYS = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Diman
 # Journée « attendue » : jour ouvré ; « disponible » : attendue hors congé ; « présent » : au travail sous une forme ou une autre.
 _ATTENDU = "jour_ouvre AND statut <> 'NON_OUVRE'"
 _DISPO = f"{_ATTENDU} AND statut NOT IN ('CONGE_ANNUEL', 'CONGE_EXCEP', 'ARRET_MALADIE')"
-_PRESENT = "statut IN ('A_L_HEURE', 'RETARD', 'INCOMPLET', 'TERRAIN', 'TELETRAVAIL', 'FORMATION')"
+_PRESENT = "statut IN ('A_L_HEURE', 'RETARD', 'INCOMPLET', 'TERRAIN', 'TELETRAVAIL', 'FORMATION', 'MISSION')"
 _BUREAU = "statut IN ('A_L_HEURE', 'RETARD')"
 # Les oublis de badge ne sont comptés que les jours terminés (aujourd'hui, le départ n'a pas encore eu lieu).
 
@@ -76,6 +77,7 @@ def _kpi_sql() -> str:
         count(*) FILTER (WHERE statut = 'TELETRAVAIL') AS teletravail,
         count(*) FILTER (WHERE statut = 'TERRAIN') AS terrain,
         count(*) FILTER (WHERE statut = 'ARRET_MALADIE') AS maladies,
+        count(*) FILTER (WHERE statut = 'MISSION') AS missions,
         COALESCE(sum(retard_min), 0) AS retard_min_total,
         avg(retard_min) AS retard_min_moyen,
         sum(duree_validee_min) / 60.0 AS heures_validees,
@@ -138,6 +140,7 @@ def build(engine: Engine, m: Mapping, f: Filters, sort: str = "absences", compar
                 count(*) FILTER (WHERE statut = 'INCOMPLET') AS "INCOMPLET",
                 count(*) FILTER (WHERE statut = 'TERRAIN') AS "TERRAIN",
                 count(*) FILTER (WHERE statut = 'TELETRAVAIL') AS "TELETRAVAIL",
+                count(*) FILTER (WHERE statut = 'MISSION') AS "MISSION",
                 count(*) FILTER (WHERE statut IN ('CONGE_ANNUEL', 'CONGE_EXCEP')) AS "CONGE",
                 count(*) FILTER (WHERE statut = 'ARRET_MALADIE') AS "ARRET_MALADIE",
                 count(*) FILTER (WHERE statut = 'ABSENT') AS "ABSENT",
@@ -183,6 +186,7 @@ def build(engine: Engine, m: Mapping, f: Filters, sort: str = "absences", compar
                 count(*) FILTER (WHERE statut = 'TELETRAVAIL') AS teletravail,
                 count(*) FILTER (WHERE statut = 'TERRAIN') AS terrain_jours,
                 count(*) FILTER (WHERE statut = 'ARRET_MALADIE') AS maladies,
+                count(*) FILTER (WHERE statut = 'MISSION') AS missions,
                 sum(duree_validee_min) / 60.0 AS heures_validees,
                 avg(extract(epoch FROM premier_pointage::time) / 60) FILTER (WHERE {_BUREAU} AND poste IS NULL) AS arrivee_moy_min
             FROM r GROUP BY emp_key""")).mappings()]

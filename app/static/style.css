@@ -826,3 +826,16 @@ body.no-scroll { overflow: hidden; }
 .planning-card.expanded .planning-wrap { flex: 1; max-height: none; min-height: 0; }
 .planning-card.expanded > form[action$="supprimer"] { display: none; }
 @media (max-width: 700px) { .pl-shortcuts { margin-left: 0; } .pl-period input[type=date] { min-width: 0; } }
+
+/* ---------------------------------------------------------------- missions */
+:root { --mission: #7e22ce; --mission-bg: #f3e8ff; --mission-solid: #a855f7; }
+@media (prefers-color-scheme: dark) { :root { --mission: #d8b4fe; --mission-bg: #2e1a47; } }
+.badge.st-mission { background: var(--mission-bg); color: var(--mission); border-color: transparent; }
+.chip-check.st-mission { background: var(--mission-bg); color: var(--mission); }
+.dot.st-mission { background: var(--mission-solid); }
+table.suivi tr.st-mission td:first-child { border-left-color: var(--mission-solid); }
+table.suivi tr.st-mission td { background: color-mix(in srgb, var(--mission-bg) 35%, transparent); }
+.digest-plan { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: .5rem 1.5rem;
+  padding: .7rem 0; border-bottom: 1px solid var(--border); }
+.digest-plan .check { flex: 1 1 360px; }
+.digest-plan .inline { display: flex; gap: .8rem; }

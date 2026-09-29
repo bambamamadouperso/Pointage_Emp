@@ -87,8 +87,10 @@ def source_counts(job_id: int, db: Session = Depends(get_db)):
                         counts[m.id] = {"rows": src.count(m.source_table)}
                     except Exception as exc:
                         counts[m.id] = {"error": friendly(exc)[:200]}
-        elif job.source.is_gsheet:
-            sheets = gsheet.load_sheets(job.source)
+        elif job.source.is_sheet:
+            from ..sync import load_sheets
+
+            sheets = load_sheets(job.source)
             for m in job.tables:
                 data = sheets.get(m.source_table)
                 counts[m.id] = {"rows": len(data.rows)} if data else {"error": "onglet introuvable"}

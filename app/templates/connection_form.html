@@ -95,6 +95,29 @@
       (convertis en noms de colonnes simples : « Date d'arrivée » → <code>date_d_arrivee</code>).</p>
   </fieldset>
 
+  <fieldset class="kind-fields" data-kind="smartsheet">
+    <div class="row">
+      <label>Serveur
+        <select name="ss_host">{% for key, label in ss_hosts.items() %}
+          <option value="{{ key }}" {{ 'selected' if conn.is_smartsheet and conn.host == key }}>{{ label }}</option>{% endfor %}
+        </select></label>
+      <label>Jeton d'accès API
+        <input name="ss_token" type="password" autocomplete="new-password" value="{{ keep_password if conn.is_smartsheet and keep_password else '' }}"
+               placeholder="{{ 'jeton enregistré : laisser vide pour le conserver' if conn.is_smartsheet and conn.password_enc else 'collez le jeton' }}"></label>
+    </div>
+    <label>Feuille(s) à lire <span class="muted small">(identifiant ou nom exact, séparés par des virgules)</span>
+      <input name="ss_sheets" value="{{ conn.database if conn.is_smartsheet else '' }}" autocomplete="off"
+             placeholder="ex. 4583173393803140, Autorisations de mission"></label>
+    <div class="help muted small">
+      <p>1. Dans Smartsheet : <strong>Compte → Applications et intégrations → Accès à l'API</strong> → « Générer un nouveau jeton d'accès » ;
+        collez-le ici (il est chiffré dans la base interne). Le compte du jeton doit avoir accès aux feuilles (lecteur suffit).</p>
+      <p>2. Identifiant d'une feuille : <em>Fichier → Propriétés → ID de la feuille</em>. Vous pouvez aussi saisir son nom exact.
+        « Tester la connexion » sans feuille liste les feuilles accessibles avec leur identifiant.</p>
+      <p>3. Chaque feuille devient une table : en-têtes de colonnes simplifiés (« Date de départ » → <code>date_de_depart</code>),
+        dates et cases à cocher typées, plus une colonne <code>row_id</code> (identifiant stable de la ligne, à utiliser comme clé).</p>
+    </div>
+  </fieldset>
+
   <div class="form-actions">
     <button class="btn primary" name="action" value="save">Enregistrer</button>
     <button class="btn" name="action" value="test" formnovalidate>Tester la connexion</button>
@@ -107,9 +130,9 @@
   const kind = document.getElementById('kind');
   const auth = document.getElementById('sheet_auth');
   function refresh() {
-    const isSheet = kind.value === 'gsheet';
+    const group = ['gsheet', 'smartsheet'].includes(kind.value) ? kind.value : 'db';
     document.querySelectorAll('.kind-fields').forEach(f => {
-      const active = (f.dataset.kind === 'gsheet') === isSheet;
+      const active = f.dataset.kind === group;
       f.hidden = !active;
       f.disabled = !active;  // les champs masqués ne sont ni envoyés ni validés
     });

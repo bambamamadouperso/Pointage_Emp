@@ -31,7 +31,7 @@ def _connections(db: Session, kind: str):
 
 def _default_target(job: SyncJob, source_table: str) -> str:
     """Nom de table cible par défaut : identique à la source, simplifié pour un onglet Google Sheets."""
-    return gsheet.normalize_identifier(source_table) if job.source.is_gsheet else source_table
+    return gsheet.normalize_identifier(source_table) if job.source.is_sheet else source_table
 
 
 def _get_job(db: Session, job_id: int):

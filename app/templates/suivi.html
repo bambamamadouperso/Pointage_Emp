@@ -131,6 +131,7 @@
       <a class="{{ 'selected' if only == 'TELETRAVAIL' }}" href="?{{ request.query_params | set_statuts(['TELETRAVAIL']) }}" title="Afficher le télétravail"><span class="dot st-remote"></span>Télétravail <b>{{ k.teletravail | num }}</b></a>
       <a class="{{ 'selected' if only == 'TERRAIN' }}" href="?{{ request.query_params | set_statuts(['TERRAIN']) }}" title="Afficher les agents terrain"><span class="dot st-field"></span>Terrain <b>{{ k.terrain | num }}</b></a>
       <a class="{{ 'selected' if only == 'ARRET_MALADIE' }}" href="?{{ request.query_params | set_statuts(['ARRET_MALADIE']) }}" title="Afficher les arrêts maladie"><span class="dot st-sick"></span>Maladie <b>{{ k.maladies | num }}</b></a>
+      {% if k.missions %}<a class="{{ 'selected' if only == 'MISSION' }}" href="?{{ request.query_params | set_statuts(['MISSION']) }}" title="Afficher les personnes en mission"><span class="dot st-mission"></span>Mission <b>{{ k.missions | num }}</b></a>{% endif %}
       {% if k.formations %}<a class="{{ 'selected' if only == 'FORMATION' }}" href="?{{ request.query_params | set_statuts(['FORMATION']) }}" title="Afficher les formations (planning)"><span class="dot st-train"></span>Formation <b>{{ k.formations | num }}</b></a>{% endif %}
       {% if k.repos %}<a class="{{ 'selected' if only == 'REPOS' }}" href="?{{ request.query_params | set_statuts(['REPOS']) }}" title="Afficher les repos du planning des horaires postés"><span class="dot st-off"></span>Repos <b>{{ k.repos | num }}</b></a>{% endif %}
     </span></div>

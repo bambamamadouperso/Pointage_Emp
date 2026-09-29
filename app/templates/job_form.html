@@ -17,7 +17,7 @@
   <div class="row">
     <label>Source (MariaDB, HFSQL ou Google Sheets)
       <select name="source_id" required>
-        {% for c in sources %}<option value="{{ c.id }}" {{ 'selected' if job.source_id == c.id }}>{{ c.name }} — {{ c.kind_label }}{% if not c.is_gsheet %} {{ c.host }}/{{ c.database }}{% endif %}</option>{% endfor %}
+        {% for c in sources %}<option value="{{ c.id }}" {{ 'selected' if job.source_id == c.id }}>{{ c.name }} — {{ c.kind_label }}{% if not c.is_sheet %} {{ c.host }}/{{ c.database }}{% endif %}</option>{% endfor %}
       </select>
     </label>
     <label>Base cible (PostgreSQL)
