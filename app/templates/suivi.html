@@ -139,11 +139,18 @@
   <div class="stat c-violet"><span class="label">Taux de ponctualité</span>
     <span class="value">{{ '%.1f'|format(k.taux_ponctualite) ~ ' %' if k.taux_ponctualite is not none else '—' }}</span>
     <span class="hint">à l'heure / (à l'heure + retards)</span></div>
-  <div class="stat c-teal"><span class="label">Pointages moyens</span>
-    <span class="value">{{ hhmm(k.moy_premier) }}</span>
-    <span class="hint">1<sup>er</sup> pointage · dernier {{ hhmm(k.moy_dernier) }}<br>présents au bureau</span></div>
-  <div class="stat c-sky"><span class="label">Durées moyennes</span>
-    <span class="value">{{ hhmm(k.moy_validee) }}</span><span class="hint">validée · effective {{ hhmm(k.moy_effective) }}<br>présents au bureau</span></div>
+  <div class="stat c-teal pair"><span class="label">Pointages moyens</span>
+    <div class="pair-grid">
+      <div><span class="pair-label">Arrivée</span><span class="pair-value">{{ hhmm(k.moy_premier) }}</span></div>
+      <div><span class="pair-label">Départ</span><span class="pair-value">{{ hhmm(k.moy_dernier) }}</span></div>
+    </div>
+    <span class="hint">présents au bureau</span></div>
+  <div class="stat c-sky pair"><span class="label">Durées moyennes</span>
+    <div class="pair-grid">
+      <div><span class="pair-label">Validée</span><span class="pair-value">{{ hhmm(k.moy_validee) }}</span></div>
+      <div><span class="pair-label">Effective</span><span class="pair-value">{{ hhmm(k.moy_effective) }}</span></div>
+    </div>
+    <span class="hint">présents au bureau</span></div>
 </section>
 <p class="muted small kpi-note">{{ k.employes | num }} personne(s) affichée(s) : chaque employé de la liste apparaît chaque jour, qu'il ait pointé ou non.
   {% if not single_day %}Sur une période, les compteurs portent sur des journées-employé.{% endif %}</p>

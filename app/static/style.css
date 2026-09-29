@@ -664,3 +664,19 @@ input.compact { min-height: 32px; padding: .3rem .55rem; font-size: .84rem; }
 .dur-legend .dur { min-width: 0; font-size: .75rem; }
 table.suivi tfoot td { background: var(--surface-2); border-top: 1px solid var(--border-strong); border-bottom: 0; color: var(--text); }
 table.suivi tfoot td:first-child { border-left: 3px solid transparent; }
+/* Cartes à deux valeurs (arrivée / départ, validée / effective) : deux colonnes, libellé au-dessus de la valeur */
+/* Suivi : ligne 1 = les 5 compteurs ; ligne 2 = ponctualité + pointages moyens + durées moyennes. */
+.stats.kpis { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.stats.kpis .stat.pair { grid-column: span 2; }
+@media (max-width: 1100px) { .stats.kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 700px) { .stats.kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.pair-grid { display: grid; grid-template-columns: 1fr 1fr; margin-top: .2rem; }
+.pair-grid > div { display: flex; flex-direction: column; min-width: 0; }
+.pair-grid > div + div { padding-left: .8rem; border-left: 1px solid var(--border); }
+.pair-label { font-size: .72rem; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+.pair-value { font-size: 1.45rem; font-weight: 700; letter-spacing: -.03em; color: var(--text); font-variant-numeric: tabular-nums; line-height: 1.25; }
+@media (max-width: 640px) { /* Suivi : ligne 1 = les 5 compteurs ; ligne 2 = ponctualité + pointages moyens + durées moyennes. */
+.stats.kpis { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.stats.kpis .stat.pair { grid-column: span 2; }
+@media (max-width: 1100px) { .stats.kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 700px) { .stats.kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } } }
