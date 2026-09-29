@@ -58,7 +58,7 @@
         {% for key, label, n in managers %}<option value="{{ key }}" {{ 'selected' if f.team == key }}>{{ label }} · {{ n }} direct(s)</option>{% endfor %}
       </select>
     </label>
-    <label class="check directs" title="{{ 'Choisissez d\'abord un responsable dans « Équipe de »' if not f.team }}"><input type="checkbox" name="directs" value="1" {{ 'checked' if f.directs }} {{ 'disabled' if not f.team }}> Collaborateurs directs seulement (N-1)</label>
+    <label class="check directs" title="{{ 'Choisissez d\'abord un responsable dans « Équipe de »' if not f.team }}"><input type="checkbox" name="directs" value="1" {{ 'checked' if f.directs }} {{ 'disabled' if not f.team }}> Directs seulement (N-1)</label>
     {% endif %}
     <label>Personnes
       <select name="pop">
@@ -115,47 +115,35 @@
 {% if data %}
 {% set k = data.kpi %}
 {% set only = f.statuts[0] if f.statuts | length == 1 else '' %}
-<section class="stats kpis">
-  <a class="stat c-ok {{ 'selected' if f.statuts == ['A_L_HEURE', 'RETARD', 'INCOMPLET'] }}"
+<section class="kpi-strip" aria-label="Indicateurs">
+  <a class="kpi c-ok {{ 'selected' if f.statuts == ['A_L_HEURE', 'RETARD', 'INCOMPLET'] }}"
      href="?{{ request.query_params | set_statuts(['A_L_HEURE', 'RETARD', 'INCOMPLET']) }}" title="Afficher les présents">
-    <span class="label">Présents</span><span class="value">{{ k.presents | num }}</span>
-    <span class="hint">{% if k.incomplets %}dont {{ k.incomplets }} incomplet(s){% else %}cliquer pour filtrer{% endif %}</span></a>
-  <a class="stat c-late {{ 'selected' if only == 'RETARD' }}" href="?{{ request.query_params | set_statuts(['RETARD']) }}" title="Afficher les retards">
-    <span class="label">Retards</span><span class="value">{{ k.retards | num }}</span><span class="hint">arrivée ≥ seuil</span></a>
-  <a class="stat c-err {{ 'selected' if only == 'ABSENT' }}" href="?{{ request.query_params | set_statuts(['ABSENT']) }}" title="Afficher les absents">
-    <span class="label">Absents</span><span class="value">{{ k.absents | num }}</span><span class="hint">sans pointage ni demande approuvée</span></a>
+    <span class="kpi-label">Présents</span><span class="kpi-value">{{ k.presents | num }}</span>
+    <span class="kpi-sub">{% if k.incomplets %}dont {{ k.incomplets }} incomplet(s){% else %}au travail{% endif %}</span></a>
+  <a class="kpi c-late {{ 'selected' if only == 'RETARD' }}" href="?{{ request.query_params | set_statuts(['RETARD']) }}" title="Afficher les retards (arrivée ≥ seuil)">
+    <span class="kpi-label">Retards</span><span class="kpi-value">{{ k.retards | num }}</span><span class="kpi-sub">arrivée ≥ seuil</span></a>
+  <a class="kpi c-err {{ 'selected' if only == 'ABSENT' }}" href="?{{ request.query_params | set_statuts(['ABSENT']) }}" title="Afficher les absents (sans pointage ni demande approuvée)">
+    <span class="kpi-label">Absents</span><span class="kpi-value">{{ k.absents | num }}</span><span class="kpi-sub">sans justificatif</span></a>
   {% set only_conges = f.statuts | sort == ['CONGE_ANNUEL', 'CONGE_EXCEP'] %}
-  <div class="stat c-leave multi"><span class="label">Autres situations</span>
-    <a class="line {{ 'selected' if only_conges }}" href="?{{ request.query_params | set_statuts(['CONGE_ANNUEL', 'CONGE_EXCEP']) }}" title="Afficher les congés">
-      <span class="dot st-leave"></span>Congé<strong>{{ k.conges | num }}</strong></a>
-    <a class="line {{ 'selected' if only == 'TELETRAVAIL' }}" href="?{{ request.query_params | set_statuts(['TELETRAVAIL']) }}" title="Afficher le télétravail">
-      <span class="dot st-remote"></span>Télétravail<strong>{{ k.teletravail | num }}</strong></a>
-    <a class="line {{ 'selected' if only == 'TERRAIN' }}" href="?{{ request.query_params | set_statuts(['TERRAIN']) }}" title="Afficher les agents terrain">
-      <span class="dot st-field"></span>Terrain<strong>{{ k.terrain | num }}</strong></a>
-  </div>
-  <a class="stat c-pink {{ 'selected' if f.population == 'hors' }}" href="?{{ request.query_params | with_param('pop', '' if f.population == 'hors' else 'hors') }}"
+  <div class="kpi c-leave kpi-group"><span class="kpi-label">Autres situations</span>
+    <span class="kpi-lines">
+      <a class="{{ 'selected' if only_conges }}" href="?{{ request.query_params | set_statuts(['CONGE_ANNUEL', 'CONGE_EXCEP']) }}" title="Afficher les congés"><span class="dot st-leave"></span>Congé <b>{{ k.conges | num }}</b></a>
+      <a class="{{ 'selected' if only == 'TELETRAVAIL' }}" href="?{{ request.query_params | set_statuts(['TELETRAVAIL']) }}" title="Afficher le télétravail"><span class="dot st-remote"></span>Télétravail <b>{{ k.teletravail | num }}</b></a>
+      <a class="{{ 'selected' if only == 'TERRAIN' }}" href="?{{ request.query_params | set_statuts(['TERRAIN']) }}" title="Afficher les agents terrain"><span class="dot st-field"></span>Terrain <b>{{ k.terrain | num }}</b></a>
+    </span></div>
+  <a class="kpi c-pink {{ 'selected' if f.population == 'hors' }}" href="?{{ request.query_params | with_param('pop', '' if f.population == 'hors' else 'hors') }}"
      title="Personnes qui ont pointé mais ne figurent pas dans la liste des employés">
-    <span class="label">Hors liste</span><span class="value">{{ k.hors_liste | num }}</span><span class="hint">badge sans fiche employé</span></a>
-  <div class="stat c-violet"><span class="label">Taux de ponctualité</span>
-    <span class="value">{{ '%.1f'|format(k.taux_ponctualite) ~ ' %' if k.taux_ponctualite is not none else '—' }}</span>
-    <span class="hint">à l'heure / (à l'heure + retards)</span></div>
-  <div class="stat c-teal pair"><span class="label">Pointages moyens</span>
-    <div class="pair-grid">
-      <div><span class="pair-label">Arrivée</span><span class="pair-value">{{ hhmm(k.moy_premier) }}</span></div>
-      <div><span class="pair-label">Départ</span><span class="pair-value">{{ hhmm(k.moy_dernier) }}</span></div>
-    </div>
-    <span class="hint">présents au bureau</span></div>
-  <div class="stat c-sky pair"><span class="label">Durées moyennes</span>
-    <div class="pair-grid">
-      <div><span class="pair-label">Validée</span><span class="pair-value">{{ hhmm(k.moy_validee) }}</span></div>
-      <div><span class="pair-label">Effective</span><span class="pair-value">{{ hhmm(k.moy_effective) }}</span></div>
-    </div>
-    <span class="hint">présents au bureau</span></div>
+    <span class="kpi-label">Hors liste</span><span class="kpi-value">{{ k.hors_liste | num }}</span><span class="kpi-sub">badge sans fiche</span></a>
+  <div class="kpi c-violet" title="à l'heure / (à l'heure + retards)"><span class="kpi-label">Ponctualité</span>
+    <span class="kpi-value">{{ '%.1f'|format(k.taux_ponctualite) ~ ' %' if k.taux_ponctualite is not none else '—' }}</span><span class="kpi-sub">à l'heure / pointés</span></div>
+  <div class="kpi c-teal" title="Moyennes des présents au bureau"><span class="kpi-label">Pointages moyens</span>
+    <span class="kpi-value kpi-pair"><span><small>Arrivée</small>{{ hhmm(k.moy_premier) }}</span><span><small>Départ</small>{{ hhmm(k.moy_dernier) }}</span></span></div>
+  <div class="kpi c-sky" title="Moyennes des présents au bureau"><span class="kpi-label">Durées moyennes</span>
+    <span class="kpi-value kpi-pair"><span><small>Validée</small>{{ hhmm(k.moy_validee) }}</span><span><small>Effective</small>{{ hhmm(k.moy_effective) }}</span></span></div>
 </section>
-<p class="muted small kpi-note">{{ k.employes | num }} personne(s) affichée(s) : chaque employé de la liste apparaît chaque jour, qu'il ait pointé ou non.
-  {% if not single_day %}Sur une période, les compteurs portent sur des journées-employé.{% endif %}</p>
 
-<section class="card">
+<section class="card table-card">
+  <p class="muted small kpi-note">{{ k.employes | num }} personne(s) · chaque employé de la liste apparaît chaque jour, qu'il ait pointé ou non{% if not single_day %} ; sur une période, les compteurs portent sur des journées-employé{% endif %}. Cliquez sur une ligne pour le détail des pointages.</p>
   {% if not data.rows %}
     <p class="empty">Aucune ligne ne correspond aux filtres.
       {% if f.population == 'hors' and (f.service or f.team) %}<br>Les personnes <strong>hors liste</strong> n'ont pas de fiche employé :

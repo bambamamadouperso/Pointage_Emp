@@ -198,7 +198,7 @@ def test_screen_filters_detail_and_export(configured, logged_client):
     assert page.status_code == 200
     html = page.text
     assert "Diallo" in html and "st-late" in html and "Lundi 21/09/2026" in html
-    assert "Taux de ponctualité" in html and "Durées moyennes" in html
+    assert "Ponctualité" in html and "Durées moyennes" in html
     only_late = logged_client.get(f"/suivi?date={MON.isoformat()}&statut=RETARD").text
     assert "E002</td>" in only_late and "E001</td>" not in only_late
     search = logged_client.get(f"/suivi?date={MON.isoformat()}&q=E003").text

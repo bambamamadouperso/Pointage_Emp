@@ -3,8 +3,8 @@
 {% if categories %}
   {{ multiselect('categorie', 'Statut du personnel', categories, f.categorie) }}
 {% else %}
-<label class="statut-perso">Statut du personnel
+<label class="statut-perso"><span>Statut du personnel
+  {% if can(role, 'admin') %}<a class="small" href="/admin/pointage#statut-personnel" title="Choisir la colonne dans la table Personnel">· configurer →</a>{% endif %}</span>
   <select disabled title="Colonne du statut (cadre, non cadre…) non configurée"><option>Non configuré</option></select>
-  {% if can(role, 'admin') %}<a class="small" href="/admin/pointage#statut-personnel">Choisir la colonne dans la table Personnel →</a>{% endif %}
 </label>
 {% endif %}
