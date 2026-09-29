@@ -27,6 +27,7 @@ PARAMS = [
     ("duree_conge", "Durée attribuée par jour de congé", "duration", "08:00"),
     ("duree_teletravail", "Durée attribuée par jour de télétravail", "duration", "08:00"),
     ("duree_terrain", "Durée validée minimale par jour pour un agent terrain", "duration", "08:00"),
+    ("objectif_duree", "Objectif de durée validée (vert si atteint, rouge sinon)", "duration", "08:00"),
 ]
 PARAM_LABELS = {k: label for k, label, _, _ in PARAMS}
 PARAM_TYPES = {k: kind for k, _, kind, _ in PARAMS}
@@ -1114,6 +1115,11 @@ def daily(engine: Engine, m: Mapping, f: Filters, page: int = 1, size: int = 100
         count(*) FILTER (WHERE statut = 'TERRAIN') AS terrain,
         count(DISTINCT emp_key) FILTER (WHERE hors_liste) AS hors_liste,
         avg(duree_validee) FILTER (WHERE statut NOT IN ('CONGE_ANNUEL', 'CONGE_EXCEP', 'TELETRAVAIL', 'TERRAIN')) AS moy_validee,
+        -- Heures moyennes de premier et de dernier pointage des personnes venues au bureau.
+        time '00:00' + avg(premier_pointage::time - time '00:00')
+            FILTER (WHERE statut IN ('A_L_HEURE', 'RETARD', 'INCOMPLET')) AS moy_premier,
+        time '00:00' + avg(dernier_pointage::time - time '00:00')
+            FILTER (WHERE statut IN ('A_L_HEURE', 'RETARD') AND nb_pointages >= 2) AS moy_dernier,
         avg(duree_effective) FILTER (WHERE statut NOT IN ('CONGE_ANNUEL', 'CONGE_EXCEP', 'TELETRAVAIL', 'TERRAIN')) AS moy_effective,
         count(DISTINCT emp_key) AS employes
         FROM {source}{where}""").bindparams(*binds)

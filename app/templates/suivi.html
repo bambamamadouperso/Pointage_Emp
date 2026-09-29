@@ -139,6 +139,9 @@
   <div class="stat c-violet"><span class="label">Taux de ponctualité</span>
     <span class="value">{{ '%.1f'|format(k.taux_ponctualite) ~ ' %' if k.taux_ponctualite is not none else '—' }}</span>
     <span class="hint">à l'heure / (à l'heure + retards)</span></div>
+  <div class="stat c-teal"><span class="label">Pointages moyens</span>
+    <span class="value">{{ hhmm(k.moy_premier) }}</span>
+    <span class="hint">1<sup>er</sup> pointage · dernier {{ hhmm(k.moy_dernier) }}<br>présents au bureau</span></div>
   <div class="stat c-sky"><span class="label">Durées moyennes</span>
     <span class="value">{{ hhmm(k.moy_validee) }}</span><span class="hint">validée · effective {{ hhmm(k.moy_effective) }}<br>présents au bureau</span></div>
 </section>
@@ -178,12 +181,22 @@
         <td>{{ hhmm(r.premier_pointage) }}</td>
         <td>{{ hhmm(r.dernier_pointage) if r.nb_pointages > 1 else '—' }}</td>
         <td class="nowrap"><span class="badge {{ cls }}">{{ label }}</span>{% if not r.jour_ouvre and r.statut != 'NON_OUVRE' %} <span class="muted small" title="Jour non ouvré ou férié">(non ouvré)</span>{% endif %}</td>
-        <td class="right">{{ hhmm(r.duree_validee) }}</td>
+        <td class="right">{% if r.duree_validee_min is not none %}<span class="dur {{ 'dur-ok' if r.duree_validee_min >= objectif_min else 'dur-ko' }}"
+          title="{{ 'Objectif atteint' if r.duree_validee_min >= objectif_min else 'Sous l\'objectif' }} ({{ objectif_min // 60 }}h{{ '%02d' % (objectif_min % 60) }})">{{ hhmm(r.duree_validee) }}</span>{% else %}—{% endif %}</td>
         <td class="right">{{ hhmm(r.duree_effective) }}</td>
       </tr>
     {% endfor %}
     </tbody>
+    <tfoot><tr class="avg-row">
+      <td colspan="{{ 3 + (0 if single_day else 1) + (1 if has_hierarchy else 0) }}"><strong>Moyenne</strong>
+        <span class="muted small">des {{ data.total | num }} ligne(s) filtrée(s), présents au bureau</span></td>
+      <td><strong>{{ hhmm(k.moy_premier) }}</strong></td><td><strong>{{ hhmm(k.moy_dernier) }}</strong></td><td></td>
+      <td class="right"><strong>{{ hhmm(k.moy_validee) }}</strong></td><td class="right"><strong>{{ hhmm(k.moy_effective) }}</strong></td>
+    </tr></tfoot>
   </table></div>
+  <p class="muted small dur-legend"><span class="dur dur-ok">≥ {{ objectif_min // 60 }}h{{ '%02d' % (objectif_min % 60) }}</span> objectif de durée validée atteint ·
+    <span class="dur dur-ko">&lt; {{ objectif_min // 60 }}h{{ '%02d' % (objectif_min % 60) }}</span> sous l'objectif
+    {% if can(role, 'admin') %}(<a href="/admin/parametres">modifier l'objectif</a>){% endif %}</p>
   {% include "_pager.html" with context %}
   {% endif %}
 </section>

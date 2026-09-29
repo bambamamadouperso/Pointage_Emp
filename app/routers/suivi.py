@@ -2,7 +2,7 @@
 import io
 import threading
 import time
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Request
@@ -87,6 +87,15 @@ def _filters(request: Request) -> tuple[pointage.Filters, Optional[str]]:
     ), warning
 
 
+def objectif_minutes(engine, mapping, day) -> int:
+    """Objectif de durée validée (paramètre historisé, 8h par défaut) en minutes."""
+    try:
+        h, m = pointage.params_at(engine, mapping, day)["objectif_duree"].split(":")
+        return int(h) * 60 + int(m)
+    except Exception:  # noqa: BLE001
+        return 480
+
+
 class ScopeError(Exception):
     pass
 
@@ -124,7 +133,7 @@ def suivi(request: Request, db: Session = Depends(get_db)):
     size = size if size in PAGE_SIZES else 100
     context = dict(f=f, warning=warning, today=date.today(), statuts=pointage.STATUTS, page=page, size=size, page_sizes=PAGE_SIZES,
                    hhmm=pointage.hhmm, configured=mapping is not None, data=None, error=None, services=[],
-                   managers=[], categories=[], scope_label=None, population=None, last_punch=None, stale=False, has_hierarchy=bool(mapping and mapping.hier_table),
+                   managers=[], categories=[], objectif_min=480, scope_label=None, population=None, last_punch=None, stale=False, has_hierarchy=bool(mapping and mapping.hier_table),
                    single_day=f.du == f.au, mode="jour" if f.du == f.au else "periode")
     if mapping is None:
         return render(request, "suivi.html", **context)
@@ -135,6 +144,7 @@ def suivi(request: Request, db: Session = Depends(get_db)):
         context["services"] = pointage.services(engine, mapping, f.scope_root)
         context["managers"] = pointage.managers(engine, mapping, f.scope_root)
         context["categories"] = pointage.categories(engine, mapping, f.scope_root)
+        context["objectif_min"] = objectif_minutes(engine, mapping, f.au)
         try:
             context["population"] = pointage.population(engine, mapping)
         except Exception as exc:  # contrôle facultatif : ne doit pas empêcher l'affichage
@@ -191,6 +201,7 @@ def export(request: Request, db: Session = Depends(get_db)):
     try:
         apply_scope(request, db, engine, mapping, f)
         rows = pointage.export_rows(engine, mapping, f)
+        objectif = objectif_minutes(engine, mapping, f.au)
     except ScopeError as exc:
         return Response(str(exc), status_code=403, media_type="text/plain; charset=utf-8")
     except Exception as exc:
@@ -225,6 +236,10 @@ def export(request: Request, db: Session = Depends(get_db)):
         for col in (11, 12):
             ws.cell(row, col).number_format = "[H]:MM"
         ws.cell(row, 10).fill = PatternFill("solid", fgColor=fills.get(r["statut"], "FFFFFF"))
+        if r["duree_validee_min"] is not None:  # objectif de durée validée : vert atteint, rouge sinon
+            ok = float(r["duree_validee_min"]) >= objectif
+            ws.cell(row, 11).fill = PatternFill("solid", fgColor="C6EFCE" if ok else "FFC7CE")
+            ws.cell(row, 11).font = Font(color="006100" if ok else "9C0006", bold=True)
     for i, h in enumerate(headers, 1):
         ws.cell(1, i).font = Font(bold=True)
         ws.cell(1, i).alignment = Alignment(wrap_text=True, vertical="top")
@@ -234,9 +249,36 @@ def export(request: Request, db: Session = Depends(get_db)):
     ws.column_dimensions["O"].width = 26
     ws.freeze_panes = "A2"
     ws.auto_filter.ref = ws.dimensions
+
+    # Ligne « Moyenne » (présents au bureau), comme à l'écran.
+    def avg(values):
+        values = [v for v in values if v is not None]
+        return sum(values, timedelta()) / len(values) if values else None
+
+    def clock(td):
+        return (datetime.min + td).time().replace(microsecond=0) if td is not None else None
+
+    bureau = [r for r in rows if r["statut"] in ("A_L_HEURE", "RETARD", "INCOMPLET")]
+    first = avg([timedelta(hours=r["premier_pointage"].hour, minutes=r["premier_pointage"].minute,
+                           seconds=r["premier_pointage"].second) for r in bureau if r["premier_pointage"]])
+    last = avg([timedelta(hours=r["dernier_pointage"].hour, minutes=r["dernier_pointage"].minute,
+                          seconds=r["dernier_pointage"].second)
+                for r in bureau if r["dernier_pointage"] and r["nb_pointages"] >= 2 and r["statut"] != "INCOMPLET"])
+    complete = [r for r in bureau if r["statut"] != "INCOMPLET"]
+    ws.append([])
+    ws.append(["Moyenne", "", "présents au bureau", "", "", "", clock(first), clock(last), "", "",
+               avg([r["duree_validee"] for r in complete]), avg([r["duree_effective"] for r in complete])])
+    row = ws.max_row
+    for col in range(1, 13):
+        ws.cell(row, col).font = Font(bold=True)
+    for col in (7, 8):
+        ws.cell(row, col).number_format = "HH:MM"
+    for col in (11, 12):
+        ws.cell(row, col).number_format = "[H]:MM"
     info = wb.create_sheet("Filtres")
     for label, value in [
         ("Du", f.du.strftime("%d/%m/%Y")), ("Au", f.au.strftime("%d/%m/%Y")), ("Recherche", f.q or "—"),
+        ("Objectif de durée validée", f"{objectif // 60}h{objectif % 60:02d} (vert si atteint, rouge sinon)"),
         ("Service", ", ".join(f.service) or "Tous"), ("Statut du personnel", ", ".join(f.categorie) or "Tous"),
         ("Personnes", {"liste": "employés de la liste", "hors": "hors liste"}.get(f.population, "toutes")),
         ("Équipe", (f.team + (" (directs)" if f.directs else "")) if f.team else "Toutes"),

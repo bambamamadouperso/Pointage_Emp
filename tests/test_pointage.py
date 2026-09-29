@@ -221,7 +221,7 @@ def test_screen_filters_detail_and_export(configured, logged_client):
     xlsx = logged_client.get(f"/suivi/export.xlsx?date={MON.isoformat()}&statut=RETARD&statut=ABSENT")
     assert xlsx.status_code == 200
     ws = load_workbook(io.BytesIO(xlsx.content))["Suivi journalier"]
-    statuts = {ws.cell(r, 10).value for r in range(2, ws.max_row + 1)}
+    statuts = {ws.cell(r, 10).value for r in range(2, ws.max_row + 1) if ws.cell(r, 1).value not in (None, "Moyenne")}
     assert statuts == {"En retard", "Absent"}
     assert ws.cell(1, 11).value == "Durée validée"
 
@@ -281,7 +281,8 @@ def test_account_limited_to_team(configured, client):
     assert "ne fait pas partie de votre équipe" in client.get(f"/suivi/detail?key=2&jour={MON.isoformat()}").text
     assert "3 pointage(s)" not in client.get(f"/suivi/detail?key=1&jour={MON.isoformat()}").text
     ws = load_workbook(io.BytesIO(client.get(f"/suivi/export.xlsx?date={MON.isoformat()}").content))["Suivi journalier"]
-    assert {ws.cell(r, 2).value for r in range(2, ws.max_row + 1)} == {"E003", "E004", "E005"}
+    assert {ws.cell(r, 2).value for r in range(2, ws.max_row + 1)
+            if ws.cell(r, 1).value not in (None, "Moyenne")} == {"E003", "E004", "E005"}
     client.post("/logout")
     client.post("/login", data={"username": "perdu", "password": "motdepasse5"})
     assert "rattaché à aucun employé" in client.get(f"/suivi?date={MON.isoformat()}").text
@@ -572,7 +573,7 @@ def test_category_filter(configured, pg, logged_client):
     assert "Diallo" in page and "Sow" in page and "Ndiaye" not in page
     xlsx = load_workbook(io.BytesIO(logged_client.get(f"/suivi/export.xlsx?date={MON.isoformat()}&categorie=Cadre").content))
     ws = xlsx.active
-    assert ws.cell(1, 6).value == "Statut du personnel" and {row[5] for row in ws.iter_rows(min_row=2, values_only=True)} == {"Cadre"}
+    assert ws.cell(1, 6).value == "Statut du personnel" and {row[5] for row in ws.iter_rows(min_row=2, values_only=True) if row[0] not in (None, "Moyenne")} == {"Cadre"}
     url = f"/rapports?p=perso&du={MON.isoformat()}&au={(MON + timedelta(days=4)).isoformat()}"
     rep = logged_client.get(url).text
     assert "Par statut du personnel" in rep and "Non cadre" in rep
@@ -589,7 +590,8 @@ def test_category_filter(configured, pg, logged_client):
     assert "E001</td>" in both and "E003</td>" in both
     xlsx = load_workbook(io.BytesIO(logged_client.get(
         f"/suivi/export.xlsx?date={MON.isoformat()}&service=RH&service=Production").content))
-    assert {row[4] for row in xlsx.active.iter_rows(min_row=2, values_only=True)} == {"RH", "Production"}
+    assert {row[4] for row in xlsx.active.iter_rows(min_row=2, values_only=True)
+            if row[0] not in (None, "Moyenne")} == {"RH", "Production"}
     assert dict(xlsx["Filtres"].iter_rows(values_only=True))["Service"] == "RH, Production"
     multi = logged_client.get(url + "&service=RH&service=Production&categorie=Cadre").text
     assert "Par employé" in multi and "E005</td>" not in multi and "E001</td>" in multi and "E003</td>" in multi
@@ -768,3 +770,32 @@ def test_field_agents_excel_import(configured, pg, logged_client):
 
     for entry in pointage.field_entries(pg, pointage.Mapping.from_json(_cfg_data())):
         logged_client.post(f"/admin/terrain/{entry['id']}/delete")
+
+
+def test_average_punches_and_duration_colours(configured, logged_client):
+    """Moyennes du 1er et du dernier pointage ; durée validée en vert (objectif atteint) ou rouge ; export."""
+    import io
+
+    from openpyxl import load_workbook
+
+    # Lundi, employés de la liste au bureau : 1ers pointages 07h20, 08h10, 07h35, 07h40, 07h45 → 07h42 ;
+    # derniers (2 pointages ou plus) 17h10, 16h45, 15h50, 12h00 → 15h26.
+    page = logged_client.get(f"/suivi?date={MON.isoformat()}&pop=liste").text
+    assert "Pointages moyens" in page and "07h42" in page and "15h26" in page
+    assert 'class="avg-row"' in page and "Moyenne" in page
+    # Objectif par défaut 8h : Awa (7h30) et Moussa (6h50) en rouge.
+    assert page.count('class="dur dur-ko"') >= 2 and 'class="dur dur-ok"' in page  # légende
+    values = {k: v for k, _, _, v in pointage.PARAMS if k != "jours_ouvres"}
+    r = logged_client.post("/admin/parametres", data={**values, "objectif_duree": "07:00",
+                           "jours_ouvres": ["1", "2", "3", "4", "5"], "date_effet": MON.isoformat()}, follow_redirects=True)
+    assert "paramètre(s) modifié(s)" in r.text
+    page = logged_client.get(f"/suivi?date={MON.isoformat()}&pop=liste&q=E001").text
+    assert 'dur dur-ok"' in page.split("<tbody>")[1] and "≥ 7h00" in page
+    xlsx = load_workbook(io.BytesIO(logged_client.get(f"/suivi/export.xlsx?date={MON.isoformat()}&pop=liste").content))
+    ws = xlsx["Suivi journalier"]
+    fills = {ws.cell(i, 2).value: ws.cell(i, 11).fill.fgColor.rgb for i in range(2, ws.max_row + 1) if ws.cell(i, 11).value}
+    assert fills["E001"].endswith("C6EFCE") and fills["E002"].endswith("FFC7CE")  # 7h30 ≥ 7h ; 6h50 < 7h
+    last = [c.value for c in ws[ws.max_row]]
+    assert last[0] == "Moyenne" and last[6].strftime("%H:%M") == "07:42" and last[7].strftime("%H:%M") == "15:26"
+    logged_client.post("/admin/parametres", data={**values, "objectif_duree": "08:00",
+                       "jours_ouvres": ["1", "2", "3", "4", "5"], "date_effet": MON.isoformat()})
