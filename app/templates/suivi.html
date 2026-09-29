@@ -2,6 +2,7 @@
 {% block title %}Suivi journalier{% endblock %}
 {% block main_class %}container wide{% endblock %}
 {% block content %}
+{% from "_multiselect.html" import multiselect %}
 <div class="page-head">
   <div>
     <h1>Suivi journalier</h1>
@@ -49,12 +50,7 @@
     <label class="grow">Employé <input type="search" name="q" value="{{ f.q }}" placeholder="Nom, prénom ou matricule…"></label>
   </div>
   <div class="row">
-    <label>Service
-      <select name="service"><option value="">Tous</option>
-        {% for s in services %}<option value="{{ s }}" {{ 'selected' if f.service == s }}>{{ s }}</option>{% endfor %}
-        {% if f.service and f.service not in services %}<option value="{{ f.service }}" selected>{{ f.service }}</option>{% endif %}
-      </select>
-    </label>
+    {{ multiselect('service', 'Service', services, f.service) }}
     {% include "_filtre_statut_personnel.html" %}
     {% if has_hierarchy %}
     <label>Équipe de
@@ -90,8 +86,8 @@
 {% set team_label = (managers | selectattr(0, 'equalto', f.team) | map(attribute=1) | first) if f.team else '' %}
 {% set active_filters = [] %}
 {% if f.q %}{% set _ = active_filters.append(('Employé : « ' ~ f.q ~ ' »', request.query_params | with_param('q', ''))) %}{% endif %}
-{% if f.service %}{% set _ = active_filters.append(('Service : ' ~ f.service, request.query_params | with_param('service', ''))) %}{% endif %}
-{% if f.categorie %}{% set _ = active_filters.append(('Statut du personnel : ' ~ f.categorie, request.query_params | with_param('categorie', ''))) %}{% endif %}
+{% if f.service %}{% set _ = active_filters.append(('Service : ' ~ f.service | join(', '), request.query_params | with_param('service', ''))) %}{% endif %}
+{% if f.categorie %}{% set _ = active_filters.append(('Statut du personnel : ' ~ f.categorie | join(', '), request.query_params | with_param('categorie', ''))) %}{% endif %}
 {% if f.team %}{% set _ = active_filters.append(('Équipe de ' ~ (team_label or f.team) ~ (' · directs (N-1)' if f.directs else ''), (request.query_params | with_param('equipe', '')) )) %}{% endif %}
 {% if f.population %}{% set _ = active_filters.append(('Personnes : ' ~ ('employés de la liste' if f.population == 'liste' else 'hors liste'), request.query_params | with_param('pop', ''))) %}{% endif %}
 {% if f.statuts %}{% set labels = [] %}{% for code in f.statuts %}{% set _ = labels.append(statuts[code][0]) %}{% endfor %}{% set _ = active_filters.append(('Statut : ' ~ labels | join(', '), request.query_params | set_statuts([]))) %}{% endif %}
@@ -209,7 +205,7 @@
     form.querySelectorAll('[name=_mode]').forEach(r => r.addEventListener('change', sync));
     form.addEventListener('submit', () => form.querySelectorAll('[name=_mode]').forEach(r => r.disabled = true));
     // Listes, cases et dates : appliquées immédiatement (la recherche par nom reste validée par Entrée ou « Appliquer »).
-    form.querySelectorAll('select, input[type=checkbox], #f_date').forEach(el =>
+    form.querySelectorAll('select, input[type=checkbox], #f_date').forEach(el => !el.closest('[data-ms]') &&
       el.addEventListener('change', () => {
         if (el.name === 'equipe') { const d = form.querySelector('[name=directs]'); if (d && !el.value) d.checked = false; }
         form.requestSubmit();

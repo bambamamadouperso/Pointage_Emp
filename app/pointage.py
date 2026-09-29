@@ -981,7 +981,7 @@ class Filters:
     du: date
     au: date
     q: str = ""
-    service: str = ""
+    service: list[str] = field(default_factory=list)   # un ou plusieurs services (vide = tous)
     statuts: list[str] = field(default_factory=list)
     sort: str = "nom"
     desc: bool = False
@@ -989,7 +989,7 @@ class Filters:
     directs: bool = False             # seulement ses collaborateurs directs (N-1)
     scope_root: Optional[str] = None  # périmètre imposé par le compte (manager : son équipe)
     population: str = ""              # « liste » : employés de la liste ; « hors » : badges hors liste
-    categorie: str = ""               # catégorie du personnel (cadre, non cadre…)
+    categorie: list[str] = field(default_factory=list)  # statut(s) du personnel : cadre, non cadre… (vide = tous)
 
 
 def _where(f: Filters, S: str = "") -> tuple[str, dict, list]:
@@ -1010,17 +1010,29 @@ def _where(f: Filters, S: str = "") -> tuple[str, dict, list]:
     elif f.population == "hors":
         clauses.append("hors_liste")
     if f.service:
-        clauses.append("service = :service")
-        params["service"] = f.service
+        clauses.append("service IN :services")
+        params["services"] = list(f.service)
+        binds.append(bindparam("services", expanding=True))
     if f.categorie:
-        clauses.append("categorie = :categorie")
-        params["categorie"] = f.categorie
+        clauses.append("categorie IN :categories")
+        params["categories"] = list(f.categorie)
+        binds.append(bindparam("categories", expanding=True))
     statuts = [s for s in f.statuts if s in STATUTS]
     if statuts:
         clauses.append("statut IN :statuts")
         params["statuts"] = statuts
         binds.append(bindparam("statuts", expanding=True))
     return (" WHERE " + " AND ".join(clauses)) if clauses else "", params, binds
+
+
+def multi(values: list[str]) -> list[str]:
+    """Valeurs d'un filtre à choix multiples (paramètre répété dans l'URL), sans vides ni doublons."""
+    out = []
+    for v in values:
+        v = (v or "").strip()
+        if v and v not in out:
+            out.append(v)
+    return out
 
 
 def _order(f: Filters) -> str:
@@ -1074,7 +1086,7 @@ def services(engine: Engine, m: Mapping, scope_root: Optional[str] = None) -> li
     S = qi(m.objs)
     with engine.connect() as c:
         return [s for s in c.execute(text(
-            f"SELECT DISTINCT service FROM {S}.v_pointage_employes WHERE service IS NOT NULL"
+            f"SELECT DISTINCT service FROM {S}.v_pointage_employes WHERE nullif(btrim(service), '') IS NOT NULL"
             f"{_scope_sql(S, scope_root)} ORDER BY 1"), {"root": scope_root}).scalars()]
 
 
@@ -1084,7 +1096,7 @@ def categories(engine: Engine, m: Mapping, scope_root: Optional[str] = None) -> 
     S = qi(m.objs)
     with engine.connect() as c:
         return [s for s in c.execute(text(
-            f"SELECT DISTINCT categorie FROM {S}.v_pointage_employes WHERE categorie IS NOT NULL"
+            f"SELECT DISTINCT categorie FROM {S}.v_pointage_employes WHERE nullif(btrim(categorie), '') IS NOT NULL"
             f"{_scope_sql(S, scope_root)} ORDER BY 1"), {"root": scope_root}).scalars()]
 
 

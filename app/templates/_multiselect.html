@@ -1,0 +1,23 @@
+{# Liste déroulante à choix multiples : cases à cocher, recherche, tout / aucun. Sans sélection = tous. #}
+{% macro multiselect(name, label, options, selected, all_label='Tous', empty_note='') %}
+<div class="field ms" data-ms>
+  <span class="field-label">{{ label }}</span>
+  <details class="ms-box">
+    <summary class="ms-summary" title="{{ selected | join(', ') if selected else all_label }}">
+      {%- if not selected -%}<span class="ms-all">{{ all_label }}</span>
+      {%- elif selected | length == 1 -%}<span class="ms-text">{{ selected[0] }}</span>
+      {%- else -%}<span class="ms-text">{{ selected[0] }}</span><span class="ms-more">+{{ selected | length - 1 }}</span>{%- endif -%}
+    </summary>
+    <div class="ms-panel" role="group" aria-label="{{ label }}">
+      {% if options | length > 7 %}<input type="search" class="ms-search" placeholder="Rechercher…" aria-label="Rechercher dans {{ label }}">{% endif %}
+      <div class="ms-links"><button type="button" data-ms-all>Tout cocher</button><button type="button" data-ms-none>Tout décocher</button></div>
+      <div class="ms-list">
+        {% for o in options %}<label class="check"><input type="checkbox" name="{{ name }}" value="{{ o }}" {{ 'checked' if o in selected }}><span>{{ o }}</span></label>{% endfor %}
+        {% for o in selected if o not in options %}<label class="check"><input type="checkbox" name="{{ name }}" value="{{ o }}" checked><span>{{ o }}</span></label>{% endfor %}
+        {% if not options %}<p class="muted small">{{ empty_note or 'Aucune valeur.' }}</p>{% endif %}
+      </div>
+      <div class="ms-foot"><span class="muted small ms-count"></span><button type="submit" class="btn small primary">Appliquer</button></div>
+    </div>
+  </details>
+</div>
+{% endmacro %}

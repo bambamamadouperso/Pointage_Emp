@@ -118,6 +118,33 @@
   btn?.addEventListener('click', () => toggle(!side.classList.contains('open')));
   back?.addEventListener('click', () => toggle(false));
   document.addEventListener('keydown', e => { if (e.key === 'Escape') toggle(false); });
+
+  // Listes à choix multiples : recherche, tout / aucun ; à la fermeture, la page se met à jour si le choix a changé.
+  document.querySelectorAll('[data-ms]').forEach(ms => {
+    const box = ms.querySelector('details'), boxes = [...ms.querySelectorAll('.ms-list input[type=checkbox]')];
+    const count = ms.querySelector('.ms-count'), search = ms.querySelector('.ms-search');
+    const state = () => boxes.map(b => b.checked ? 1 : 0).join('');
+    let initial = state();
+    const refresh = () => { const n = boxes.filter(b => b.checked).length; if (count) count.textContent = n ? n + ' sélectionné(s)' : 'Tous'; };
+    boxes.forEach(b => b.addEventListener('change', refresh));
+    ms.querySelector('[data-ms-all]')?.addEventListener('click', () => { boxes.forEach(b => { if (!b.closest('label').hidden) b.checked = true; }); refresh(); });
+    ms.querySelector('[data-ms-none]')?.addEventListener('click', () => { boxes.forEach(b => { b.checked = false; }); refresh(); });
+    search?.addEventListener('input', () => {
+      const q = search.value.trim().toLowerCase();
+      boxes.forEach(b => { b.closest('label').hidden = q && !b.value.toLowerCase().includes(q); });
+    });
+    box.addEventListener('toggle', () => {
+      if (box.open) { initial = state(); search?.focus(); return; }
+      if (state() !== initial) box.closest('form')?.requestSubmit();
+    });
+    refresh();
+  });
+  document.addEventListener('click', e => {
+    document.querySelectorAll('[data-ms] details[open]').forEach(d => { if (!d.contains(e.target)) d.open = false; });
+  });
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') document.querySelectorAll('[data-ms] details[open]').forEach(d => { d.open = false; });
+  });
 })();
 </script>
 {% block scripts %}{% endblock %}

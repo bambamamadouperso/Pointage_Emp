@@ -31,7 +31,7 @@ def _filters(request: Request) -> tuple[pointage.Filters, str]:
         preset = preset if preset in dict(rapports.PRESETS) else "30j"
         du, au = rapports.period(preset)
     team = p.get("equipe", "")
-    return pointage.Filters(du=du, au=au, service=p.get("service", ""), team=team, categorie=p.get("categorie", ""),
+    return pointage.Filters(du=du, au=au, service=pointage.multi(p.getlist("service")), team=team, categorie=pointage.multi(p.getlist("categorie")),
                             directs=p.get("directs") == "1" and bool(team)), preset
 
 
@@ -138,7 +138,7 @@ def export(request: Request, db: Session = Depends(get_db)):
         ws.freeze_panes = "A2"
         ws.auto_filter.ref = ws.dimensions
     info = wb.create_sheet("Filtres")
-    for row in [("Du", f.du.strftime("%d/%m/%Y")), ("Au", f.au.strftime("%d/%m/%Y")), ("Service", f.service or "Tous"), ("Statut du personnel", f.categorie or "Tous"),
+    for row in [("Du", f.du.strftime("%d/%m/%Y")), ("Au", f.au.strftime("%d/%m/%Y")), ("Service", ", ".join(f.service) or "Tous"), ("Statut du personnel", ", ".join(f.categorie) or "Tous"),
                 ("Équipe", (f.team + (" (directs)" if f.directs else "")) if f.team else "Toutes"),
                 ("Exporté par", request.session.get("user", ""))]:
         info.append(row)

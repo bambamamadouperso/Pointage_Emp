@@ -616,3 +616,29 @@ input.compact { min-height: 32px; padding: .3rem .55rem; font-size: .84rem; }
 .preview-frame { border: 1px solid var(--border); border-radius: 0 0 10px 10px; background: #f2f5f9; display: flex; justify-content: center; overflow: auto; max-height: 78vh; }
 .preview-frame iframe { width: 100%; min-height: 420px; border: 0; background: #f2f5f9; transition: width .2s; }
 @media (max-width: 1100px) { .editor { grid-template-columns: 1fr; } .preview-pane { position: static; } }
+
+/* Liste à choix multiples */
+.ms { position: relative; min-width: 0; flex: 1 1 190px; }
+.ms-box { position: relative; }
+.ms-summary { list-style: none; display: flex; align-items: center; gap: .4rem; min-height: 38px; padding: .45rem 2rem .45rem .75rem;
+  border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface); cursor: pointer; font-size: .9rem; font-weight: 400;
+  box-shadow: 0 1px 1px rgba(11, 23, 38, .03); position: relative; white-space: nowrap; overflow: hidden; }
+.ms-summary::-webkit-details-marker { display: none; }
+.ms-summary::after { content: ""; position: absolute; right: .8rem; top: 50%; width: 7px; height: 7px; margin-top: -5px;
+  border-right: 1.6px solid var(--muted); border-bottom: 1.6px solid var(--muted); transform: rotate(45deg); transition: transform .15s; }
+.ms-box[open] .ms-summary::after { transform: rotate(-135deg); margin-top: -1px; }
+.ms-summary:hover { border-color: color-mix(in srgb, var(--primary) 45%, var(--border-strong)); }
+.ms-box[open] .ms-summary { border-color: var(--primary); box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 20%, transparent); }
+.ms-text { overflow: hidden; text-overflow: ellipsis; color: var(--text); }
+.ms-all { color: var(--text); }
+.ms-more { flex: none; padding: 0 .45rem; border-radius: 999px; background: var(--primary-soft); color: var(--primary); font-size: .75rem; font-weight: 700; }
+.ms-panel { position: absolute; z-index: 40; top: calc(100% + 6px); left: 0; min-width: 100%; width: max-content; max-width: min(420px, 90vw);
+  background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow-lg); padding: .6rem; display: grid; gap: .45rem; }
+.ms-search { min-height: 34px; font-size: .86rem; }
+.ms-links { display: flex; gap: .8rem; padding: 0 .2rem; }
+.ms-links button { border: 0; background: none; padding: 0; font: inherit; font-size: .8rem; font-weight: 600; color: var(--primary); cursor: pointer; }
+.ms-list { display: grid; max-height: 300px; overflow-y: auto; margin: 0 -.2rem; }
+.ms-list label.check { padding: .38rem .45rem; border-radius: 7px; font-size: .88rem; font-weight: 500; color: var(--text); cursor: pointer; }
+.ms-list label.check:hover { background: var(--primary-soft); }
+.ms-list label.check:has(input:checked) { font-weight: 600; }
+.ms-foot { display: flex; align-items: center; justify-content: space-between; gap: .6rem; padding-top: .45rem; border-top: 1px solid var(--border); }

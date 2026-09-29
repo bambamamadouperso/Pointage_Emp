@@ -581,6 +581,18 @@ def test_category_filter(configured, pg, logged_client):
     assert "Statuts du personnel" in wb.sheetnames
     admin = logged_client.get("/admin/pointage").text
     assert "Statut du personnel" in admin and "<code>Cadre</code>" in admin
+    # Choix multiples : plusieurs services et plusieurs statuts du personnel.
+    page = logged_client.get(f"/suivi?date={MON.isoformat()}&categorie=Cadre&categorie=Non+cadre&service=RH").text
+    assert "Statut du personnel : Cadre, Non cadre" in page and "Service : RH" in page and 'class="ms-more">+1' in page
+    assert "E003</td>" in page and "E005</td>" in page and "E001</td>" not in page  # E001 : Production
+    both = logged_client.get(f"/suivi?date={MON.isoformat()}&service=RH&service=Production&pop=liste").text
+    assert "E001</td>" in both and "E003</td>" in both
+    xlsx = load_workbook(io.BytesIO(logged_client.get(
+        f"/suivi/export.xlsx?date={MON.isoformat()}&service=RH&service=Production").content))
+    assert {row[4] for row in xlsx.active.iter_rows(min_row=2, values_only=True)} == {"RH", "Production"}
+    assert dict(xlsx["Filtres"].iter_rows(values_only=True))["Service"] == "RH, Production"
+    multi = logged_client.get(url + "&service=RH&service=Production&categorie=Cadre").text
+    assert "Par employé" in multi and "E005</td>" not in multi and "E001</td>" in multi and "E003</td>" in multi
     # Colonne non configurée : le filtre reste visible (désactivé), avec le lien de configuration.
     import app.pointage as pt
     original = pt.categories

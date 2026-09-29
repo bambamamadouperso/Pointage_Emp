@@ -79,11 +79,11 @@ def _filters(request: Request) -> tuple[pointage.Filters, Optional[str]]:
         au = du + timedelta(days=MAX_DAYS - 1)
         warning = f"Période limitée à {MAX_DAYS} jours : affichage du {du:%d/%m/%Y} au {au:%d/%m/%Y}."
     return pointage.Filters(
-        du=du, au=au, q=p.get("q", "").strip(), service=p.get("service", ""),
+        du=du, au=au, q=p.get("q", "").strip(), service=pointage.multi(p.getlist("service")),
         statuts=[s for s in p.getlist("statut") if s in pointage.STATUTS],
         sort=p.get("sort", "nom") if p.get("sort", "nom") in pointage.SORTABLE else "nom",
         desc=p.get("dir") == "desc", team=p.get("equipe", ""), directs=p.get("directs") == "1" and bool(p.get("equipe")),
-        population=p.get("pop", "") if p.get("pop") in ("liste", "hors") else "", categorie=p.get("categorie", ""),
+        population=p.get("pop", "") if p.get("pop") in ("liste", "hors") else "", categorie=pointage.multi(p.getlist("categorie")),
     ), warning
 
 
@@ -237,7 +237,7 @@ def export(request: Request, db: Session = Depends(get_db)):
     info = wb.create_sheet("Filtres")
     for label, value in [
         ("Du", f.du.strftime("%d/%m/%Y")), ("Au", f.au.strftime("%d/%m/%Y")), ("Recherche", f.q or "—"),
-        ("Service", f.service or "Tous"), ("Statut du personnel", f.categorie or "Tous"),
+        ("Service", ", ".join(f.service) or "Tous"), ("Statut du personnel", ", ".join(f.categorie) or "Tous"),
         ("Personnes", {"liste": "employés de la liste", "hors": "hors liste"}.get(f.population, "toutes")),
         ("Équipe", (f.team + (" (directs)" if f.directs else "")) if f.team else "Toutes"),
         ("Périmètre", "équipe du compte" if f.scope_root is not None else "tout le personnel"),

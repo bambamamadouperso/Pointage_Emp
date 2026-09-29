@@ -27,6 +27,7 @@
 </section>
 {% endmacro %}
 {% block content %}
+{% from "_multiselect.html" import multiselect %}
 <div class="page-head">
   <div>
     <h1>Rapports</h1>
@@ -49,8 +50,7 @@
   </div>
   <div class="row">
     <input type="hidden" name="p" value="{{ preset }}">
-    <label>Service <select name="service"><option value="">Tous</option>
-      {% for s in services %}<option value="{{ s }}" {{ 'selected' if f.service == s }}>{{ s }}</option>{% endfor %}</select></label>
+    {{ multiselect('service', 'Service', services, f.service) }}
     {% include "_filtre_statut_personnel.html" %}
     {% if has_hierarchy %}
     <label>Équipe de <select name="equipe"><option value="">{{ 'Toute mon équipe' if scope_label else 'Tout le personnel' }}</option>
@@ -200,7 +200,7 @@
 <script>
 (function () {
   const form = document.getElementById('rfilters');
-  if (form) form.querySelectorAll('select, input[type=checkbox]').forEach(el => el.addEventListener('change', () => {
+  if (form) form.querySelectorAll('select, input[type=checkbox]').forEach(el => !el.closest('[data-ms]') && el.addEventListener('change', () => {
     if (el.name === 'equipe' && !el.value) { const d = form.querySelector('[name=directs]'); if (d) d.checked = false; }
     form.requestSubmit();
   }));
