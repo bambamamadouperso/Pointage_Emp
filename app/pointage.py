@@ -1352,13 +1352,30 @@ def parse_planning(rows: list[list]) -> dict:
                     legend[code] = {"code": code, "type": kind, "debut": None, "fin": None,
                                     "duree": "08:00" if kind in ("formation", "ferie") else None,
                                     "libelle": a.strip().capitalize()[:80]}
+    # Période de paie déclarée en tête (« PAIE | 20/04/2026 | 19/05/2026 ») : les lignes datées hors de cette période
+    # sont des erreurs de saisie (ex. « 17/04 » au lieu de « 17/05 ») et sont écartées plutôt que d'écraser un autre mois.
+    pay, outside = None, []
+    for r in range(r0):
+        for c in range(len(rows[r])):
+            if label(cell(r, c)) == "paie":
+                found = [d for d in (_as_day(cell(r, c + k)) for k in range(1, 4)) if d]
+                if len(found) >= 2 and found[0] <= found[1]:
+                    pay = (found[0], found[1])
+    if pay:
+        outside = sorted({d for _, d, _ in entries if not pay[0] <= d <= pay[1]})
+        entries = [e for e in entries if pay[0] <= e[1] <= pay[1]]
+        if not entries:
+            raise PointageError("Aucun jour dans la période de paie indiquée en tête de la feuille.")
     days = sorted({d for _, d, _ in entries})
     return {"entries": entries, "names": names, "legend": list(legend.values()), "matricules": list(columns.values()),
+            "paie": pay, "hors_periode": outside,
             "du": days[0], "au": days[-1], "vides": empty}
 
 
 def read_planning_file(name: str, data: bytes) -> dict:
-    """Planning d'un classeur Excel : première feuille qui contient une ligne « MATRICULE »."""
+    """Planning d'un classeur : toutes les feuilles au format établi (ligne « MATRICULE », une ligne par jour), quel
+    que soit leur nom ; les autres feuilles (ex. COLLABORATEURS) sont ignorées. Un même (matricule, jour) présent
+    dans deux feuilles : la dernière feuille l'emporte (conflit signalé)."""
     import io
 
     from openpyxl import load_workbook
@@ -1369,16 +1386,39 @@ def read_planning_file(name: str, data: bytes) -> dict:
         wb = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
     except Exception as exc:  # noqa: BLE001
         raise PointageError("Fichier Excel illisible (enregistrez-le au format .xlsx).") from exc
-    first_error = None
+    sheets, ignored, first_error = [], [], None
+    merged: dict[tuple[str, date], tuple[str, str]] = {}
+    conflicts: list[tuple[str, date, str, str, str, str]] = []
+    legend: dict[str, dict] = {}
+    names: dict[str, str] = {}
     for ws in wb.worksheets:
         rows = [list(r) for r in ws.iter_rows(max_row=2000, max_col=400, values_only=True)]
+        title = (ws.title or "").strip()
         try:
-            result = parse_planning(rows)
-            result["feuille"] = ws.title
-            return result
+            plan = parse_planning(rows)
         except PointageError as exc:
+            ignored.append(title)
             first_error = first_error or exc
-    raise first_error or PointageError("Le classeur est vide.")
+            continue
+        for mat, day, code in plan["entries"]:
+            previous = merged.get((mat, day))
+            if previous and previous[0] != code:
+                conflicts.append((mat, day, previous[1], previous[0], title, code))
+            merged[(mat, day)] = (code, title)
+        for poste in plan["legend"]:
+            legend.setdefault(poste["code"], poste)
+        names.update({k: v for k, v in plan["names"].items() if v})
+        sheets.append({"feuille": title, "du": plan["du"], "au": plan["au"], "jours": len(plan["entries"]),
+                       "employes": len(plan["matricules"]), "paie": plan["paie"], "hors_periode": plan["hors_periode"]})
+    wb.close()
+    if not sheets:
+        raise first_error or PointageError("Le classeur est vide.")
+    entries = [(mat, day, code) for (mat, day), (code, _) in merged.items()]
+    days = sorted({d for _, d, _ in entries})
+    return {"entries": entries, "names": names, "legend": list(legend.values()),
+            "matricules": sorted({m for m, _, _ in entries}), "du": days[0], "au": days[-1],
+            "feuilles": sheets, "feuilles_ignorees": ignored, "conflits": conflicts,
+            "feuille": ", ".join(x["feuille"] for x in sheets)}
 
 
 def postes(engine: Engine, m: Mapping) -> list[dict]:

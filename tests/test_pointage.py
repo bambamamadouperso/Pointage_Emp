@@ -1310,3 +1310,46 @@ def test_manager_digests(configured, pg, logged_client, monkeypatch):
             ms = db.query(MailSettings).first()
             ms.smtp_host, ms.from_email, ms.mode, ms.test_recipients = "", "", "test", ""
             db.commit()
+
+
+def test_planning_import_all_matching_sheets(configured, pg, logged_client):
+    """Classeur à plusieurs feuilles nommées librement : toutes celles au format du planning sont importées,
+    les autres ignorées ; date hors période de paie écartée ; conflit entre feuilles signalé."""
+    from openpyxl import Workbook
+
+    def sheet(wb, title, pay, days):
+        ws = wb.create_sheet(title)
+        ws.append([None, "PAIE", datetime(*pay[0]), f" {pay[1][2]:02d}/{pay[1][1]:02d}/{pay[1][0]}"])
+        ws.append([None, "Code", "Heure Début", "Heure Fin"])
+        ws.append([None, "P1", "06:00", "14:00"])
+        ws.append([])
+        ws.append(["MATRICULE", "E005"])
+        ws.append(["NOM", "BA KHADY"])
+        ws.append(["DATE"])
+        for day, code in days:
+            ws.append([datetime(2026, *day), code])
+
+    wb = Workbook()
+    wb.remove(wb.active)
+    wb.create_sheet("COLLABORATEURS").append(["user_id", "name"])
+    sheet(wb, "Pro Caristes Sept 2026", ((2026, 9, 1), (2026, 9, 15)), [((9, 14), "P1"), ((9, 15), "P4")])
+    # Seconde feuille : 15/09 en conflit (P1 remplace P4), et « 16/08 » au lieu de « 16/10 » (hors période de paie).
+    sheet(wb, " Pro Cariste  Sept-Oct 2026", ((2026, 9, 15), (2026, 10, 14)),
+          [((9, 15), "P1"), ((9, 16), "P11"), ((8, 16), "P1")])
+    buf = io.BytesIO()
+    wb.save(buf)
+    try:
+        r = logged_client.post("/admin/planning/import", files={"fichier": ("PLANNING CARISTES.xlsx", buf.getvalue())},
+                               follow_redirects=True)
+        text_page = r.text.replace("&#39;", "'")
+        assert "importé du 14/09/2026 au 16/09/2026 : 1 employé(s), 3 jour(s)" in text_page, text_page[:3000]
+        assert "2 feuilles importées" in text_page and "« Pro Caristes Sept 2026 »" in text_page
+        assert "Feuilles ignorées" in text_page and "« COLLABORATEURS »" in text_page
+        assert "hors de la période de paie (15/09/2026 → 14/10/2026) ignorée(s) : 16/08/2026" in text_page
+        assert "1 jour(s) planifié(s) dans plusieurs feuilles" in text_page and "P4 (« Pro Caristes Sept 2026 ») remplacé par P1" in text_page
+        with pg.connect() as c:
+            got = dict(c.execute(text(f"SELECT jour, code FROM {SCHEMA}.pointage_planning WHERE matricule = 'E005'")).all())
+        assert got == {date(2026, 9, 14): "P1", date(2026, 9, 15): "P1", date(2026, 9, 16): "P11"}
+    finally:
+        with pg.begin() as c:
+            c.execute(text(f"DELETE FROM {SCHEMA}.pointage_planning"))

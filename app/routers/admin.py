@@ -609,6 +609,25 @@ async def planning_import(request: Request, fichier: UploadFile = File(...), db:
                f"{period} : {result['employes']} employé(s), {result['jours']} jour(s) planifié(s)")
     flash(request, f"Planning « {fichier.filename} » importé {period} : {result['employes']} employé(s), "
                    f"{result['jours']} jour(s) planifié(s). Les calculs du suivi en tiennent compte immédiatement.", "ok")
+    sheets = plan.get("feuilles", [])
+    if len(sheets) > 1:
+        flash(request, f"{len(sheets)} feuilles importées : " + " ; ".join(
+            f"« {x['feuille']} » ({x['du']:%d/%m/%Y} → {x['au']:%d/%m/%Y}, {x['jours']} j)" for x in sheets) + ".", "ok")
+    if plan.get("feuilles_ignorees"):
+        flash(request, "Feuilles ignorées (pas au format du planning : ligne « MATRICULE » puis une ligne par jour) : "
+              + ", ".join(f"« {x} »" for x in plan["feuilles_ignorees"]) + ".", "warn")
+    for x in sheets:
+        if x["hors_periode"]:
+            days = ", ".join(d.strftime("%d/%m/%Y") for d in x["hors_periode"][:10])
+            flash(request, f"« {x['feuille']} » : {len(x['hors_periode'])} ligne(s) datée(s) hors de la période de paie "
+                           f"({x['paie'][0]:%d/%m/%Y} → {x['paie'][1]:%d/%m/%Y}) ignorée(s) : {days}. "
+                           f"Erreur de saisie probable (mois ou année) : corrigez la date dans le fichier puis réimportez.",
+                  "warn")
+    if plan.get("conflits"):
+        sample = "; ".join(f"{mat} le {day:%d/%m/%Y} : {c1} (« {f1} ») remplacé par {c2} (« {f2} »)"
+                           for mat, day, f1, c1, f2, c2 in plan["conflits"][:5])
+        flash(request, f"{len(plan['conflits'])} jour(s) planifié(s) dans plusieurs feuilles avec des codes différents : "
+                       f"la dernière feuille l'emporte. Ex. {sample}.", "warn")
     if result["surcharges"]:
         flash(request, f"Planning chargé (plus de {pointage.PLANNING_WEEKLY_MAX} h par semaine en moyenne) : " + ", ".join(
             f"{mat} — {h['heures']:.0f} h sur la période, soit {h['hebdo']:.1f} h/semaine"
