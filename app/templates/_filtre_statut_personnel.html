@@ -1,5 +1,13 @@
 {# Filtre « Statut du personnel » (cadre, non cadre…) : toujours visible ; à configurer s'il n'y a pas encore de colonne. #}
 {% from "_multiselect.html" import multiselect %}
+{# Direction (colonne « direction » du personnel) : affichée dès qu'elle est configurée. #}
+{% if directions %}
+  {{ multiselect('direction', 'Direction', directions, f.direction) }}
+{% elif not has_directions and can(role, 'admin') %}
+<label class="statut-perso"><span>Direction <a class="small" href="/admin/pointage#direction" title="Choisir la colonne direction dans la table Personnel">· configurer →</a></span>
+  <select disabled title="Colonne de la direction non configurée"><option>Non configurée</option></select>
+</label>
+{% endif %}
 {% if categories %}
   {{ multiselect('categorie', 'Statut du personnel', categories, f.categorie) }}
 {% else %}

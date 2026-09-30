@@ -59,7 +59,7 @@ STATUTS = {
 }
 CONGES = ("CONGE_ANNUEL", "CONGE_EXCEP")
 # Version des objets PostgreSQL : si elle change, ils sont réinstallés automatiquement.
-SQL_VERSION = 16
+SQL_VERSION = 17
 # Taille maximale des fichiers importés (planning, agents terrain).
 MAX_IMPORT_MB = 50
 # Limites des requêtes lancées depuis les pages web : une attente de verrou ou une requête lente ne doit jamais
@@ -141,6 +141,12 @@ class Mapping:
     cat_table: str = ""
     cat_key_col: str = ""
     cat_label_col: str = ""
+    # Facultatif : direction (ex. colonne « direction » de Personnel), avec une table de libellés si c'est un code.
+    dir_col: str = ""
+    dir_in: str = "person"            # « person » : table des noms ; « emp » : table des employés
+    dir_table: str = ""
+    dir_key_col: str = ""
+    dir_label_col: str = ""
     # Facultatif : adresse e-mail des employés (mails de confirmation de badge).
     email_col: str = ""
     email_in: str = "person"          # « person » : table des noms ; « emp » : table des employés
@@ -185,7 +191,8 @@ class Mapping:
     def __post_init__(self) -> None:
         # Configuration enregistrée avant l'ajout des congés (ou champ laissé vide) : valeurs par défaut.
         for name in ("leave_state_values", "leave_annual_values", "leave_excep_values", "leave_ref",
-                     "tw_state_values", "tw_ref", "cat_in", "email_in", "mission_ref", "mission_state_values"):
+                     "tw_state_values", "tw_ref", "cat_in", "email_in", "mission_ref", "mission_state_values",
+                     "dir_in"):
             if not getattr(self, name):
                 setattr(self, name, type(self).__dataclass_fields__[name].default)
 
@@ -218,6 +225,8 @@ class Mapping:
             out.append("table des noms (liste de référence choisie : table des noms)")
         if self.service_table and not (self.service_key_col and self.service_label_col):
             out.append("colonnes de la table des services")
+        if self.dir_table and not (self.dir_col and self.dir_key_col and self.dir_label_col):
+            out.append("colonnes de la table des directions")
         if self.cat_table and not (self.cat_col and self.cat_key_col and self.cat_label_col):
             out.append("colonnes de la table des catégories")
         if self.hier_table and not (self.hier_emp_col and self.hier_manager_col):
@@ -293,6 +302,9 @@ _GUESSES = {
     "person_nom_col": [r"^nom$", r"^nom_", r"^lastname", r"^name$", r"nom"],
     "person_prenom_col": [r"pr[ée]nom", r"firstname"],
     "email_col": [r"^e?-?mail", r"courriel", r"mail"],
+    "dir_col": [r"^direction$", r"^direction", r"^id_?direction", r"^dir$", r"d[ée]partement", r"^pole$", r"^p[ôo]le"],
+    "dir_key_col": [r"^id", r"code", r"direction"],
+    "dir_label_col": [r"libell", r"^nom", r"label", r"d[ée]sign", r"intitul", r"direction"],
     "cat_col": [r"^statut$", r"^statut_?(salari|employ|pers|agent|cadre)", r"cat[ée]gor", r"coll[èe]ge", r"^cadre",
                 r"qualif", r"^statut"],
     "cat_key_col": [r"^id", r"code", r"statut", r"cat[ée]gor"],
@@ -518,6 +530,17 @@ def build_sql(m: Mapping, punch_types: dict[str, str], emp_types: dict[str, str]
             categorie = f"nullif(btrim({src}.{qi(m.cat_col)}::text), '')"
     else:
         categorie = "NULL::text"
+    dir_join = ""
+    if m.dir_col:
+        src = "pe" if m.dir_in == "person" and m.person_table else "e"
+        if m.dir_table:
+            direction = f"nullif(btrim(dt.{qi(m.dir_label_col)}::text), '')"
+            dir_join = (f" LEFT JOIN {qt(m.schema, m.dir_table)} dt ON "
+                        f"btrim(dt.{qi(m.dir_key_col)}::text) = btrim({src}.{qi(m.dir_col)}::text)")
+        else:
+            direction = f"nullif(btrim({src}.{qi(m.dir_col)}::text), '')"
+    else:
+        direction = "NULL::text"
     if m.email_col:
         email_src = "pe" if m.email_in == "person" and m.person_table else "e"
         email = f"nullif(lower(btrim({email_src}.{qi(m.email_col)}::text)), '')"
@@ -537,11 +560,11 @@ def build_sql(m: Mapping, punch_types: dict[str, str], emp_types: dict[str, str]
         base_mat = f"COALESCE({mat}, {pkey_person})"
         person_ref = pkey_person
         base_from = (f"FROM {qt(m.schema, m.person_table)} pe\n    LEFT JOIN {emp} e ON "
-                     f"btrim(e.{qi(m.emp_person_col)}::text) = {pkey_person} {service_join}{cat_join}")
+                     f"btrim(e.{qi(m.emp_person_col)}::text) = {pkey_person} {service_join}{cat_join}{dir_join}")
         base_where = f"pe.{qi(m.person_key_col)} IS NOT NULL"
     else:
         base_key, base_mat = ekey, mat
-        base_from = f"FROM {emp} e {person_join} {service_join}{cat_join}"
+        base_from = f"FROM {emp} e {person_join} {service_join}{cat_join}{dir_join}"
         base_where = f"e.{qi(m.emp_key_col)} IS NOT NULL"
 
     # Hiérarchie : chaque employé a au plus un responsable (N+1), identifié par clé, matricule ou personne.
@@ -565,13 +588,13 @@ hier AS (
 WITH base AS (
     SELECT DISTINCT ON (1) {base_key} AS emp_key, {base_mat} AS matricule, {nom} AS nom, {prenom} AS prenom,
            {service} AS service, COALESCE({actif}, false) AS actif, {person_ref} AS person_ref,
-           {actif_raw} AS actif_valeur, {categorie} AS categorie, {email} AS email
+           {actif_raw} AS actif_valeur, {categorie} AS categorie, {email} AS email, {direction} AS direction
     {base_from}
     WHERE {base_where}
     ORDER BY 1, 6 DESC  -- plusieurs fiches pour une même personne : la fiche active l'emporte
 ){hier_cte}
 SELECT b.emp_key, b.matricule, b.nom, b.prenom, b.service, b.actif, {hier_select}, b.actif_valeur, b.person_ref,
-       b.categorie, b.email
+       b.categorie, b.email, b.direction
 FROM base b
 {hier_join}"""
     team_function = f"""
@@ -605,7 +628,7 @@ RETURNS TABLE (
     jour date, jour_ouvre boolean, premier_pointage timestamp, dernier_pointage timestamp, nb_pointages integer,
     statut text, statut_libelle text, debut_valide time, fin_validee time, pause_deduite interval,
     duree_validee interval, duree_effective interval, duree_validee_min numeric, duree_effective_min numeric,
-    hors_liste boolean, terrain boolean, retard_min numeric, categorie text, poste text
+    hors_liste boolean, terrain boolean, retard_min numeric, categorie text, poste text, direction text
 )
 LANGUAGE sql STABLE
 -- La compilation JIT coûte plus d'une seconde par appel, pour aucun gain sur ce type de requête.
@@ -693,6 +716,7 @@ base AS (
 ),
 g AS (
     SELECT b.emp_key, b.jour, e.matricule, e.nom, e.prenom, e.service, e.responsable_key, e.responsable, e.categorie,
+           e.direction,
            a.p1, a.p2, a.n, (e.emp_key IS NULL) AS hors_liste,
            p.debut_journee, p.debut_pause, p.fin_pause, p.fin_journee, p.seuil_retard, p.duree_pause,
            p.duree_conge, p.duree_teletravail, p.duree_terrain, p.duree_maladie, p.duree_repos, p.duree_mission, k.statut AS conge, t.statut AS tele,
@@ -767,7 +791,8 @@ SELECT c.emp_key, COALESCE(c.matricule, c.emp_key), COALESCE(c.nom, 'Hors liste'
        c.categorie,
        CASE WHEN c.poste_type = 'travail'
                  THEN c.poste_code || ' · ' || to_char(c.s_debut, 'HH24"h"MI') || '–' || to_char(c.s_fin, 'HH24"h"MI')
-            WHEN c.poste_code IS NOT NULL THEN c.poste_code || ' · ' || c.poste_libelle END
+            WHEN c.poste_code IS NOT NULL THEN c.poste_code || ' · ' || c.poste_libelle END,
+       c.direction
 FROM c
 CROSS JOIN LATERAL (
     SELECT CASE WHEN c.poste_type = 'travail' AND c.statut IN ('A_L_HEURE', 'RETARD') THEN c.hv_poste
@@ -880,13 +905,15 @@ def install(engine: Engine, m: Mapping, author: str) -> None:
         email_src = m.person_table if m.email_in == "person" and m.person_table else m.emp_table
         if m.email_col not in column_types(engine, m.schema, email_src):
             raise PointageError(f"Colonne « {m.email_col} » absente de {email_src}.")
-    if m.cat_col:
-        cat_src = m.person_table if m.cat_in == "person" and m.person_table else m.emp_table
-        if m.cat_col not in column_types(engine, m.schema, cat_src):
-            raise PointageError(f"Colonne « {m.cat_col} » absente de {cat_src}.")
+    for col, where, label in ((m.cat_col, m.cat_in, "statut du personnel"), (m.dir_col, m.dir_in, "direction")):
+        if col:
+            src_table = m.person_table if where == "person" and m.person_table else m.emp_table
+            if col not in column_types(engine, m.schema, src_table):
+                raise PointageError(f"Colonne « {col} » ({label}) absente de {src_table}.")
     for table, cols in ((m.person_table, (m.person_key_col, m.person_nom_col, m.person_prenom_col,
                                           m.emp_active_col if by_person else None)),
                         (m.cat_table, (m.cat_key_col, m.cat_label_col)),
+                        (m.dir_table, (m.dir_key_col, m.dir_label_col)),
                         (m.service_table, (m.service_key_col, m.service_label_col)),
                         (m.hier_table, (m.hier_emp_col, m.hier_manager_col)),
                         (m.leave_table, (m.leave_emp_col, m.leave_start_col, m.leave_end_col, m.leave_state_col,
@@ -1644,6 +1671,7 @@ class Filters:
     scope_root: Optional[str] = None  # périmètre imposé par le compte (manager : son équipe)
     population: str = ""              # « liste » : employés de la liste ; « hors » : badges hors liste
     categorie: list[str] = field(default_factory=list)  # statut(s) du personnel : cadre, non cadre… (vide = tous)
+    direction: list[str] = field(default_factory=list)  # une ou plusieurs directions (vide = toutes)
     exclude: str = ""                 # clé d'un employé à écarter (ex. le responsable dans le résumé de son équipe)
 
 
@@ -1671,6 +1699,10 @@ def _where(f: Filters, S: str = "") -> tuple[str, dict, list]:
         clauses.append("service IN :services")
         params["services"] = list(f.service)
         binds.append(bindparam("services", expanding=True))
+    if f.direction:
+        clauses.append("direction IN :directions")
+        params["directions"] = list(f.direction)
+        binds.append(bindparam("directions", expanding=True))
     if f.categorie:
         clauses.append("categorie IN :categories")
         params["categories"] = list(f.categorie)
@@ -1754,6 +1786,16 @@ def services(engine: Engine, m: Mapping, scope_root: Optional[str] = None) -> li
     with engine.connect() as c:
         return [s for s in c.execute(text(
             f"SELECT DISTINCT service FROM {S}.v_pointage_employes WHERE nullif(btrim(service), '') IS NOT NULL"
+            f"{_scope_sql(S, scope_root)} ORDER BY 1"), {"root": scope_root}).scalars()]
+
+
+def directions(engine: Engine, m: Mapping, scope_root: Optional[str] = None) -> list[str]:
+    if not m.dir_col:
+        return []
+    S = qi(m.objs)
+    with engine.connect() as c:
+        return [s for s in c.execute(text(
+            f"SELECT DISTINCT direction FROM {S}.v_pointage_employes WHERE nullif(btrim(direction), '') IS NOT NULL"
             f"{_scope_sql(S, scope_root)} ORDER BY 1"), {"root": scope_root}).scalars()]
 
 

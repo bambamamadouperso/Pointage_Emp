@@ -82,6 +82,7 @@ def pointage_config(request: Request, db: Session = Depends(get_db)):
     schemas, tables, punch_cols, emp_cols, service_cols, error, installed = [], [], {}, {}, {}, None, False
     person_cols, hier_cols, leave_cols, tw_cols, diag, stale = {}, {}, {}, {}, None, False
     cat_cols, cat_values, mission_cols, mission_match = {}, [], {}, None
+    dir_cols, dir_values = {}, []
     if conn is not None:
         engine = make_engine(conn, **pointage.WEB_LIMITS)
         try:
@@ -101,6 +102,10 @@ def pointage_config(request: Request, db: Session = Depends(get_db)):
             tw_cols = pointage.column_types(engine, mapping.schema, mapping.tw_table)
             mission_cols = pointage.column_types(engine, mapping.schema, mapping.mission_table)
             cat_cols = pointage.column_types(engine, mapping.schema, mapping.cat_table)
+            dir_cols = pointage.column_types(engine, mapping.schema, mapping.dir_table)
+            for key in ("dir_key_col", "dir_label_col"):
+                if dir_cols and not getattr(mapping, key):
+                    setattr(mapping, key, pointage.guess(key, list(dir_cols)))
             for key in ("cat_key_col", "cat_label_col"):
                 if cat_cols and not getattr(mapping, key):
                     setattr(mapping, key, pointage.guess(key, list(cat_cols)))
@@ -151,11 +156,20 @@ def pointage_config(request: Request, db: Session = Depends(get_db)):
             if not mapping.email_col and not exploring:
                 src = person_cols if mapping.email_in != "emp" and mapping.person_table else emp_cols
                 mapping.email_col = pointage.guess("email_col", list(src))
+            if not mapping.dir_col and not exploring:  # suggestion : colonne « direction » de Personnel
+                src = person_cols if mapping.person_table else emp_cols
+                mapping.dir_in = "person" if mapping.person_table else "emp"
+                mapping.dir_col = pointage.guess("dir_col", list(src))
             if not mapping.cat_col and not exploring:  # suggestion (enregistrée seulement si l'on valide)
                 src = person_cols if mapping.person_table else emp_cols
                 mapping.cat_in = "person" if mapping.person_table else "emp"
                 mapping.cat_col = pointage.guess("cat_col", list(src))
             installed = cfg.installed_at is not None and pointage.is_installed(engine, mapping)
+            if installed and mapping.dir_col:
+                try:
+                    dir_values = pointage.directions(engine, mapping)[:20]
+                except Exception:
+                    dir_values = []
             if installed and mapping.cat_col:
                 try:
                     cat_values = pointage.categories(engine, mapping)[:15]
@@ -180,7 +194,7 @@ def pointage_config(request: Request, db: Session = Depends(get_db)):
         person_cols=person_cols, hier_cols=hier_cols, leave_cols=leave_cols, diag=diag, stale=stale,
         leave_guess=pointage.guess("leave_table", tables) if not mapping.leave_table else "",
         tw_cols=tw_cols, cat_cols=cat_cols, cat_values=cat_values, tw_guess=pointage.guess("tw_table", tables) if not mapping.tw_table else "",
-        installed=installed, exploring=exploring, mission_cols=mission_cols, mission_match=mission_match,
+        installed=installed, exploring=exploring, mission_cols=mission_cols, dir_cols=dir_cols, dir_values=dir_values, mission_match=mission_match,
         mission_guess=pointage.guess("mission_table", tables) if not mapping.mission_table else "",
     )
 

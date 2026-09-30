@@ -98,6 +98,27 @@
     {% endif %}
   </fieldset>
 
+  <fieldset class="limits" id="direction"><legend>Direction <span class="muted small">(filtre du suivi et des rapports, rapport « Par direction »)</span></legend>
+    {% set dir_person = m.dir_in != 'emp' and m.person_table %}
+    <div class="row">
+      <label>Colonne de la direction
+        <select name="dir_in" data-reload>
+          <option value="person" {{ 'selected' if dir_person }} {{ 'disabled' if not m.person_table }}>dans {{ m.person_table or 'la table des noms' }}</option>
+          <option value="emp" {{ 'selected' if not dir_person }}>dans {{ m.emp_table or 'la table des employés' }}</option>
+        </select></label>
+      <label>&nbsp;{{ colselect('dir_col', person_cols if dir_person else emp_cols, m.dir_col, True) }}</label>
+      <label>Table des libellés <span class="muted small">(si la colonne contient un code)</span>
+        {{ tableselect('dir_table', m.dir_table, True) }}</label>
+    </div>
+    {% if m.dir_table %}
+    <div class="row">
+      <label>Code dans {{ m.dir_table }} {{ colselect('dir_key_col', dir_cols, m.dir_key_col) }}</label>
+      <label>Libellé {{ colselect('dir_label_col', dir_cols, m.dir_label_col) }}</label>
+    </div>
+    {% endif %}
+    {% if dir_values %}<p class="muted small">Directions trouvées : {% for v in dir_values %}<code>{{ v }}</code>{{ ', ' if not loop.last }}{% endfor %}</p>{% endif %}
+  </fieldset>
+
   <fieldset class="limits" id="statut-personnel"><legend>Statut du personnel <span class="muted small">(cadre, non cadre… : filtre du suivi et de tous les rapports)</span></legend>
     {% set cat_person = m.cat_in != 'emp' and m.person_table %}
     <div class="row">

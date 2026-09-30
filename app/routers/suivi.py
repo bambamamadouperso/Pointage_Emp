@@ -84,6 +84,7 @@ def _filters(request: Request) -> tuple[pointage.Filters, Optional[str]]:
         sort=p.get("sort", "nom") if p.get("sort", "nom") in pointage.SORTABLE else "nom",
         desc=p.get("dir") == "desc", team=p.get("equipe", ""), directs=p.get("directs") == "1" and bool(p.get("equipe")),
         population=p.get("pop", "") if p.get("pop") in ("liste", "hors") else "", categorie=pointage.multi(p.getlist("categorie")),
+        direction=pointage.multi(p.getlist("direction")),
     ), warning
 
 
@@ -133,7 +134,7 @@ def suivi(request: Request, db: Session = Depends(get_db)):
     size = size if size in PAGE_SIZES else 100
     context = dict(f=f, warning=warning, today=date.today(), statuts=pointage.STATUTS, page=page, size=size, page_sizes=PAGE_SIZES,
                    hhmm=pointage.hhmm, configured=mapping is not None, data=None, error=None, services=[],
-                   managers=[], categories=[], objectif_min=480, scope_label=None, population=None, last_punch=None, stale=False, has_hierarchy=bool(mapping and mapping.hier_table),
+                   managers=[], categories=[], directions=[], has_directions=bool(mapping and mapping.dir_col), objectif_min=480, scope_label=None, population=None, last_punch=None, stale=False, has_hierarchy=bool(mapping and mapping.hier_table),
                    single_day=f.du == f.au, mode="jour" if f.du == f.au else "periode")
     if mapping is None:
         return render(request, "suivi.html", **context)
@@ -144,6 +145,7 @@ def suivi(request: Request, db: Session = Depends(get_db)):
         context["services"] = pointage.services(engine, mapping, f.scope_root)
         context["managers"] = pointage.managers(engine, mapping, f.scope_root)
         context["categories"] = pointage.categories(engine, mapping, f.scope_root)
+        context["directions"] = pointage.directions(engine, mapping, f.scope_root)
         context["objectif_min"] = objectif_minutes(engine, mapping, f.au)
         try:
             context["population"] = pointage.population(engine, mapping)
@@ -214,7 +216,7 @@ def export(request: Request, db: Session = Depends(get_db)):
     ws.title = "Suivi journalier"
     headers = ["Date", "Matricule", "Nom", "Prénom", "Service", "Statut du personnel", "1er pointage", "Dernier pointage", "Nb pointages",
                "Statut", "Durée validée", "Durée effective", "Durée validée (min)", "Durée effective (min)",
-               "Responsable", "Dans la liste des employés", "Poste planifié"]
+               "Responsable", "Dans la liste des employés", "Poste planifié", "Direction"]
     ws.append(headers)
     fills = {"A_L_HEURE": "DCFCE7", "RETARD": "FFEDD5", "ABSENT": "FEE2E2", "INCOMPLET": "E5E7EB", "NON_OUVRE": "E0F2FE",
              "CONGE_ANNUEL": "E4F5D3", "CONGE_EXCEP": "E4F5D3",
@@ -229,7 +231,7 @@ def export(request: Request, db: Session = Depends(get_db)):
             r["nb_pointages"], r["statut_libelle"], r["duree_validee"], r["duree_effective"],
             float(r["duree_validee_min"]) if r["duree_validee_min"] is not None else None,
             float(r["duree_effective_min"]) if r["duree_effective_min"] is not None else None,
-            r["responsable"], "Non" if r["hors_liste"] else "Oui", r.get("poste"),
+            r["responsable"], "Non" if r["hors_liste"] else "Oui", r.get("poste"), r.get("direction"),
         ])
         row = ws.max_row
         ws.cell(row, 1).number_format = "DD/MM/YYYY"
@@ -284,6 +286,7 @@ def export(request: Request, db: Session = Depends(get_db)):
         ("Du", f.du.strftime("%d/%m/%Y")), ("Au", f.au.strftime("%d/%m/%Y")), ("Recherche", f.q or "—"),
         ("Objectif de durée validée", f"{objectif // 60}h{objectif % 60:02d} (vert si atteint, rouge sinon)"),
         ("Service", ", ".join(f.service) or "Tous"), ("Statut du personnel", ", ".join(f.categorie) or "Tous"),
+        ("Direction", ", ".join(f.direction) or "Toutes"),
         ("Personnes", {"liste": "employés de la liste", "hors": "hors liste"}.get(f.population, "toutes")),
         ("Équipe", (f.team + (" (directs)" if f.directs else "")) if f.team else "Toutes"),
         ("Périmètre", "équipe du compte" if f.scope_root is not None else "tout le personnel"),

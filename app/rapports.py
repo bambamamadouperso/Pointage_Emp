@@ -125,6 +125,7 @@ def _group(c, expr: str) -> list[dict]:
 def build(engine: Engine, m: Mapping, f: Filters, sort: str = "absences", compare: bool = True) -> dict:
     S = qi(m.objs)
     has_categories = bool(m.cat_col)
+    has_directions = bool(m.dir_col)
     out: dict = {}
     with engine.begin() as c:
         _load(c, S, f)
@@ -168,10 +169,12 @@ def build(engine: Engine, m: Mapping, f: Filters, sort: str = "absences", compar
 
         out["services"] = _group(c, "COALESCE(service, '(sans service)')")
         out["categories"] = _group(c, "COALESCE(categorie, '(non renseignée)')") if has_categories else []
+        out["directions"] = _group(c, "COALESCE(direction, '(sans direction)')") if has_directions else []
 
         employees = [_rates(dict(x)) for x in c.execute(text(f"""
             SELECT emp_key, max(matricule) AS matricule, max(nom) AS nom, max(prenom) AS prenom,
                 max(service) AS service, max(categorie) AS categorie, max(responsable) AS responsable,
+                max(direction) AS direction,
                 bool_or(terrain) AS terrain,
                 count(*) FILTER (WHERE {_ATTENDU}) AS attendus,
                 count(*) FILTER (WHERE {_DISPO}) AS disponibles,

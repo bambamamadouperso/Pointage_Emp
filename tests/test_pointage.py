@@ -1456,3 +1456,58 @@ def test_planning_import_with_progress(configured, pg, logged_client):
     finally:
         with pg.begin() as c:
             c.execute(text(f"DELETE FROM {SCHEMA}.pointage_planning"))
+
+
+def test_direction_filter_and_reports(configured, pg, logged_client):
+    """Direction (colonne « Direction » de Personnel) : proposée automatiquement, filtre multiple du suivi et des
+    rapports, rapport « Par direction », exports."""
+    import io
+
+    from openpyxl import load_workbook
+
+    with pg.begin() as c:
+        c.execute(text(f'ALTER TABLE {SCHEMA}."Personnel" ADD COLUMN IF NOT EXISTS "Direction" text'))
+        c.execute(text(f"""UPDATE {SCHEMA}."Personnel" SET "Direction" = CASE WHEN "IDPersonnel" IN (101, 102, 106)
+                          THEN 'Direction Industrielle' WHEN "IDPersonnel" IN (103, 104) THEN 'Direction RH' END"""))
+    with SessionLocal() as db:
+        cfg = db.query(PointageConfig).one()
+        original, conn_id = cfg.data, cfg.conn_id
+    try:
+        # Suggestion automatique de la colonne dans la configuration.
+        admin = logged_client.get("/admin/pointage").text
+        section = admin.split('id="direction"')[1].split("</fieldset>")[0]
+        assert '<option value="Direction" selected' in section
+        data = {**pointage.Mapping.from_json(original).__dict__, "dir_col": "Direction", "dir_in": "person",
+                "conn_id": conn_id}
+        assert "installées" in logged_client.post("/admin/pointage", data=data, follow_redirects=True).text
+        r = rows(pg, MON)
+        assert r[("E001", MON)].direction == "Direction Industrielle" and r[("E005", MON)].direction is None
+        with SessionLocal() as db:
+            m = pointage.Mapping.from_json(db.query(PointageConfig).one().data)
+        assert pointage.directions(pg, m) == ["Direction Industrielle", "Direction RH"]
+
+        page = logged_client.get(f"/suivi?date={MON.isoformat()}&direction=Direction+RH").text
+        assert 'name="direction"' in page and "Direction : Direction RH" in page
+        assert "E003</td>" in page and "E004</td>" in page and "E001</td>" not in page and "E005</td>" not in page
+        both = logged_client.get(f"/suivi?date={MON.isoformat()}&direction=Direction+RH"
+                                 f"&direction=Direction+Industrielle&pop=liste").text
+        assert "E001</td>" in both and "E003</td>" in both and "E005</td>" not in both
+        xlsx = load_workbook(io.BytesIO(logged_client.get(
+            f"/suivi/export.xlsx?date={MON.isoformat()}&direction=Direction+RH").content))
+        ws = xlsx.active
+        assert ws.cell(1, 18).value == "Direction"
+        assert {row[17] for row in ws.iter_rows(min_row=2, values_only=True) if row[0] not in (None, "Moyenne")} == {"Direction RH"}
+        assert dict(xlsx["Filtres"].iter_rows(values_only=True))["Direction"] == "Direction RH"
+
+        url = f"/rapports?p=perso&du={MON.isoformat()}&au={(MON + timedelta(days=4)).isoformat()}"
+        rep = logged_client.get(url).text
+        assert "Par direction" in rep and "(sans direction)" in rep and "Direction Industrielle" in rep
+        assert "Ba Khady" not in logged_client.get(url + "&direction=Direction+RH").text
+        wb = load_workbook(io.BytesIO(logged_client.get("/rapports/export.xlsx?" + url.split("?", 1)[1]).content))
+        assert "Directions" in wb.sheetnames and wb["Employés"].cell(1, 22).value == "Direction"
+        assert "<code>Direction Industrielle</code>" in logged_client.get("/admin/pointage").text
+    finally:
+        restore = {**pointage.Mapping.from_json(original).__dict__, "conn_id": conn_id}
+        assert "installées" in logged_client.post("/admin/pointage", data=restore, follow_redirects=True).text
+        with pg.begin() as c:
+            c.execute(text(f'ALTER TABLE {SCHEMA}."Personnel" DROP COLUMN IF EXISTS "Direction"'))
