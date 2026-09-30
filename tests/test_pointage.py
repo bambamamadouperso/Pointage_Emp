@@ -1365,4 +1365,55 @@ def test_import_size_limit(configured, logged_client, monkeypatch):
     monkeypatch.setattr(admin, "MAX_IMPORT_BYTES", 10)
     for url in ("/admin/planning/import", "/admin/terrain/import"):
         r = logged_client.post(url, files={"fichier": ("gros.xlsx", b"x" * 11)}, follow_redirects=True)
-        assert "Fichier trop volumineux (50 Mo maximum)." in r.text
+        assert "Fichier trop volumineux (50 Mo maximum)" in r.text
+
+
+def test_planning_import_several_workbooks(configured, pg, logged_client):
+    """Plusieurs classeurs importés en une fois : feuilles réunies, conflit entre fichiers signalé, fichier
+    illisible et fichier sans planning ignorés sans bloquer les autres."""
+    from openpyxl import Workbook
+
+    def workbook(sheets: dict) -> bytes:
+        wb = Workbook()
+        wb.remove(wb.active)
+        for title, days in sheets.items():
+            ws = wb.create_sheet(title)
+            ws.append(["MATRICULE", "E005"])
+            ws.append(["DATE"])
+            for day, code in days:
+                ws.append([datetime(2026, 9, day), code])
+        buf = io.BytesIO()
+        wb.save(buf)
+        return buf.getvalue()
+
+    files = [
+        ("fichier", ("Caristes 2026.xlsx", workbook({"Sept": [(1, "P1"), (2, "P2")]}))),
+        ("fichier", ("Caristes bis.xlsx", workbook({"Sept suite": [(2, "P3"), (3, "P4")]}))),
+        ("fichier", ("liste.xlsx", _empty_workbook())),
+        ("fichier", ("abime.xlsx", b"pas un classeur")),
+    ]
+    try:
+        r = logged_client.post("/admin/planning/import", files=files, follow_redirects=True)
+        page = r.text.replace("&#39;", "'")
+        assert "Planning « 4 classeurs » importé du 01/09/2026 au 03/09/2026 : 1 employé(s), 3 jour(s)" in page, page[:3000]
+        assert "« Caristes 2026.xlsx › Sept »" in page and "« Caristes bis.xlsx › Sept suite »" in page
+        assert "P2 (« Caristes 2026.xlsx › Sept ») remplacé par P3 (« Caristes bis.xlsx › Sept suite »)" in page
+        assert "« liste.xlsx › Liste »" in page and "« abime.xlsx » : fichier Excel illisible" in page
+        with pg.connect() as c:
+            got = dict(c.execute(text(f"SELECT jour, code FROM {SCHEMA}.pointage_planning WHERE matricule = 'E005'")).all())
+        assert got == {date(2026, 9, 1): "P1", date(2026, 9, 2): "P3", date(2026, 9, 3): "P4"}
+        assert 'name="fichier" accept=".xlsx,.xlsm" multiple' in logged_client.get("/admin/planning").text
+    finally:
+        with pg.begin() as c:
+            c.execute(text(f"DELETE FROM {SCHEMA}.pointage_planning"))
+
+
+def _empty_workbook() -> bytes:
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    wb.active.title = "Liste"
+    wb.active.append(["user_id", "name"])
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()

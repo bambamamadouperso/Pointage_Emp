@@ -363,3 +363,22 @@ def test_unexpected_error_page(logged_client, monkeypatch):
         r = c.get("/suivi")
     assert r.status_code == 500
     assert "La page n'a pas pu s'afficher" in r.text and "colonne introuvable xyz" in r.text
+
+
+def test_flash_messages_fit_in_session_cookie():
+    """Messages trop nombreux ou trop longs (import de gros classeurs) : raccourcis et bornés, pour que le cookie de
+    session (4 Ko) ne soit jamais refusé par le navigateur — sinon tous les messages seraient perdus."""
+    import base64
+    import json
+    from types import SimpleNamespace
+
+    from app.web import FLASH_MAX_CHARS, flash
+
+    request = SimpleNamespace(session={})
+    for i in range(30):
+        flash(request, f"Feuille « Pro Caristes Été {i} » importée : " + "é" * 900, "ok")
+    messages = request.session["_flash"]
+    assert all(len(m) <= FLASH_MAX_CHARS for _, m in messages) and messages[0][1].endswith("…")
+    assert messages[0][1].startswith("Feuille « Pro Caristes Été 0 » importée") and len(messages) >= 2
+    assert messages[-1][1].startswith("D'autres messages n'ont pas pu être affichés")
+    assert len(base64.b64encode(json.dumps(request.session).encode())) < 3300

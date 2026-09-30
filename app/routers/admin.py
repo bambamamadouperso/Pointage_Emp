@@ -370,6 +370,7 @@ def field_add(request: Request, type: str = Form(...), service: str = Form(""), 
 
 MAX_IMPORT_MB = pointage.MAX_IMPORT_MB
 MAX_IMPORT_BYTES = MAX_IMPORT_MB * 1024 * 1024
+MAX_IMPORT_FILES = 30  # classeurs de planning importés en une fois
 # Colonne du matricule, par ordre de préférence (« Nom employé » ne doit pas être pris pour le matricule).
 _MAT_HEADERS = [re.compile(p, re.I) for p in (r"matric", r"badge", r"^n[°o]\s*(d.)?employ", r"^code", r"^id")]
 _LABEL_HEADER = re.compile(r"motif|libell|fonction|poste|comment|zone|remarque", re.I)
@@ -585,17 +586,33 @@ def planning_page(request: Request, du: str = "", au: str = "", db: Session = De
 
 
 @router.post("/planning/import")
-async def planning_import(request: Request, fichier: UploadFile = File(...), db: Session = Depends(get_db)):
+async def planning_import(request: Request, fichier: list[UploadFile] = File(...), db: Session = Depends(get_db)):
+    """Un ou plusieurs classeurs à la fois : toutes leurs feuilles au format du planning sont importées ensemble."""
     cfg, mapping = _mapping_ready(db)
     if mapping is None:
         return redirect("/admin/pointage")
-    data = await fichier.read(MAX_IMPORT_BYTES + 1)
-    if len(data) > MAX_IMPORT_BYTES:
-        flash(request, f"Fichier trop volumineux ({MAX_IMPORT_MB} Mo maximum).", "err")
+    files, too_big = [], []
+    for upload in fichier[:MAX_IMPORT_FILES]:
+        if not upload.filename:
+            continue
+        data = await upload.read(MAX_IMPORT_BYTES + 1)
+        if len(data) > MAX_IMPORT_BYTES:
+            too_big.append(upload.filename)
+        else:
+            files.append((upload.filename, data))
+    if len(fichier) > MAX_IMPORT_FILES:
+        flash(request, f"{MAX_IMPORT_FILES} fichiers au plus par import : les {len(fichier) - MAX_IMPORT_FILES} "
+                       f"suivant(s) ont été ignorés.", "warn")
+    if too_big:
+        flash(request, f"Fichier trop volumineux ({MAX_IMPORT_MB} Mo maximum), ignoré : "
+                       + ", ".join(f"« {n} »" for n in too_big) + ".", "err")
+    if not files:
+        if not too_big:
+            flash(request, "Choisissez au moins un classeur Excel (.xlsx).", "err")
         return redirect("/admin/planning")
     engine = make_engine(cfg.conn, **pointage.WEB_LIMITS)
     try:
-        plan = pointage.read_planning_file(fichier.filename or "", data)
+        plan = pointage.read_planning_files(files)
         result = pointage.import_planning(engine, mapping, plan, request.session.get("user", ""))
     except pointage.PointageError as exc:
         flash(request, str(exc), "err")
@@ -605,23 +622,31 @@ async def planning_import(request: Request, fichier: UploadFile = File(...), db:
         return redirect("/admin/planning")
     finally:
         engine.dispose()
+    fichier_label = files[0][0] if len(files) == 1 else f"{len(files)} classeurs"
     period = f"du {result['du']:%d/%m/%Y} au {result['au']:%d/%m/%Y}"
-    auth.audit(request, "Planning importé", fichier.filename or "",
+    auth.audit(request, "Planning importé", ", ".join(n for n, _ in files)[:500],
                f"{period} : {result['employes']} employé(s), {result['jours']} jour(s) planifié(s)")
-    flash(request, f"Planning « {fichier.filename} » importé {period} : {result['employes']} employé(s), "
+    flash(request, f"Planning « {fichier_label} » importé {period} : {result['employes']} employé(s), "
                    f"{result['jours']} jour(s) planifié(s). Les calculs du suivi en tiennent compte immédiatement.", "ok")
     sheets = plan.get("feuilles", [])
     if len(sheets) > 1:
-        flash(request, f"{len(sheets)} feuilles importées : " + " ; ".join(
-            f"« {x['feuille']} » ({x['du']:%d/%m/%Y} → {x['au']:%d/%m/%Y}, {x['jours']} j)" for x in sheets) + ".", "ok")
+        by_file: dict[str, list] = {}
+        for x in sheets:
+            by_file.setdefault(x["fichier"], []).append(x)
+        summary = " ; ".join(
+            f"« {name} » : {len(xs)} feuille(s), du {min(x['du'] for x in xs):%d/%m/%Y} au "
+            f"{max(x['au'] for x in xs):%d/%m/%Y}" for name, xs in by_file.items())
+        flash(request, f"{len(sheets)} feuilles importées — {summary}.", "ok")
+    if plan.get("fichiers_illisibles"):
+        flash(request, "Fichier(s) ignoré(s) : " + " ".join(plan["fichiers_illisibles"]), "warn")
     if plan.get("feuilles_ignorees"):
         flash(request, "Feuilles ignorées (pas au format du planning : ligne « MATRICULE » puis une ligne par jour) : "
               + ", ".join(f"« {x} »" for x in plan["feuilles_ignorees"]) + ".", "warn")
     if plan.get("conflits"):
         sample = "; ".join(f"{mat} le {day:%d/%m/%Y} : {c1} (« {f1} ») remplacé par {c2} (« {f2} »)"
-                           for mat, day, f1, c1, f2, c2 in plan["conflits"][:5])
+                           for mat, day, f1, c1, f2, c2 in plan["conflits"][:2])
         flash(request, f"{len(plan['conflits'])} jour(s) planifié(s) dans plusieurs feuilles avec des codes différents : "
-                       f"la dernière feuille l'emporte. Ex. {sample}.", "warn")
+                       f"la dernière feuille (dans l'ordre des fichiers puis des feuilles) l'emporte. Ex. {sample}.", "warn")
     if result["surcharges"]:
         flash(request, f"Planning chargé (plus de {pointage.PLANNING_WEEKLY_MAX} h par semaine en moyenne) : " + ", ".join(
             f"{mat} — {h['heures']:.0f} h sur la période, soit {h['hebdo']:.1f} h/semaine"
@@ -635,7 +660,8 @@ async def planning_import(request: Request, fichier: UploadFile = File(...), db:
             + ". Ajoutez ces codes puis réimportez le fichier.", "warn")
     if result["matricules_inconnus"]:
         flash(request, f"{len(result['matricules_inconnus'])} matricule(s) introuvable(s) dans la liste des employés, "
-                       f"ignoré(s) : " + ", ".join(result["matricules_inconnus"][:30]), "warn")
+                       f"ignoré(s) : " + ", ".join(result["matricules_inconnus"][:15])
+                       + (" …" if len(result["matricules_inconnus"]) > 15 else ""), "warn")
     return redirect(_planning_back(result["du"], result["au"]))
 
 

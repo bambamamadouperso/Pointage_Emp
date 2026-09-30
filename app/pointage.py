@@ -1360,53 +1360,78 @@ def parse_planning(rows: list[list]) -> dict:
             "du": days[0], "au": days[-1], "vides": empty}
 
 
-def read_planning_file(name: str, data: bytes) -> dict:
-    """Planning d'un classeur : toutes les feuilles au format établi (ligne « MATRICULE », une ligne par jour), quel
-    que soit leur nom ; les autres feuilles (ex. COLLABORATEURS) sont ignorées. Un même (matricule, jour) présent
-    dans deux feuilles : la dernière feuille l'emporte (conflit signalé)."""
+def _workbook_sheets(name: str, data: bytes):
+    """(titre, lignes) de chaque feuille d'un classeur Excel ; PointageError si le fichier n'est pas lisible."""
     import io
 
     from openpyxl import load_workbook
 
     if not (name or "").lower().endswith((".xlsx", ".xlsm")):
-        raise PointageError("Choisissez le planning au format Excel (.xlsx).")
+        raise PointageError(f"« {name} » : choisissez un planning au format Excel (.xlsx).")
     try:
         wb = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
     except Exception as exc:  # noqa: BLE001
-        raise PointageError("Fichier Excel illisible (enregistrez-le au format .xlsx).") from exc
-    sheets, ignored, first_error = [], [], None
+        raise PointageError(f"« {name} » : fichier Excel illisible (enregistrez-le au format .xlsx).") from exc
+    try:
+        return [((ws.title or "").strip(), [list(r) for r in ws.iter_rows(max_row=20000, max_col=2000, values_only=True)])
+                for ws in wb.worksheets]
+    finally:
+        wb.close()
+
+
+def read_planning_files(files: list[tuple[str, bytes]]) -> dict:
+    """Planning de un ou plusieurs classeurs : toutes les feuilles au format établi (ligne « MATRICULE », une ligne
+    par jour), quel que soit leur nom ; les autres feuilles (ex. COLLABORATEURS) et les fichiers illisibles sont
+    ignorés et signalés. Un même (matricule, jour) présent deux fois : le dernier (fichier, puis feuille) l'emporte,
+    conflit signalé."""
+    several = len(files) > 1
+    sheets, ignored, bad_files, first_error = [], [], [], None
     merged: dict[tuple[str, date], tuple[str, str]] = {}
     conflicts: list[tuple[str, date, str, str, str, str]] = []
     legend: dict[str, dict] = {}
     names: dict[str, str] = {}
-    for ws in wb.worksheets:
-        rows = [list(r) for r in ws.iter_rows(max_row=20000, max_col=2000, values_only=True)]
-        title = (ws.title or "").strip()
+    for name, data in files:
         try:
-            plan = parse_planning(rows)
+            workbook = _workbook_sheets(name, data)
         except PointageError as exc:
-            ignored.append(title)
+            bad_files.append(str(exc))
             first_error = first_error or exc
             continue
-        for mat, day, code in plan["entries"]:
-            previous = merged.get((mat, day))
-            if previous and previous[0] != code:
-                conflicts.append((mat, day, previous[1], previous[0], title, code))
-            merged[(mat, day)] = (code, title)
-        for poste in plan["legend"]:
-            legend.setdefault(poste["code"], poste)
-        names.update({k: v for k, v in plan["names"].items() if v})
-        sheets.append({"feuille": title, "du": plan["du"], "au": plan["au"], "jours": len(plan["entries"]),
-                       "employes": len(plan["matricules"])})
-    wb.close()
+        for title, rows in workbook:
+            label = f"{name} › {title}" if several else title
+            try:
+                plan = parse_planning(rows)
+            except PointageError as exc:
+                ignored.append(label)
+                first_error = first_error or exc
+                continue
+            for mat, day, code in plan["entries"]:
+                previous = merged.get((mat, day))
+                if previous and previous[0] != code:
+                    conflicts.append((mat, day, previous[1], previous[0], label, code))
+                merged[(mat, day)] = (code, label)
+            for poste in plan["legend"]:
+                legend.setdefault(poste["code"], poste)
+            names.update({k: v for k, v in plan["names"].items() if v})
+            sheets.append({"feuille": label, "fichier": name, "du": plan["du"], "au": plan["au"],
+                           "jours": len(plan["entries"]), "employes": len(plan["matricules"])})
     if not sheets:
-        raise first_error or PointageError("Le classeur est vide.")
+        if len(files) == 1 and bad_files:
+            raise first_error
+        raise PointageError("Aucune feuille au format du planning (ligne « MATRICULE » puis une ligne par jour) dans "
+                            + ("les fichiers choisis." if several else "ce classeur.")
+                            + (" " + " ".join(bad_files) if bad_files else ""))
     entries = [(mat, day, code) for (mat, day), (code, _) in merged.items()]
     days = sorted({d for _, d, _ in entries})
     return {"entries": entries, "names": names, "legend": list(legend.values()),
             "matricules": sorted({m for m, _, _ in entries}), "du": days[0], "au": days[-1],
-            "feuilles": sheets, "feuilles_ignorees": ignored, "conflits": conflicts,
-            "feuille": ", ".join(x["feuille"] for x in sheets)}
+            "feuilles": sheets, "feuilles_ignorees": ignored, "fichiers_illisibles": bad_files, "conflits": conflicts,
+            "fichiers": [n for n, _ in files], "feuille": ", ".join(x["feuille"] for x in sheets)}
+
+
+def read_planning_file(name: str, data: bytes) -> dict:
+    """Planning d'un seul classeur (voir read_planning_files)."""
+    return read_planning_files([(name, data)])
 
 
 def postes(engine: Engine, m: Mapping) -> list[dict]:

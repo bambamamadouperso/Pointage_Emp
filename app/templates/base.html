@@ -151,8 +151,11 @@
   document.querySelectorAll('.file-drop').forEach(zone => {
     const input = zone.querySelector('input[type=file]'), text = zone.querySelector('.file-drop-text strong');
     input.addEventListener('change', () => {
-      const f = input.files[0];
-      if (f) { text.textContent = f.name; zone.classList.add('has-file'); }
+      const files = [...input.files];
+      if (!files.length) return;
+      text.textContent = files.length === 1 ? files[0].name
+        : files.length + ' fichiers : ' + files.map(f => f.name).join(', ');
+      zone.classList.add('has-file');
     });
     ['dragenter', 'dragover'].forEach(t => zone.addEventListener(t, () => zone.classList.add('drag')));
     ['dragleave', 'drop'].forEach(t => zone.addEventListener(t, () => zone.classList.remove('drag')));

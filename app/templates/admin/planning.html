@@ -39,17 +39,18 @@
         et le code du poste de chaque employé. La légende « Code / Heure Début / Heure Fin » du haut de la feuille est lue :
         les codes qui n'existent pas encore sont créés. <strong>Toutes les feuilles</strong> du classeur au bon format sont importées,
         quel que soit leur nom (une feuille par période de paie, par exemple) ; les autres (ex. COLLABORATEURS) sont ignorées.
+        Plusieurs classeurs peuvent être importés en une fois : leurs feuilles sont réunies dans un seul import.
         Toutes les lignes datées sont importées ; un même jour présent dans deux feuilles avec des codes différents est signalé
-        (la dernière feuille l'emporte).</p></div>
+        (la dernière l'emporte, dans l'ordre des fichiers puis des feuilles).</p></div>
     {% if du and au and grid and grid.employes %}<div class="actions">
       <a class="btn small ghost" href="/admin/planning/export.xlsx?du={{ du.isoformat() }}&au={{ au.isoformat() }}">⬇ Exporter la période affichée</a></div>{% endif %}
   </div>
   <form method="post" action="/admin/planning/import" enctype="multipart/form-data" class="import-form"
-        data-confirm="Importer ce planning ? Les jours déjà planifiés pour ces employés seront remplacés.">
+        data-confirm="Importer ce(s) planning(s) ? Les jours déjà planifiés pour ces employés seront remplacés.">
     <label class="file-drop">
-      <input type="file" name="fichier" accept=".xlsx,.xlsm" required>
-      <span class="file-drop-text"><strong>Choisir le planning</strong> ou le déposer ici<br>
-        <span class="muted small">.xlsx · {{ max_import_mb }} Mo maximum</span></span>
+      <input type="file" name="fichier" accept=".xlsx,.xlsm" multiple required>
+      <span class="file-drop-text"><strong>Choisir un ou plusieurs classeurs</strong> ou les déposer ici<br>
+        <span class="muted small">.xlsx · {{ max_import_mb }} Mo maximum par fichier · plusieurs fichiers : Ctrl + clic</span></span>
     </label>
     <div class="form-actions"><button class="btn primary">Importer le planning</button></div>
   </form>

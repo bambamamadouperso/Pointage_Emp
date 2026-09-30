@@ -59,8 +59,35 @@ templates.env.globals["tz_name"] = settings.timezone
 templates.env.globals["app_version"] = __import__("app").__version__
 
 
+# Les messages sont gardés dans le cookie de session (4 Ko au plus pour le navigateur, après encodage JSON puis
+# base64) : au-delà, le cookie serait refusé et tous les messages perdus. Chaque message est donc raccourci et leur
+# taille encodée totale bornée ; un dernier message signale ceux qui n'ont pas pu être gardés.
+FLASH_MAX_CHARS = 450
+FLASH_MAX_JSON = 2200
+_FLASH_MORE = "D'autres messages n'ont pas pu être affichés : voir le journal d'audit."
+
+
 def flash(request: Request, message: str, category: str = "info") -> None:
-    request.session.setdefault("_flash", []).append([category, message])
+    import json
+
+    if len(message) > FLASH_MAX_CHARS:
+        message = message[:FLASH_MAX_CHARS - 1].rstrip(" ,;") + "…"
+    messages = list(request.session.get("_flash", []))
+    if any(m == _FLASH_MORE for _, m in messages):
+        return
+
+    def size(extra: list) -> int:
+        return len(json.dumps(messages + extra))
+
+    reserve = [["warn", _FLASH_MORE]]
+    # Message trop long pour la place restante : raccourci (les accents comptent plusieurs octets une fois encodés).
+    while size([[category, message]] + reserve) > FLASH_MAX_JSON and len(message) > 80:
+        message = message[:int(len(message) * 0.8)].rstrip(" ,;…") + "…"
+    if size([[category, message]] + reserve) > FLASH_MAX_JSON:
+        messages.append(["warn", _FLASH_MORE])
+    else:
+        messages.append([category, message])
+    request.session["_flash"] = messages
 
 
 def pop_flashes(request: Request) -> list:
