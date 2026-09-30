@@ -64,7 +64,7 @@
     <label class="file-drop">
       <input type="file" name="fichier" accept=".xlsx,.xlsm,.csv,.txt" required>
       <span class="file-drop-text"><strong>Choisir un fichier</strong> ou le déposer ici<br>
-        <span class="muted small">.xlsx ou .csv · 5 Mo maximum</span></span>
+        <span class="muted small">.xlsx ou .csv · {{ max_import_mb }} Mo maximum</span></span>
     </label>
     <fieldset class="import-mode">
       <legend class="sr-only">Mode d'import</legend>

@@ -57,6 +57,8 @@ STATUTS = {
 CONGES = ("CONGE_ANNUEL", "CONGE_EXCEP")
 # Version des objets PostgreSQL : si elle change, ils sont réinstallés automatiquement.
 SQL_VERSION = 16
+# Taille maximale des fichiers importés (planning, agents terrain).
+MAX_IMPORT_MB = 50
 # Limites des requêtes lancées depuis les pages web : une attente de verrou ou une requête lente ne doit jamais
 # bloquer le site (au pire, la page affiche une erreur au bout de 2 minutes).
 WEB_LIMITS = {"lock_timeout_s": 15, "statement_timeout_s": 120}
@@ -1378,7 +1380,7 @@ def read_planning_file(name: str, data: bytes) -> dict:
     legend: dict[str, dict] = {}
     names: dict[str, str] = {}
     for ws in wb.worksheets:
-        rows = [list(r) for r in ws.iter_rows(max_row=2000, max_col=400, values_only=True)]
+        rows = [list(r) for r in ws.iter_rows(max_row=20000, max_col=2000, values_only=True)]
         title = (ws.title or "").strip()
         try:
             plan = parse_planning(rows)

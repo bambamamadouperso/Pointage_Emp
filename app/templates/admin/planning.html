@@ -49,7 +49,7 @@
     <label class="file-drop">
       <input type="file" name="fichier" accept=".xlsx,.xlsm" required>
       <span class="file-drop-text"><strong>Choisir le planning</strong> ou le déposer ici<br>
-        <span class="muted small">.xlsx · 5 Mo maximum</span></span>
+        <span class="muted small">.xlsx · {{ max_import_mb }} Mo maximum</span></span>
     </label>
     <div class="form-actions"><button class="btn primary">Importer le planning</button></div>
   </form>

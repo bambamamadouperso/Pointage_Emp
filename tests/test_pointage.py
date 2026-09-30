@@ -1353,3 +1353,16 @@ def test_planning_import_all_matching_sheets(configured, pg, logged_client):
     finally:
         with pg.begin() as c:
             c.execute(text(f"DELETE FROM {SCHEMA}.pointage_planning"))
+
+
+def test_import_size_limit(configured, logged_client, monkeypatch):
+    """Fichiers importés : 50 Mo maximum (planning et agents terrain), limite affichée dans les formulaires."""
+    from app.routers import admin
+
+    assert admin.MAX_IMPORT_BYTES == 50 * 1024 * 1024
+    assert ".xlsx · 50 Mo maximum" in logged_client.get("/admin/planning").text
+    assert "50 Mo maximum" in logged_client.get("/admin/terrain").text
+    monkeypatch.setattr(admin, "MAX_IMPORT_BYTES", 10)
+    for url in ("/admin/planning/import", "/admin/terrain/import"):
+        r = logged_client.post(url, files={"fichier": ("gros.xlsx", b"x" * 11)}, follow_redirects=True)
+        assert "Fichier trop volumineux (50 Mo maximum)." in r.text

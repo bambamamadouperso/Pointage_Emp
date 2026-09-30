@@ -368,7 +368,8 @@ def field_add(request: Request, type: str = Form(...), service: str = Form(""), 
     return redirect("/admin/terrain")
 
 
-MAX_IMPORT_BYTES = 5 * 1024 * 1024
+MAX_IMPORT_MB = pointage.MAX_IMPORT_MB
+MAX_IMPORT_BYTES = MAX_IMPORT_MB * 1024 * 1024
 # Colonne du matricule, par ordre de préférence (« Nom employé » ne doit pas être pris pour le matricule).
 _MAT_HEADERS = [re.compile(p, re.I) for p in (r"matric", r"badge", r"^n[°o]\s*(d.)?employ", r"^code", r"^id")]
 _LABEL_HEADER = re.compile(r"motif|libell|fonction|poste|comment|zone|remarque", re.I)
@@ -431,7 +432,7 @@ async def field_import(request: Request, fichier: UploadFile = File(...), mode: 
         return redirect("/admin/pointage")
     data = await fichier.read(MAX_IMPORT_BYTES + 1)
     if len(data) > MAX_IMPORT_BYTES:
-        flash(request, "Fichier trop volumineux (5 Mo maximum).", "err")
+        flash(request, f"Fichier trop volumineux ({MAX_IMPORT_MB} Mo maximum).", "err")
         return redirect("/admin/terrain")
     try:
         rows = read_field_file(fichier.filename or "", data)
@@ -590,7 +591,7 @@ async def planning_import(request: Request, fichier: UploadFile = File(...), db:
         return redirect("/admin/pointage")
     data = await fichier.read(MAX_IMPORT_BYTES + 1)
     if len(data) > MAX_IMPORT_BYTES:
-        flash(request, "Fichier trop volumineux (5 Mo maximum).", "err")
+        flash(request, f"Fichier trop volumineux ({MAX_IMPORT_MB} Mo maximum).", "err")
         return redirect("/admin/planning")
     engine = make_engine(cfg.conn, **pointage.WEB_LIMITS)
     try:

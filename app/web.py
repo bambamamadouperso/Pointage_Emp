@@ -11,7 +11,7 @@ from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from .config import settings
-from .pointage import hhmm
+from .pointage import MAX_IMPORT_MB, hhmm
 
 templates = Jinja2Templates(directory=os.path.join(os.path.dirname(__file__), "templates"))
 
@@ -132,6 +132,7 @@ templates.env.filters["set_statuts"] = set_statuts
 templates.env.filters["with_param"] = with_param
 templates.env.filters["jour_fr"] = jour_fr
 templates.env.filters["hhmm"] = hhmm
+templates.env.globals["max_import_mb"] = MAX_IMPORT_MB  # affichée dans les formulaires d'import
 templates.env.filters["replace_param"] = replace_param
 templates.env.globals["timedelta"] = __import__("datetime").timedelta
 
