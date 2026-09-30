@@ -1,11 +1,14 @@
 """Espace d'administration (rôle admin) : paramètres horaires historisés, source des pointages, jours fériés,
 utilisateurs et rôles, journal d'audit, traitements planifiés."""
 import re
+import secrets
+import threading
+import time
 from datetime import date, datetime, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
 from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -585,13 +588,9 @@ def planning_page(request: Request, du: str = "", au: str = "", db: Session = De
     return render(request, "admin/planning.html", **context)
 
 
-@router.post("/planning/import")
-async def planning_import(request: Request, fichier: list[UploadFile] = File(...), db: Session = Depends(get_db)):
-    """Un ou plusieurs classeurs à la fois : toutes leurs feuilles au format du planning sont importées ensemble."""
-    cfg, mapping = _mapping_ready(db)
-    if mapping is None:
-        return redirect("/admin/pointage")
-    files, too_big = [], []
+async def _read_uploads(fichier: list[UploadFile]) -> tuple[list[tuple[str, bytes]], list[tuple[str, str]]]:
+    """Fichiers envoyés (au plus MAX_IMPORT_FILES, MAX_IMPORT_MB chacun) et messages sur ceux qui sont écartés."""
+    files, too_big, notes = [], [], []
     for upload in fichier[:MAX_IMPORT_FILES]:
         if not upload.filename:
             continue
@@ -601,33 +600,39 @@ async def planning_import(request: Request, fichier: list[UploadFile] = File(...
         else:
             files.append((upload.filename, data))
     if len(fichier) > MAX_IMPORT_FILES:
-        flash(request, f"{MAX_IMPORT_FILES} fichiers au plus par import : les {len(fichier) - MAX_IMPORT_FILES} "
-                       f"suivant(s) ont été ignorés.", "warn")
+        notes.append(("warn", f"{MAX_IMPORT_FILES} fichiers au plus par import : les {len(fichier) - MAX_IMPORT_FILES} "
+                              f"suivant(s) ont été ignorés."))
     if too_big:
-        flash(request, f"Fichier trop volumineux ({MAX_IMPORT_MB} Mo maximum), ignoré : "
-                       + ", ".join(f"« {n} »" for n in too_big) + ".", "err")
-    if not files:
-        if not too_big:
-            flash(request, "Choisissez au moins un classeur Excel (.xlsx).", "err")
-        return redirect("/admin/planning")
-    engine = make_engine(cfg.conn, **pointage.WEB_LIMITS)
+        notes.append(("err", f"Fichier trop volumineux ({MAX_IMPORT_MB} Mo maximum), ignoré : "
+                             + ", ".join(f"« {n} »" for n in too_big) + "."))
+    if not files and not too_big:
+        notes.append(("err", "Choisissez au moins un classeur Excel (.xlsx)."))
+    return files, notes
+
+
+def _run_planning_import(engine, mapping, files: list[tuple[str, bytes]], author: str, progress=None) -> dict:
+    """Lecture puis enregistrement ; renvoie {messages, url, audit} (les erreurs deviennent des messages)."""
     try:
-        plan = pointage.read_planning_files(files)
-        result = pointage.import_planning(engine, mapping, plan, request.session.get("user", ""))
+        plan = pointage.read_planning_files(files, progress)
+        result = pointage.import_planning(engine, mapping, plan, author, progress)
     except pointage.PointageError as exc:
-        flash(request, str(exc), "err")
-        return redirect("/admin/planning")
+        return {"messages": [("err", str(exc))], "url": "/admin/planning", "audit": None}
     except Exception as exc:  # noqa: BLE001
-        flash(request, f"Import impossible : {friendly(exc)}", "err")
-        return redirect("/admin/planning")
+        return {"messages": [("err", f"Import impossible : {friendly(exc)}")], "url": "/admin/planning", "audit": None}
     finally:
         engine.dispose()
-    fichier_label = files[0][0] if len(files) == 1 else f"{len(files)} classeurs"
-    period = f"du {result['du']:%d/%m/%Y} au {result['au']:%d/%m/%Y}"
-    auth.audit(request, "Planning importé", ", ".join(n for n, _ in files)[:500],
-               f"{period} : {result['employes']} employé(s), {result['jours']} jour(s) planifié(s)")
-    flash(request, f"Planning « {fichier_label} » importé {period} : {result['employes']} employé(s), "
-                   f"{result['jours']} jour(s) planifié(s). Les calculs du suivi en tiennent compte immédiatement.", "ok")
+    return {"messages": _planning_messages(plan, result, files), "url": _planning_back(result["du"], result["au"]),
+            "audit": (", ".join(n for n, _ in files)[:500],
+                      f"du {result['du']:%d/%m/%Y} au {result['au']:%d/%m/%Y} : {result['employes']} employé(s), "
+                      f"{result['jours']} jour(s) planifié(s)")}
+
+
+def _planning_messages(plan: dict, result: dict, files: list) -> list[tuple[str, str]]:
+    out = []
+    label = files[0][0] if len(files) == 1 else f"{len(files)} classeurs"
+    out.append(("ok", f"Planning « {label} » importé du {result['du']:%d/%m/%Y} au {result['au']:%d/%m/%Y} : "
+                      f"{result['employes']} employé(s), {result['jours']} jour(s) planifié(s). "
+                      f"Les calculs du suivi en tiennent compte immédiatement."))
     sheets = plan.get("feuilles", [])
     if len(sheets) > 1:
         by_file: dict[str, list] = {}
@@ -636,33 +641,120 @@ async def planning_import(request: Request, fichier: list[UploadFile] = File(...
         summary = " ; ".join(
             f"« {name} » : {len(xs)} feuille(s), du {min(x['du'] for x in xs):%d/%m/%Y} au "
             f"{max(x['au'] for x in xs):%d/%m/%Y}" for name, xs in by_file.items())
-        flash(request, f"{len(sheets)} feuilles importées — {summary}.", "ok")
+        out.append(("ok", f"{len(sheets)} feuilles importées — {summary}."))
     if plan.get("fichiers_illisibles"):
-        flash(request, "Fichier(s) ignoré(s) : " + " ".join(plan["fichiers_illisibles"]), "warn")
+        out.append(("warn", "Fichier(s) ignoré(s) : " + " ".join(plan["fichiers_illisibles"])))
     if plan.get("feuilles_ignorees"):
-        flash(request, "Feuilles ignorées (pas au format du planning : ligne « MATRICULE » puis une ligne par jour) : "
-              + ", ".join(f"« {x} »" for x in plan["feuilles_ignorees"]) + ".", "warn")
+        out.append(("warn", "Feuilles ignorées (pas au format du planning : ligne « MATRICULE » puis une ligne par "
+                            "jour) : " + ", ".join(f"« {x} »" for x in plan["feuilles_ignorees"]) + "."))
     if plan.get("conflits"):
         sample = "; ".join(f"{mat} le {day:%d/%m/%Y} : {c1} (« {f1} ») remplacé par {c2} (« {f2} »)"
                            for mat, day, f1, c1, f2, c2 in plan["conflits"][:2])
-        flash(request, f"{len(plan['conflits'])} jour(s) planifié(s) dans plusieurs feuilles avec des codes différents : "
-                       f"la dernière feuille (dans l'ordre des fichiers puis des feuilles) l'emporte. Ex. {sample}.", "warn")
+        out.append(("warn", f"{len(plan['conflits'])} jour(s) planifié(s) dans plusieurs feuilles avec des codes "
+                            f"différents : la dernière feuille (dans l'ordre des fichiers puis des feuilles) l'emporte. "
+                            f"Ex. {sample}."))
     if result["surcharges"]:
-        flash(request, f"Planning chargé (plus de {pointage.PLANNING_WEEKLY_MAX} h par semaine en moyenne) : " + ", ".join(
-            f"{mat} — {h['heures']:.0f} h sur la période, soit {h['hebdo']:.1f} h/semaine"
-            for mat, h in result["surcharges"]) + ". Vérifiez qu'il ne s'agit pas d'une erreur de saisie.", "warn")
+        out.append(("warn", f"Planning chargé (plus de {pointage.PLANNING_WEEKLY_MAX} h par semaine en moyenne) : "
+                            + ", ".join(f"{mat} — {h['heures']:.0f} h sur la période, soit {h['hebdo']:.1f} h/semaine"
+                                        for mat, h in result["surcharges"])
+                            + ". Vérifiez qu'il ne s'agit pas d'une erreur de saisie."))
     if result["codes_crees"]:
-        flash(request, "Nouveaux codes créés depuis la légende du fichier (à vérifier ci-dessous) : "
-                       + ", ".join(result["codes_crees"]) + ".", "warn")
+        out.append(("warn", "Nouveaux codes créés depuis la légende du fichier (à vérifier ci-dessous) : "
+                            + ", ".join(result["codes_crees"]) + "."))
     if result["codes_inconnus"]:
-        flash(request, "Codes inconnus, jours ignorés : " + ", ".join(
+        out.append(("warn", "Codes inconnus, jours ignorés : " + ", ".join(
             f"« {k} » ({n} j)" for k, n in sorted(result["codes_inconnus"].items()))
-            + ". Ajoutez ces codes puis réimportez le fichier.", "warn")
+            + ". Ajoutez ces codes puis réimportez le fichier."))
     if result["matricules_inconnus"]:
-        flash(request, f"{len(result['matricules_inconnus'])} matricule(s) introuvable(s) dans la liste des employés, "
-                       f"ignoré(s) : " + ", ".join(result["matricules_inconnus"][:15])
-                       + (" …" if len(result["matricules_inconnus"]) > 15 else ""), "warn")
-    return redirect(_planning_back(result["du"], result["au"]))
+        out.append(("warn", f"{len(result['matricules_inconnus'])} matricule(s) introuvable(s) dans la liste des "
+                            f"employés, ignoré(s) : " + ", ".join(result["matricules_inconnus"][:15])
+                            + (" …" if len(result["matricules_inconnus"]) > 15 else "")))
+    return out
+
+
+def _finish(request: Request, outcome: dict):
+    for category, message in outcome["messages"]:
+        flash(request, message, category)
+    if outcome.get("audit"):
+        auth.audit(request, "Planning importé", *outcome["audit"])
+    return redirect(outcome["url"])
+
+
+@router.post("/planning/import")
+async def planning_import(request: Request, fichier: list[UploadFile] = File(...), db: Session = Depends(get_db)):
+    """Un ou plusieurs classeurs à la fois (formulaire classique, sans suivi de progression)."""
+    cfg, mapping = _mapping_ready(db)
+    if mapping is None:
+        return redirect("/admin/pointage")
+    files, notes = await _read_uploads(fichier)
+    for category, message in notes:
+        flash(request, message, category)
+    if not files:
+        return redirect("/admin/planning")
+    engine = make_engine(cfg.conn, **pointage.WEB_LIMITS)
+    return _finish(request, _run_planning_import(engine, mapping, files, request.session.get("user", "")))
+
+
+# Imports suivis en direct : traitement en arrière-plan, avancement lu par la page toutes les demi-secondes.
+_IMPORTS: dict[str, dict] = {}
+_IMPORTS_LOCK = threading.Lock()
+
+
+@router.post("/planning/import/demarrer")
+async def planning_import_start(request: Request, fichier: list[UploadFile] = File(...),
+                                db: Session = Depends(get_db)):
+    cfg, mapping = _mapping_ready(db)
+    if mapping is None:
+        return JSONResponse({"error": "Configurez d'abord la source des pointages."}, status_code=400)
+    files, notes = await _read_uploads(fichier)
+    user = request.session.get("user", "")
+    token = secrets.token_urlsafe(16)
+    job = {"user": user, "state": "running", "percent": 0.0, "label": "Préparation de l'import", "notes": notes,
+           "outcome": None, "started": time.monotonic()}
+    with _IMPORTS_LOCK:
+        for key in [k for k, v in _IMPORTS.items() if time.monotonic() - v["started"] > 3600]:
+            del _IMPORTS[key]  # imports anciens (page fermée avant la fin)
+        _IMPORTS[token] = job
+    if not files:
+        job.update(state="done", percent=100.0, outcome={"messages": [], "url": "/admin/planning", "audit": None})
+        return {"job": token}
+    engine = make_engine(cfg.conn, **pointage.WEB_LIMITS)
+
+    def progress(percent: float, label: str) -> None:
+        job["percent"], job["label"] = round(max(job["percent"], min(float(percent), 99.0)), 1), label
+
+    def work() -> None:
+        outcome = _run_planning_import(engine, mapping, files, user, progress)
+        job.update(outcome=outcome, percent=100.0, label="Import terminé", state="done")
+
+    threading.Thread(target=work, daemon=True, name="import-planning").start()
+    return {"job": token}
+
+
+def _job(request: Request, token: str) -> Optional[dict]:
+    job = _IMPORTS.get(token)
+    return job if job is not None and job["user"] == request.session.get("user", "") else None
+
+
+@router.get("/planning/import/{token}")
+def planning_import_status(request: Request, token: str):
+    job = _job(request, token)
+    if job is None:
+        return JSONResponse({"error": "Import introuvable (déjà terminé ou expiré)."}, status_code=404)
+    return {"state": job["state"], "percent": job["percent"], "label": job["label"],
+            "elapsed": round(time.monotonic() - job["started"])}
+
+
+@router.get("/planning/import/{token}/fin")
+def planning_import_finish(request: Request, token: str):
+    job = _job(request, token)
+    if job is None or job["state"] != "done":
+        return redirect("/admin/planning")
+    with _IMPORTS_LOCK:
+        _IMPORTS.pop(token, None)
+    for category, message in job["notes"]:
+        flash(request, message, category)
+    return _finish(request, job["outcome"])
 
 
 @router.post("/planning/postes")

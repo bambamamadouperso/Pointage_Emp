@@ -8,7 +8,10 @@ import json
 import re
 from dataclasses import asdict, dataclass, field, fields
 from datetime import date, datetime, time, timedelta
-from typing import Any, Optional
+from typing import Any, Callable, Optional
+
+# Suivi d'un traitement long : (avancement de 0 à 100, libellé de l'étape en cours).
+Progress = Optional[Callable[[float, str], None]]
 
 from sqlalchemy import bindparam, text
 from sqlalchemy.engine import Engine
@@ -1379,7 +1382,7 @@ def _workbook_sheets(name: str, data: bytes):
         wb.close()
 
 
-def read_planning_files(files: list[tuple[str, bytes]]) -> dict:
+def read_planning_files(files: list[tuple[str, bytes]], progress: Progress = None, span: tuple = (0, 60)) -> dict:
     """Planning de un ou plusieurs classeurs : toutes les feuilles au format établi (ligne « MATRICULE », une ligne
     par jour), quel que soit leur nom ; les autres feuilles (ex. COLLABORATEURS) et les fichiers illisibles sont
     ignorés et signalés. Un même (matricule, jour) présent deux fois : le dernier (fichier, puis feuille) l'emporte,
@@ -1390,14 +1393,20 @@ def read_planning_files(files: list[tuple[str, bytes]]) -> dict:
     conflicts: list[tuple[str, date, str, str, str, str]] = []
     legend: dict[str, dict] = {}
     names: dict[str, str] = {}
-    for name, data in files:
+    report = progress or (lambda pct, label: None)
+    step = (span[1] - span[0]) / max(len(files), 1)
+    for index, (name, data) in enumerate(files):
+        base = span[0] + index * step
+        report(base, f"Lecture du classeur « {name} » ({index + 1}/{len(files)})")
         try:
             workbook = _workbook_sheets(name, data)
         except PointageError as exc:
             bad_files.append(str(exc))
             first_error = first_error or exc
             continue
-        for title, rows in workbook:
+        for number, (title, rows) in enumerate(workbook):
+            report(base + step * (0.3 + 0.7 * number / max(len(workbook), 1)),
+                   f"« {name} » : feuille « {title} » ({number + 1}/{len(workbook)})")
             label = f"{name} › {title}" if several else title
             try:
                 plan = parse_planning(rows)
@@ -1487,11 +1496,14 @@ def delete_poste(engine: Engine, m: Mapping, code: str) -> None:
         c.execute(text(f"DELETE FROM {S}.pointage_postes WHERE code = :c"), {"c": code})
 
 
-def import_planning(engine: Engine, m: Mapping, plan: dict, author: str) -> dict:
+def import_planning(engine: Engine, m: Mapping, plan: dict, author: str, progress: Progress = None,
+                    span: tuple = (60, 100)) -> dict:
     """Enregistre un planning lu par parse_planning. Les codes de la légende absents de l'application sont créés
     (les codes existants ne sont pas modifiés) ; « 618 » est reconnu comme « 0618 ». Chaque (matricule, jour) du
     fichier remplace l'éventuelle valeur précédente. Matricules et codes inconnus sont ignorés et signalés."""
     S = qi(m.objs)
+    report = progress or (lambda pct, label: None)
+    report(span[0], "Vérification des codes de poste et des matricules")
     with engine.begin() as c:
         known = {code for (code,) in c.execute(text(f"SELECT code FROM {S}.pointage_postes"))}
         created = []
@@ -1521,11 +1533,16 @@ def import_planning(engine: Engine, m: Mapping, plan: dict, author: str) -> dict
                 continue
             if mat in found:
                 rows[(found[mat], day)] = code
-        for (mat, day), code in rows.items():
-            c.execute(text(
-                f"INSERT INTO {S}.pointage_planning (matricule, jour, code, auteur) VALUES (:m, :j, :c, :a) "
-                f"ON CONFLICT (matricule, jour) DO UPDATE SET code = EXCLUDED.code, auteur = EXCLUDED.auteur, "
-                f"modifie_le = now()"), {"m": mat, "j": day, "c": code, "a": author})
+        items = [{"m": mat, "j": day, "c": code, "a": author} for (mat, day), code in rows.items()]
+        sql = text(f"INSERT INTO {S}.pointage_planning (matricule, jour, code, auteur) VALUES (:m, :j, :c, :a) "
+                   f"ON CONFLICT (matricule, jour) DO UPDATE SET code = EXCLUDED.code, auteur = EXCLUDED.auteur, "
+                   f"modifie_le = now()")
+        chunk = 500
+        for start in range(0, len(items), chunk):  # par lots : rapide, et avancement visible sur un gros planning
+            report(span[0] + (span[1] - span[0] - 5) * start / max(len(items), 1),
+                   f"Enregistrement des jours planifiés ({start:,}/{len(items):,})".replace(",", " "))
+            c.execute(sql, items[start:start + chunk])
+        report(span[1] - 3, "Calcul des heures planifiées")
         hours = _planned_hours(c, S, plan["du"], plan["au"], sorted({mat for mat, _ in rows}))
     return {"jours": len(rows), "employes": len({mat for mat, _ in rows}), "du": plan["du"], "au": plan["au"],
             "surcharges": [(mat, h) for mat, h in hours.items() if h["hebdo"] > PLANNING_WEEKLY_MAX],

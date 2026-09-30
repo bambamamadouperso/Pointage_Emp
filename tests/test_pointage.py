@@ -1417,3 +1417,42 @@ def _empty_workbook() -> bytes:
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
+
+
+def test_planning_import_with_progress(configured, pg, logged_client):
+    """Import suivi en direct : démarrage, avancement lu par la page (étapes et pourcentage), fin avec les messages ;
+    étapes de progression signalées par la lecture et l'enregistrement."""
+    import time as _t
+
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    data = _planning_xlsx({date(2026, 9, 24): ("1806", "P1"), date(2026, 9, 25): ("P4", "P1")})
+    steps = []
+    plan = pointage.read_planning_files([("a.xlsx", data), ("b.xlsx", data)], lambda p, label: steps.append((p, label)))
+    assert steps[0] == (0, "Lecture du classeur « a.xlsx » (1/2)") and any("feuille « PLANNING »" in s for _, s in steps)
+    assert [p for p, _ in steps] == sorted(p for p, _ in steps) and max(p for p, _ in steps) < 60
+    try:
+        r = logged_client.post("/admin/planning/import/demarrer", files={"fichier": ("PLANNING ATF.xlsx", data)})
+        job = r.json()["job"]
+        for _ in range(100):
+            status = logged_client.get(f"/admin/planning/import/{job}").json()
+            if status["state"] == "done":
+                break
+            _t.sleep(0.05)
+        assert status["state"] == "done" and status["percent"] == 100 and status["label"] == "Import terminé"
+        # Un autre utilisateur ne voit pas cet import.
+        with TestClient(app) as other:
+            other.post("/login", data={"username": "admin", "password": "secret"})
+            other.cookies.clear()
+            assert other.get(f"/admin/planning/import/{job}", follow_redirects=False).status_code in (303, 404)
+        page = logged_client.get(f"/admin/planning/import/{job}/fin", follow_redirects=True).text
+        assert "Planning « PLANNING ATF.xlsx » importé du 24/09/2026 au 25/09/2026" in page
+        assert logged_client.get(f"/admin/planning/import/{job}").status_code == 404  # terminé : oublié
+        assert 'id="import_progress"' in page and "Envoi des fichiers" in page
+        with pg.connect() as c:
+            assert c.execute(text(f"SELECT count(*) FROM {SCHEMA}.pointage_planning")).scalar() == 2
+    finally:
+        with pg.begin() as c:
+            c.execute(text(f"DELETE FROM {SCHEMA}.pointage_planning"))

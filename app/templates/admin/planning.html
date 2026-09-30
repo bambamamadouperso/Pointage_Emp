@@ -45,7 +45,7 @@
     {% if du and au and grid and grid.employes %}<div class="actions">
       <a class="btn small ghost" href="/admin/planning/export.xlsx?du={{ du.isoformat() }}&au={{ au.isoformat() }}">⬇ Exporter la période affichée</a></div>{% endif %}
   </div>
-  <form method="post" action="/admin/planning/import" enctype="multipart/form-data" class="import-form"
+  <form method="post" action="/admin/planning/import" enctype="multipart/form-data" class="import-form" id="import_form"
         data-confirm="Importer ce(s) planning(s) ? Les jours déjà planifiés pour ces employés seront remplacés.">
     <label class="file-drop">
       <input type="file" name="fichier" accept=".xlsx,.xlsm" multiple required>
@@ -54,6 +54,15 @@
     </label>
     <div class="form-actions"><button class="btn primary">Importer le planning</button></div>
   </form>
+  <div class="import-progress" id="import_progress" hidden role="status" aria-live="polite">
+    <div class="ip-head"><strong id="ip_stage">Préparation…</strong><span class="ip-pct" id="ip_pct">0 %</span></div>
+    <div class="ip-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="ip_bar"><span id="ip_fill"></span></div>
+    <ol class="ip-steps">
+      <li data-step="send">Envoi des fichiers</li><li data-step="read">Lecture des classeurs</li>
+      <li data-step="save">Enregistrement</li><li data-step="done">Terminé</li>
+    </ol>
+    <p class="muted small" id="ip_detail"></p>
+  </div>
   <p class="muted small">Chaque (matricule, jour) du fichier remplace la valeur précédente ; les cases vides ne changent rien.
     Les matricules inconnus et les codes absents de la liste ci-dessous sont ignorés et signalés. « 618 » (zéro supprimé par Excel)
     est reconnu comme « 0618 ».</p>
@@ -160,6 +169,74 @@
 {% endif %}
 {% endblock %}
 {% block scripts %}
+<script>
+(function () {  // Import avec progression : envoi des fichiers (0-30 %), puis traitement sur le serveur (30-100 %).
+  const form = document.getElementById('import_form');
+  if (!form || !window.FormData || !window.XMLHttpRequest) return;
+  const box = document.getElementById('import_progress'), stage = document.getElementById('ip_stage'),
+        pct = document.getElementById('ip_pct'), fill = document.getElementById('ip_fill'),
+        bar = document.getElementById('ip_bar'), detail = document.getElementById('ip_detail');
+  const button = form.querySelector('button'), question = form.dataset.confirm;
+  delete form.dataset.confirm;  // la confirmation est posée ici, avant l'envoi
+  let busy = false, started = 0;
+  const mb = n => (n / 1048576).toLocaleString('fr-FR', {maximumFractionDigits: 1}) + ' Mo';
+  function show(percent, label, step, extra) {
+    const p = Math.max(0, Math.min(100, percent));
+    fill.style.width = p + '%'; bar.setAttribute('aria-valuenow', Math.round(p));
+    pct.textContent = Math.floor(p) + ' %'; stage.textContent = label;
+    const order = ['send', 'read', 'save', 'done'];
+    box.querySelectorAll('[data-step]').forEach(li => {
+      const i = order.indexOf(li.dataset.step), cur = order.indexOf(step);
+      li.className = i < cur ? 'done' : i === cur ? 'current' : '';
+    });
+    const secs = Math.round((Date.now() - started) / 1000);
+    detail.textContent = (extra ? extra + ' · ' : '') + 'temps écoulé : ' + (secs < 60 ? secs + ' s' : Math.floor(secs / 60) + ' min ' + (secs % 60) + ' s');
+  }
+  function fail(message) {
+    busy = false; button.disabled = false; box.classList.add('failed');
+    stage.textContent = 'Import interrompu'; detail.textContent = message;
+  }
+  window.addEventListener('beforeunload', e => { if (busy) { e.preventDefault(); e.returnValue = ''; } });
+  form.addEventListener('submit', e => {
+    e.preventDefault();
+    const input = form.querySelector('input[type=file]');
+    if (!input.files.length || busy) return;
+    if (question && !confirm(question)) return;
+    busy = true; button.disabled = true; started = Date.now();
+    box.hidden = false; box.classList.remove('failed');
+    const total = [...input.files].reduce((n, f) => n + f.size, 0);
+    show(0, 'Envoi des fichiers', 'send', input.files.length + ' fichier(s), ' + mb(total));
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', '/admin/planning/import/demarrer');
+    xhr.setRequestHeader('Accept', 'application/json');
+    xhr.upload.onprogress = ev => {
+      if (ev.lengthComputable) show(30 * ev.loaded / ev.total, 'Envoi des fichiers', 'send', mb(ev.loaded) + ' / ' + mb(ev.total));
+    };
+    xhr.upload.onload = () => show(30, 'Fichiers reçus, lecture en cours…', 'read');
+    xhr.onerror = () => fail('Connexion au serveur perdue pendant l\'envoi. Réessayez.');
+    xhr.onload = () => {
+      let data = {};
+      try { data = JSON.parse(xhr.responseText); } catch (err) { /* réponse non JSON */ }
+      if (xhr.status !== 200 || !data.job) { fail(data.error || 'Le serveur a refusé l\'import (code ' + xhr.status + ').'); return; }
+      poll(data.job);
+    };
+    xhr.send(new FormData(form));
+  });
+  function poll(job) {
+    fetch('/admin/planning/import/' + job, {headers: {Accept: 'application/json'}, cache: 'no-store'})
+      .then(r => r.json().then(d => ({ok: r.ok, d})))
+      .then(({ok, d}) => {
+        if (!ok) { fail(d.error || 'Suivi de l\'import impossible.'); return; }
+        const p = 30 + 0.7 * d.percent;
+        const step = d.state === 'done' ? 'done' : d.percent >= 60 ? 'save' : 'read';
+        show(p, d.label, step);
+        if (d.state === 'done') { busy = false; window.location = '/admin/planning/import/' + job + '/fin'; }
+        else setTimeout(() => poll(job), 500);
+      })
+      .catch(() => setTimeout(() => poll(job), 1500));  // serveur momentanément occupé : on réessaie
+  }
+})();
+</script>
 <script>
 (function () {
   const card = document.getElementById('planning'), btn = document.getElementById('pl_expand');
