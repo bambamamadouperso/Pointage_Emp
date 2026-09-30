@@ -616,13 +616,6 @@ async def planning_import(request: Request, fichier: UploadFile = File(...), db:
     if plan.get("feuilles_ignorees"):
         flash(request, "Feuilles ignorées (pas au format du planning : ligne « MATRICULE » puis une ligne par jour) : "
               + ", ".join(f"« {x} »" for x in plan["feuilles_ignorees"]) + ".", "warn")
-    for x in sheets:
-        if x["hors_periode"]:
-            days = ", ".join(d.strftime("%d/%m/%Y") for d in x["hors_periode"][:10])
-            flash(request, f"« {x['feuille']} » : {len(x['hors_periode'])} ligne(s) datée(s) hors de la période de paie "
-                           f"({x['paie'][0]:%d/%m/%Y} → {x['paie'][1]:%d/%m/%Y}) ignorée(s) : {days}. "
-                           f"Erreur de saisie probable (mois ou année) : corrigez la date dans le fichier puis réimportez.",
-                  "warn")
     if plan.get("conflits"):
         sample = "; ".join(f"{mat} le {day:%d/%m/%Y} : {c1} (« {f1} ») remplacé par {c2} (« {f2} »)"
                            for mat, day, f1, c1, f2, c2 in plan["conflits"][:5])

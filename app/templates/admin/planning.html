@@ -39,7 +39,8 @@
         et le code du poste de chaque employé. La légende « Code / Heure Début / Heure Fin » du haut de la feuille est lue :
         les codes qui n'existent pas encore sont créés. <strong>Toutes les feuilles</strong> du classeur au bon format sont importées,
         quel que soit leur nom (une feuille par période de paie, par exemple) ; les autres (ex. COLLABORATEURS) sont ignorées.
-        Une ligne datée hors de la période de paie de sa feuille (« PAIE du … au … ») est écartée et signalée.</p></div>
+        Toutes les lignes datées sont importées ; un même jour présent dans deux feuilles avec des codes différents est signalé
+        (la dernière feuille l'emporte).</p></div>
     {% if du and au and grid and grid.employes %}<div class="actions">
       <a class="btn small ghost" href="/admin/planning/export.xlsx?du={{ du.isoformat() }}&au={{ au.isoformat() }}">⬇ Exporter la période affichée</a></div>{% endif %}
   </div>

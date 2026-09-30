@@ -1352,23 +1352,9 @@ def parse_planning(rows: list[list]) -> dict:
                     legend[code] = {"code": code, "type": kind, "debut": None, "fin": None,
                                     "duree": "08:00" if kind in ("formation", "ferie") else None,
                                     "libelle": a.strip().capitalize()[:80]}
-    # Période de paie déclarée en tête (« PAIE | 20/04/2026 | 19/05/2026 ») : les lignes datées hors de cette période
-    # sont des erreurs de saisie (ex. « 17/04 » au lieu de « 17/05 ») et sont écartées plutôt que d'écraser un autre mois.
-    pay, outside = None, []
-    for r in range(r0):
-        for c in range(len(rows[r])):
-            if label(cell(r, c)) == "paie":
-                found = [d for d in (_as_day(cell(r, c + k)) for k in range(1, 4)) if d]
-                if len(found) >= 2 and found[0] <= found[1]:
-                    pay = (found[0], found[1])
-    if pay:
-        outside = sorted({d for _, d, _ in entries if not pay[0] <= d <= pay[1]})
-        entries = [e for e in entries if pay[0] <= e[1] <= pay[1]]
-        if not entries:
-            raise PointageError("Aucun jour dans la période de paie indiquée en tête de la feuille.")
     days = sorted({d for _, d, _ in entries})
     return {"entries": entries, "names": names, "legend": list(legend.values()), "matricules": list(columns.values()),
-            "paie": pay, "hors_periode": outside,
+
             "du": days[0], "au": days[-1], "vides": empty}
 
 
@@ -1409,7 +1395,7 @@ def read_planning_file(name: str, data: bytes) -> dict:
             legend.setdefault(poste["code"], poste)
         names.update({k: v for k, v in plan["names"].items() if v})
         sheets.append({"feuille": title, "du": plan["du"], "au": plan["au"], "jours": len(plan["entries"]),
-                       "employes": len(plan["matricules"]), "paie": plan["paie"], "hors_periode": plan["hors_periode"]})
+                       "employes": len(plan["matricules"])})
     wb.close()
     if not sheets:
         raise first_error or PointageError("Le classeur est vide.")
