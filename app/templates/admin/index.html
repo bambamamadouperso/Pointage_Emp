@@ -1,32 +1,36 @@
 {% extends "base.html" %}
 {% block title %}Administration{% endblock %}
 {% block content %}
-<div class="page-head"><div><h1>Administration</h1><p class="muted">Réservé au rôle administrateur.</p></div></div>
+{% set is_admin = can(role, 'admin') %}
+<div class="page-head"><div><h1>{{ 'Administration' if is_admin else 'Ressources humaines' }}</h1>
+  <p class="muted">{% if is_admin %}Réservé au rôle administrateur.{% else %}Rôle RH : paramètres, plannings, agents terrain,
+    arrêts maladie et résumés, sur tout le personnel. La synchronisation et les sources de données restent réservées à l'administrateur.{% endif %}</p></div></div>
 
 <section class="admin-grid">
   <a class="card" href="/admin/parametres"><h2>Paramètres horaires</h2>
     <p class="muted small">Début / fin de journée, pause, seuil de retard, pause déduite, jours ouvrés et jours fériés.
       Chaque changement est historisé avec sa date d'effet.</p></a>
-  <a class="card" href="/admin/pointage"><h2>Source des pointages</h2>
+  {% if is_admin %}<a class="card" href="/admin/pointage"><h2>Source des pointages</h2>
     <p class="muted small">{% if cfg.installed_at %}Installée le {{ cfg.installed_at | dt(False) }} :
       <code>{{ mapping.schema }}.{{ mapping.punch_table }}</code> + <code>{{ mapping.emp_table }}</code>
-      {% else %}<span class="warn-text">À configurer</span> : tables des pointages et des employés{% endif %}</p></a>
+      {% else %}<span class="warn-text">À configurer</span> : tables des pointages et des employés{% endif %}</p></a>{% endif %}
   <a class="card" href="/admin/terrain"><h2>Agents terrain</h2>
     <p class="muted small">Commerciaux et agents hors du bureau : ni absence ni retard, durée validée minimale par jour.</p></a>
   <a class="card" href="/admin/planning"><h2>Horaires postés</h2>
     <p class="muted small">Planning des agents en équipes (3×8, 2×12) importé depuis Excel : chacun est jugé sur son propre poste, nuits comprises.</p></a>
-  <a class="card" href="/admin/mails"><h2>Mails de badge</h2>
-    <p class="muted small">Confirmation envoyée aux employés abonnés à chaque pointage : serveur SMTP, mode test, modèle HTML.</p></a>
+  {% if is_admin %}<a class="card" href="/admin/mails"><h2>Mails de badge</h2>
+    <p class="muted small">Confirmation envoyée aux employés abonnés à chaque pointage : serveur SMTP, mode test, modèle HTML.</p></a>{% endif %}
   <a class="card" href="/admin/resumes"><h2>Résumés par mail</h2>
     <p class="muted small">Point quotidien ou hebdomadaire des pointages envoyé à chaque responsable sur son équipe (N-1), avec constats et tendances.</p></a>
   <a class="card" href="/admin/arrets"><h2>Circuit des arrêts maladie</h2>
     <p class="muted small">Étapes de validation des arrêts déclarés par les employés ; les agents RH habilités saisissent des arrêts validés d'office.</p></a>
-  <a class="card" href="/admin/users"><h2>Utilisateurs et rôles</h2>
-    <p class="muted small">{{ users }} utilisateur(s) · rôles administrateur, manager, lecteur.</p></a>
+  {% if is_admin %}<a class="card" href="/admin/users"><h2>Utilisateurs et rôles</h2>
+    <p class="muted small">{{ users }} utilisateur(s) · rôles administrateur, RH, manager, lecteur.</p></a>
   <a class="card" href="/admin/audit"><h2>Journal d'audit</h2>
-    <p class="muted small">{{ audits | num }} entrée(s) : qui a modifié quoi, et quand.</p></a>
+    <p class="muted small">{{ audits | num }} entrée(s) : qui a modifié quoi, et quand.</p></a>{% endif %}
 </section>
 
+{% if is_admin %}
 <section class="card" style="margin-top:1rem">
   <div class="card-head">
     <h2>Traitements planifiés (job flows)</h2>
@@ -62,4 +66,5 @@
   </table></div>
   {% endif %}
 </section>
+{% endif %}
 {% endblock %}

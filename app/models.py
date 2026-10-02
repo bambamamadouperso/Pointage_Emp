@@ -246,7 +246,7 @@ class LogEntry(Base):
 
 # --------------------------------------------------------------------------- utilisateurs, audit, pointage
 
-ROLES = {"admin": "Administrateur", "manager": "Manager", "lecteur": "Lecteur"}
+ROLES = {"admin": "Administrateur", "rh": "RH", "manager": "Manager", "lecteur": "Lecteur"}
 
 
 class User(Base):
@@ -280,7 +280,7 @@ class User(Base):
 
     @property
     def team_only(self) -> bool:
-        return self.scope == "equipe" and self.role != "admin"
+        return self.scope == "equipe" and self.role not in ("admin", "rh")  # RH : tout le personnel
 
 
 class AuditEntry(Base):

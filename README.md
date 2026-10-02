@@ -138,6 +138,7 @@ envoi via le serveur SMTP des mails de badge et soumis à son mode test / produc
 | Rôle | Accès |
 |---|---|
 | Lecteur | Suivi journalier et export Excel |
+| RH | Suivi, rapports et exports de **tout le personnel** (même rattaché à un employé), paramètres horaires et jours fériés, horaires postés, agents terrain, circuit et traitement des arrêts maladie, résumés par mail — **sans** synchronisation (tableau de bord, jobs, exécutions, logs, données) ni sources de données (connexions, source des pointages), ni utilisateurs, mails de badge ou audit |
 | Manager | + tableau de bord, jobs (consultation, lancement, arrêt), exécutions, logs, données |
 | Administrateur | Tout : connexions, modification des jobs, paramètres, source des pointages, utilisateurs, audit |
 

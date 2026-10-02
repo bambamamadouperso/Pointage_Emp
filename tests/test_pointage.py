@@ -288,6 +288,37 @@ def test_account_limited_to_team(configured, client):
     assert "rattaché à aucun employé" in client.get(f"/suivi?date={MON.isoformat()}").text
 
 
+def test_rh_role_sees_everyone_without_sync(configured, client):
+    from app import auth
+
+    with SessionLocal() as db:
+        db.query(User).filter_by(username="rh_global").delete()
+        # Même rattaché à un employé « en équipe », le rôle RH voit tout le personnel.
+        db.add(User(username="rh_global", role="rh", password_hash=auth.hash_password("motdepasse6"),
+                    emp_matricule="E003", scope="equipe"))
+        db.commit()
+    r = client.post("/login", data={"username": "rh_global", "password": "motdepasse6"}, follow_redirects=False)
+    assert r.headers["location"] == "/suivi"
+    page = client.get(f"/suivi?date={MON.isoformat()}").text
+    assert "E001</td>" in page and "E002</td>" in page and "E005</td>" in page
+    assert "Ressources humaines" in page and "/admin/planning" in page and "/connections" not in page
+    admin = client.get("/admin").text
+    assert "Horaires postés" in admin and "Source des pointages" not in admin and "Traitements planifiés" not in admin
+    for path in ("/admin/parametres", "/admin/planning", "/admin/terrain", "/admin/arrets", "/admin/resumes",
+                 "/rapports", "/arrets"):
+        assert client.get(path, follow_redirects=False).status_code == 200, path
+    for path in ("/", "/jobs", "/runs", "/logs", "/data", "/connections", "/connections/new", "/admin/pointage",
+                 "/admin/mails", "/admin/users", "/admin/audit"):
+        r = client.get(path, follow_redirects=False)
+        assert r.status_code == 303 and r.headers["location"] == "/suivi", path
+    assert client.post("/connections/save", data={"name": "x"}, headers={"accept": "application/json"}).status_code == 403
+    assert client.post("/jobs/1/run", headers={"accept": "application/json"}).status_code == 403
+    client.post("/logout")
+    with SessionLocal() as db:
+        db.query(User).filter_by(username="rh_global").delete()
+        db.commit()
+
+
 def test_admin_users_and_params_pages(configured, logged_client):
     r = logged_client.post("/admin/users/save", data={"username": "nouveau", "full_name": "N. Ouveau",
                                                       "role": "manager", "password": "motdepasse3"},

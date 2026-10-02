@@ -11,7 +11,10 @@ from .config import settings
 from .database import SessionLocal
 from .models import ROLES, AuditEntry, User, utcnow
 
-ROLE_LEVEL = {"lecteur": 1, "manager": 2, "admin": 3}
+ROLE_LEVEL = {"lecteur": 1, "rh": 1, "manager": 2, "admin": 3}
+# Rôle RH : tout le personnel (suivi, rapports, arrêts) et les réglages RH, mais ni la synchronisation (tableau de
+# bord, jobs, exécutions, logs, données, connexions) ni la source des pointages, les utilisateurs ou l'audit.
+RH_ROLES = ("rh", "admin")
 PBKDF2_ROUNDS = 240_000
 
 # --------------------------------------------------------------------------- mots de passe
@@ -115,6 +118,8 @@ def current_role(username: str) -> Optional[str]:
 
 
 def has_role(role: Optional[str], minimum: str) -> bool:
+    if minimum == "rh":
+        return role in RH_ROLES
     return ROLE_LEVEL.get(role or "", 0) >= ROLE_LEVEL[minimum]
 
 
@@ -128,6 +133,9 @@ RULES = [
     ("*", re.compile(r"^/(suivi|rapports)(/.*)?$"), "lecteur"),
     ("*", re.compile(r"^/arrets(/.*)?$"), "lecteur"),
     ("*", re.compile(r"^/(compte|logout)$"), "lecteur"),
+    # Réglages RH (pas la source des pointages, les mails de badge/SMTP, les utilisateurs ni l'audit).
+    ("GET", re.compile(r"^/admin$"), "rh"),
+    ("*", re.compile(r"^/admin/(parametres|feries|planning|terrain|arrets|resumes|verifier)(/.*)?$"), "rh"),
     ("GET", re.compile(r"^/$"), "manager"),
     ("GET", re.compile(r"^/(jobs|runs|logs|data)(/.*)?$"), "manager"),
     ("POST", re.compile(r"^/jobs/\d+/(run|stop)$"), "manager"),
@@ -142,7 +150,7 @@ def required_role(method: str, path: str) -> str:
 
 
 def home_for(role: Optional[str]) -> str:
-    return "/" if has_role(role, "manager") else "/suivi"
+    return "/" if has_role(role, "manager") and role != "rh" else "/suivi"
 
 
 # --------------------------------------------------------------------------- audit

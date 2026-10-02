@@ -94,7 +94,7 @@ def get_user(db, username: str) -> Optional[User]:
 
 
 def is_hr(user: Optional[User], role: Optional[str], username: str = "") -> bool:
-    return role == "admin" or is_rescue_admin(username or "") or bool(user and user.sick_leave_hr)
+    return role in ("admin", "rh") or is_rescue_admin(username or "") or bool(user and user.sick_leave_hr)
 
 
 def can_act(leave: SickLeave, user: Optional[User], role: Optional[str], username: str) -> bool:
@@ -107,7 +107,7 @@ def can_act(leave: SickLeave, user: Optional[User], role: Optional[str], usernam
     if role == "admin" or is_rescue_admin(username):
         return True
     step = steps[leave.step]
-    hr = bool(user and user.sick_leave_hr)
+    hr = bool(user and user.sick_leave_hr) or role == "rh"
     if step["type"] == "rh":
         return hr
     if step["type"] == "utilisateur":

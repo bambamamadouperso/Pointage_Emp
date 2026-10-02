@@ -42,7 +42,7 @@
     <svg class="ico"><use href="#i-{{ icon }}"/></svg><span>{{ label }}</span></a>
 {% endmacro %}
 <aside class="sidebar" id="sidebar">
-  <a class="brand" href="{{ '/' if can(role, 'manager') else '/suivi' }}">
+  <a class="brand" href="{{ '/' if can(role, 'manager') and role != 'rh' else '/suivi' }}">
     <span class="brand-mark"><svg class="ico"><use href="#i-clock"/></svg></span>
     <span class="brand-text"><strong>Pointage</strong><small>Présences &amp; synchro</small></span>
   </a>
@@ -62,25 +62,28 @@
     {{ nav('/data', 'db', 'Données', path.startswith('/data')) }}
     {% if can(role, 'admin') %}{{ nav('/connections', 'plug', 'Connexions', path.startswith('/connections')) }}{% endif %}
     {% endif %}
-    {% if can(role, 'admin') %}
-    <p class="nav-group">Administration</p>
+    {% if can(role, 'rh') %}
+    {% set is_admin = can(role, 'admin') %}
+    <p class="nav-group">{{ 'Administration' if is_admin else 'Ressources humaines' }}</p>
     {{ nav('/admin', 'grid', "Vue d'ensemble", path == '/admin') }}
     {{ nav('/admin/parametres', 'sliders', 'Paramètres horaires', path.startswith('/admin/parametres')) }}
-    {{ nav('/admin/pointage', 'link', 'Source des pointages', path.startswith('/admin/pointage')) }}
+    {% if is_admin %}{{ nav('/admin/pointage', 'link', 'Source des pointages', path.startswith('/admin/pointage')) }}{% endif %}
     {{ nav('/admin/terrain', 'pin', 'Agents terrain', path.startswith('/admin/terrain')) }}
     {{ nav('/admin/planning', 'cal', 'Horaires postés', path.startswith('/admin/planning')) }}
-    {{ nav('/admin/mails', 'mail', 'Mails de badge', path.startswith('/admin/mails')) }}
+    {% if is_admin %}{{ nav('/admin/mails', 'mail', 'Mails de badge', path.startswith('/admin/mails')) }}{% endif %}
     {{ nav('/admin/resumes', 'chart', 'Résumés par mail', path.startswith('/admin/resumes')) }}
     {{ nav('/admin/arrets', 'sick', 'Circuit arrêts maladie', path.startswith('/admin/arrets')) }}
     {{ nav('/admin/verifier', 'user', 'Vérifier un employé', path.startswith('/admin/verifier')) }}
+    {% if is_admin %}
     {{ nav('/admin/users', 'users', 'Utilisateurs', path.startswith('/admin/users')) }}
     {{ nav('/admin/audit', 'shield', "Journal d'audit", path.startswith('/admin/audit')) }}
+    {% endif %}
     {% endif %}
   </nav>
   <div class="side-user">
     <a class="who" href="/compte" title="Mon compte">
       <span class="avatar">{{ user[:2] | upper }}</span>
-      <span class="who-text"><strong>{{ user }}</strong><small>{{ {'admin': 'Administrateur', 'manager': 'Manager', 'lecteur': 'Lecteur'}.get(role, '') }}</small></span>
+      <span class="who-text"><strong>{{ user }}</strong><small>{{ {'admin': 'Administrateur', 'rh': 'RH', 'manager': 'Manager', 'lecteur': 'Lecteur'}.get(role, '') }}</small></span>
     </a>
     <form method="post" action="/logout"><button class="icon-btn" title="Déconnexion" aria-label="Déconnexion"><svg class="ico"><use href="#i-logout"/></svg></button></form>
   </div>
