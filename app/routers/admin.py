@@ -82,7 +82,9 @@ def pointage_config(request: Request, db: Session = Depends(get_db)):
     schemas, tables, punch_cols, emp_cols, service_cols, error, installed = [], [], {}, {}, {}, None, False
     person_cols, hier_cols, leave_cols, tw_cols, diag, stale = {}, {}, {}, {}, None, False
     cat_cols, cat_values, mission_cols, mission_match = {}, [], {}, None
-    dir_cols, dir_values = {}, []
+    dims = [{"name": name, "prefix": prefix, "label": label, "cols": {}, "values": [],
+             "hint": "ex. Usine, Plateau" if name == "site" else "colonne « direction » du personnel"}
+            for name, (prefix, label) in pointage.DIMENSIONS.items()]
     if conn is not None:
         engine = make_engine(conn, **pointage.WEB_LIMITS)
         try:
@@ -102,10 +104,11 @@ def pointage_config(request: Request, db: Session = Depends(get_db)):
             tw_cols = pointage.column_types(engine, mapping.schema, mapping.tw_table)
             mission_cols = pointage.column_types(engine, mapping.schema, mapping.mission_table)
             cat_cols = pointage.column_types(engine, mapping.schema, mapping.cat_table)
-            dir_cols = pointage.column_types(engine, mapping.schema, mapping.dir_table)
-            for key in ("dir_key_col", "dir_label_col"):
-                if dir_cols and not getattr(mapping, key):
-                    setattr(mapping, key, pointage.guess(key, list(dir_cols)))
+            for d in dims:  # direction, site : colonnes de la table des libellés proposées
+                d["cols"] = pointage.column_types(engine, mapping.schema, getattr(mapping, f"{d['prefix']}_table"))
+                for key in (f"{d['prefix']}_key_col", f"{d['prefix']}_label_col"):
+                    if d["cols"] and not getattr(mapping, key):
+                        setattr(mapping, key, pointage.guess(key, list(d["cols"])))
             for key in ("cat_key_col", "cat_label_col"):
                 if cat_cols and not getattr(mapping, key):
                     setattr(mapping, key, pointage.guess(key, list(cat_cols)))
@@ -156,20 +159,26 @@ def pointage_config(request: Request, db: Session = Depends(get_db)):
             if not mapping.email_col and not exploring:
                 src = person_cols if mapping.email_in != "emp" and mapping.person_table else emp_cols
                 mapping.email_col = pointage.guess("email_col", list(src))
-            if not mapping.dir_col and not exploring:  # suggestion : colonne « direction » de Personnel
-                src = person_cols if mapping.person_table else emp_cols
-                mapping.dir_in = "person" if mapping.person_table else "emp"
-                mapping.dir_col = pointage.guess("dir_col", list(src))
+            for d in dims:  # suggestion : colonne « direction » / « site » de Personnel (enregistrée si l'on valide)
+                px = d["prefix"]
+                if not getattr(mapping, f"{px}_col") and not exploring:
+                    for where, src in (("person", person_cols if mapping.person_table else {}), ("emp", emp_cols)):
+                        found = pointage.guess(f"{px}_col", list(src))
+                        if found:
+                            setattr(mapping, f"{px}_in", where)
+                            setattr(mapping, f"{px}_col", found)
+                            break
             if not mapping.cat_col and not exploring:  # suggestion (enregistrée seulement si l'on valide)
                 src = person_cols if mapping.person_table else emp_cols
                 mapping.cat_in = "person" if mapping.person_table else "emp"
                 mapping.cat_col = pointage.guess("cat_col", list(src))
             installed = cfg.installed_at is not None and pointage.is_installed(engine, mapping)
-            if installed and mapping.dir_col:
-                try:
-                    dir_values = pointage.directions(engine, mapping)[:20]
-                except Exception:
-                    dir_values = []
+            for d in dims:
+                if installed and getattr(mapping, f"{d['prefix']}_col"):
+                    try:
+                        d["values"] = pointage.dimension_values(engine, mapping, d["name"])[:20]
+                    except Exception:
+                        d["values"] = []
             if installed and mapping.cat_col:
                 try:
                     cat_values = pointage.categories(engine, mapping)[:15]
@@ -194,7 +203,7 @@ def pointage_config(request: Request, db: Session = Depends(get_db)):
         person_cols=person_cols, hier_cols=hier_cols, leave_cols=leave_cols, diag=diag, stale=stale,
         leave_guess=pointage.guess("leave_table", tables) if not mapping.leave_table else "",
         tw_cols=tw_cols, cat_cols=cat_cols, cat_values=cat_values, tw_guess=pointage.guess("tw_table", tables) if not mapping.tw_table else "",
-        installed=installed, exploring=exploring, mission_cols=mission_cols, dir_cols=dir_cols, dir_values=dir_values, mission_match=mission_match,
+        installed=installed, exploring=exploring, mission_cols=mission_cols, dims=dims, mission_match=mission_match,
         mission_guess=pointage.guess("mission_table", tables) if not mapping.mission_table else "",
     )
 
@@ -878,10 +887,94 @@ def planning_export(du: str = "", au: str = "", db: Session = Depends(get_db)):
 # --------------------------------------------------------------------------- utilisateurs
 
 
+_PASSWORD_ALPHABET = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # sans 0/O, 1/l/I
+
+
+def _employee_accounts(db: Session) -> dict:
+    """Employés actifs de la liste et comptes existants : qui n'a pas encore de compte."""
+    cfg, mapping = _mapping_ready(db)
+    out = {"configured": mapping is not None, "hierarchy": bool(mapping and mapping.hier_table), "employees": [],
+           "missing": [], "error": None}
+    if mapping is None:
+        return out
+    engine = make_engine(cfg.conn, **pointage.WEB_LIMITS)
+    try:
+        out["employees"] = [e for e in pointage.employee_directory(engine, mapping) if e["matricule"]]
+    except Exception as exc:  # noqa: BLE001
+        out["error"] = friendly(exc)
+        return out
+    finally:
+        engine.dispose()
+    users = db.scalars(select(User)).all()
+    taken = {u.username.lower() for u in users} | {(u.emp_matricule or "").lower() for u in users if u.emp_matricule}
+    out["missing"] = [e for e in out["employees"] if e["matricule"].lower() not in taken]
+    return out
+
+
 @router.get("/users")
 def users(request: Request, db: Session = Depends(get_db)):
     return render(request, "admin/users.html", users=db.scalars(select(User).order_by(User.username)).all(),
-                  roles=ROLES, rescue=auth.settings.admin_username)
+                  roles=ROLES, rescue=auth.settings.admin_username, accounts=_employee_accounts(db))
+
+
+@router.post("/users/comptes-employes")
+def create_employee_accounts(request: Request, mode: str = Form("aleatoire"), mot_de_passe: str = Form(""),
+                             db: Session = Depends(get_db)):
+    """Crée un compte pour chaque employé actif qui n'en a pas : identifiant = matricule, rôle lecteur, périmètre
+    « son équipe » (lui-même et tous ceux qui sont sous lui), mot de passe provisoire à changer à la connexion.
+    Renvoie le fichier Excel des identifiants et mots de passe provisoires (affichés une seule fois)."""
+    import io
+
+    from openpyxl import Workbook
+    from openpyxl.styles import Font
+
+    info = _employee_accounts(db)
+    if not info["configured"] or info["error"]:
+        flash(request, info["error"] or "Configurez d'abord la source des pointages.", "err")
+        return redirect("/admin/users")
+    if not info["hierarchy"]:
+        flash(request, "La hiérarchie (responsable N+1) n'est pas configurée : chaque employé ne pourrait pas voir son "
+                       "équipe. Configurez-la dans Source des pointages → Hiérarchie, puis recommencez.", "err")
+        return redirect("/admin/users")
+    if mode == "commun" and auth.password_problem(mot_de_passe):
+        flash(request, f"Mot de passe provisoire commun : {auth.password_problem(mot_de_passe)}", "err")
+        return redirect("/admin/users")
+    if not info["missing"]:
+        flash(request, "Tous les employés actifs ont déjà un compte.", "ok")
+        return redirect("/admin/users")
+    created = []
+    for e in info["missing"]:
+        password = mot_de_passe if mode == "commun" else "".join(secrets.choice(_PASSWORD_ALPHABET) for _ in range(10))
+        name = " ".join(x for x in (e["nom"], e["prenom"]) if x)
+        db.add(User(username=e["matricule"], full_name=name[:200], role="lecteur", scope="equipe",
+                    emp_matricule=e["matricule"], email=(e.get("email") or None), active=True,
+                    password_hash=auth.hash_password(password), must_change_password=True))
+        created.append((e, name, password))
+    db.commit()
+    auth.audit(request, "Comptes employés créés", f"{len(created)} compte(s)",
+               f"identifiant = matricule, rôle lecteur, périmètre son équipe, mot de passe "
+               f"{'commun' if mode == 'commun' else 'aléatoire'} à changer à la connexion")
+    flash(request, f"{len(created)} compte(s) employé créé(s). Le fichier Excel des identifiants et mots de passe "
+                   f"provisoires vient d'être téléchargé : transmettez-les aux employés (ils devront choisir leur "
+                   f"mot de passe à la première connexion).", "ok")
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Comptes employés"
+    ws.append(["Matricule", "Nom", "Service", "Identifiant", "Mot de passe provisoire", "Adresse de connexion"])
+    base = str(request.base_url).rstrip("/") + "/login"
+    for e, name, password in created:
+        ws.append([e["matricule"], name, e.get("service") or "", e["matricule"], password, base])
+    for col, width in zip("ABCDEF", (12, 30, 24, 14, 22, 34)):
+        ws.column_dimensions[col].width = width
+        ws[f"{col}1"].font = Font(bold=True)
+    for row in ws.iter_rows(min_row=2):
+        for cell in row[:5]:
+            cell.number_format = "@"
+    buf = io.BytesIO()
+    wb.save(buf)
+    return Response(buf.getvalue(), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f'attachment; filename="comptes_employes_{date.today():%Y%m%d}.xlsx"',
+                             "Cache-Control": "no-store"})
 
 
 @router.post("/users/save")
@@ -961,6 +1054,7 @@ def user_password(request: Request, user_id: int, password: str = Form(...), db:
         flash(request, problem or "Utilisateur introuvable.", "err")
         return redirect("/admin/users")
     user.password_hash = auth.hash_password(password)
+    user.must_change_password = True  # mot de passe connu de l'administrateur : à changer à la connexion
     db.commit()
     auth.audit(request, "Mot de passe réinitialisé", user.username)
     flash(request, f"Mot de passe de « {user.username} » réinitialisé.", "ok")

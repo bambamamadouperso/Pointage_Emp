@@ -98,26 +98,27 @@
     {% endif %}
   </fieldset>
 
-  <fieldset class="limits" id="direction"><legend>Direction <span class="muted small">(filtre du suivi et des rapports, rapport « Par direction »)</span></legend>
-    {% set dir_person = m.dir_in != 'emp' and m.person_table %}
+  {% for d in dims %}{% set px = d.prefix %}{% set in_person = m[px ~ '_in'] != 'emp' and m.person_table %}
+  <fieldset class="limits" id="{{ d.name }}"><legend>{{ d.label }} <span class="muted small">({{ d.hint }} : filtre du suivi et des rapports, rapport « Par {{ d.label | lower }} »)</span></legend>
     <div class="row">
-      <label>Colonne de la direction
-        <select name="dir_in" data-reload>
-          <option value="person" {{ 'selected' if dir_person }} {{ 'disabled' if not m.person_table }}>dans {{ m.person_table or 'la table des noms' }}</option>
-          <option value="emp" {{ 'selected' if not dir_person }}>dans {{ m.emp_table or 'la table des employés' }}</option>
+      <label>Colonne {{ 'du site' if d.name == 'site' else 'de la direction' }}
+        <select name="{{ px }}_in" data-reload>
+          <option value="person" {{ 'selected' if in_person }} {{ 'disabled' if not m.person_table }}>dans {{ m.person_table or 'la table des noms' }}</option>
+          <option value="emp" {{ 'selected' if not in_person }}>dans {{ m.emp_table or 'la table des employés' }}</option>
         </select></label>
-      <label>&nbsp;{{ colselect('dir_col', person_cols if dir_person else emp_cols, m.dir_col, True) }}</label>
+      <label>&nbsp;{{ colselect(px ~ '_col', person_cols if in_person else emp_cols, m[px ~ '_col'], True) }}</label>
       <label>Table des libellés <span class="muted small">(si la colonne contient un code)</span>
-        {{ tableselect('dir_table', m.dir_table, True) }}</label>
+        {{ tableselect(px ~ '_table', m[px ~ '_table'], True) }}</label>
     </div>
-    {% if m.dir_table %}
+    {% if m[px ~ '_table'] %}
     <div class="row">
-      <label>Code dans {{ m.dir_table }} {{ colselect('dir_key_col', dir_cols, m.dir_key_col) }}</label>
-      <label>Libellé {{ colselect('dir_label_col', dir_cols, m.dir_label_col) }}</label>
+      <label>Code dans {{ m[px ~ '_table'] }} {{ colselect(px ~ '_key_col', d.cols, m[px ~ '_key_col']) }}</label>
+      <label>Libellé {{ colselect(px ~ '_label_col', d.cols, m[px ~ '_label_col']) }}</label>
     </div>
     {% endif %}
-    {% if dir_values %}<p class="muted small">Directions trouvées : {% for v in dir_values %}<code>{{ v }}</code>{{ ', ' if not loop.last }}{% endfor %}</p>{% endif %}
+    {% if d['values'] %}<p class="muted small">Valeurs trouvées : {% for v in d['values'] %}<code>{{ v }}</code>{{ ', ' if not loop.last }}{% endfor %}</p>{% endif %}
   </fieldset>
+  {% endfor %}
 
   <fieldset class="limits" id="statut-personnel"><legend>Statut du personnel <span class="muted small">(cadre, non cadre… : filtre du suivi et de tous les rapports)</span></legend>
     {% set cat_person = m.cat_in != 'emp' and m.person_table %}

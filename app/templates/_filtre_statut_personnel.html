@@ -1,13 +1,15 @@
 {# Filtre « Statut du personnel » (cadre, non cadre…) : toujours visible ; à configurer s'il n'y a pas encore de colonne. #}
 {% from "_multiselect.html" import multiselect %}
-{# Direction (colonne « direction » du personnel) : affichée dès qu'elle est configurée. #}
-{% if directions %}
-  {{ multiselect('direction', 'Direction', directions, f.direction) }}
-{% elif not has_directions and can(role, 'admin') %}
-<label class="statut-perso"><span>Direction <a class="small" href="/admin/pointage#direction" title="Choisir la colonne direction dans la table Personnel">· configurer →</a></span>
-  <select disabled title="Colonne de la direction non configurée"><option>Non configurée</option></select>
+{# Direction, site… (colonnes du personnel) : filtres à choix multiples dès qu'ils sont configurés. #}
+{% for d in dims or [] %}
+  {% if d['values'] %}
+    {{ multiselect(d['name'], d['label'], d['values'], f[d['name']]) }}
+  {% elif not d['configured'] and can(role, 'admin') %}
+<label class="statut-perso"><span>{{ d['label'] }} <a class="small" href="/admin/pointage#{{ d['name'] }}" title="Choisir la colonne dans la table Personnel">· configurer →</a></span>
+  <select disabled title="Colonne non configurée"><option>Non configuré</option></select>
 </label>
-{% endif %}
+  {% endif %}
+{% endfor %}
 {% if categories %}
   {{ multiselect('categorie', 'Statut du personnel', categories, f.categorie) }}
 {% else %}

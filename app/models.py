@@ -265,6 +265,8 @@ class User(Base):
     scope: Mapped[Optional[str]] = mapped_column(String(20), nullable=True, default="tous")
     # Agent RH habilité à saisir les arrêts maladie (validés d'office) et à valider les étapes « RH ».
     sick_leave_hr: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True, default=False)
+    # Mot de passe provisoire (compte créé ou réinitialisé par un administrateur) : à changer à la connexion.
+    must_change_password: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True, default=False)
     # Adresse e-mail du compte (notifications) ; à défaut, celle de la fiche employé (matricule).
     email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 

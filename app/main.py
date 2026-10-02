@@ -45,12 +45,17 @@ async def _access_control(request: Request, call_next):
     if auth.PUBLIC_PATHS.match(path):
         return await call_next(request)
     user = request.session.get("user")
-    role = await run_in_threadpool(auth.current_role, user) if user else None
+    role, must_change = await run_in_threadpool(auth.account_state, user) if user else (None, False)
     if user and role is None:  # compte supprimé ou désactivé
         request.session.clear()
     if role is None:
         return redirect("/login")
     request.session["role"] = role
+    if must_change and path not in ("/compte", "/logout"):
+        # Mot de passe provisoire (compte créé par un administrateur) : il doit être changé avant toute autre page.
+        if request.method == "GET":
+            return redirect("/compte")
+        return PlainTextResponse("Changez d'abord votre mot de passe provisoire (Mon compte).", status_code=403)
     needed = auth.required_role(request.method, path)
     if not auth.has_role(role, needed):
         if request.method == "GET" and path == "/":
@@ -135,6 +140,10 @@ def login(request: Request, username: str = Form(...), password: str = Form(...)
         request.session["user"] = username.strip()
         request.session["role"] = role
         auth.audit(request, "Connexion", details=f"rôle {ROLES.get(role, role)}")
+        if auth.account_state(username.strip())[1]:
+            flash(request, "Bienvenue ! Choisissez votre mot de passe personnel pour remplacer le mot de passe provisoire.",
+                  "warn")
+            return redirect("/compte")
         return redirect(auth.home_for(role))
     write_log("WARNING", f"Échec de connexion au tableau de bord pour « {username} ».")
     auth.audit(request, "Échec de connexion", details=f"identifiant « {username[:100]} »", username="")
@@ -150,7 +159,11 @@ def logout(request: Request):
 
 @app.get("/compte")
 def account(request: Request):
-    return render(request, "account.html", rescue=auth.is_rescue_admin(request.session.get("user", "")))
+    username = request.session.get("user", "")
+    with SessionLocal() as db:
+        me = db.query(User).filter(User.username == username).one_or_none()
+    return render(request, "account.html", rescue=auth.is_rescue_admin(username), me=me,
+                  must_change=bool(me and me.must_change_password))
 
 
 @app.post("/compte")
@@ -168,6 +181,7 @@ def change_password(request: Request, current: str = Form(...), new: str = Form(
             flash(request, problem, "err")
             return redirect("/compte")
         user.password_hash = auth.hash_password(new)
+        user.must_change_password = False
         db.commit()
     auth.audit(request, "Mot de passe modifié", f"utilisateur {username}")
     flash(request, "Mot de passe modifié.", "ok")

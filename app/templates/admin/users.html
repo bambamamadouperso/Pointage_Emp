@@ -9,8 +9,44 @@
   <a href="/admin" class="muted">← Administration</a>
 </div>
 
+<section class="card" id="comptes-employes">
+  <div class="card-head"><div><h2>Comptes des employés</h2>
+    <p class="muted small">Chaque employé se connecte avec son <strong>matricule</strong> et voit ses propres pointages, ses rapports
+      et ceux de toutes les personnes placées sous lui dans la hiérarchie (N-1, N-2…). Rôle lecteur ; mot de passe provisoire à
+      changer à la première connexion.</p></div></div>
+  {% if accounts.error %}<div class="flash err">{{ accounts.error }}</div>
+  {% elif not accounts.configured %}<p class="empty">Configurez d'abord la <a href="/admin/pointage">source des pointages</a>.</p>
+  {% else %}
+  <div class="account-stats">
+    <div><strong>{{ accounts.employees | length }}</strong><span>employés actifs</span></div>
+    <div><strong>{{ (accounts.employees | length) - (accounts.missing | length) }}</strong><span>avec un compte</span></div>
+    <div class="{{ 'warn-text' if accounts.missing }}"><strong>{{ accounts.missing | length }}</strong><span>sans compte</span></div>
+  </div>
+  {% if not accounts.hierarchy %}<div class="flash warn">La hiérarchie n'est pas configurée : configurez-la dans
+    <a href="/admin/pointage">Source des pointages</a> pour que chacun voie son équipe.</div>{% endif %}
+  {% if accounts.missing %}
+  <form method="post" action="/admin/users/comptes-employes" class="form" id="employee_accounts"
+        data-confirm="Créer {{ accounts.missing | length }} compte(s) employé ? Le fichier Excel des mots de passe provisoires sera téléchargé (il ne pourra pas être réaffiché).">
+    <fieldset class="import-mode">
+      <legend class="sr-only">Mot de passe provisoire</legend>
+      <label class="check"><input type="radio" name="mode" value="aleatoire" checked>
+        <span><strong>Mot de passe différent pour chacun</strong> (recommandé) <span class="muted small">— 10 caractères, dans le fichier Excel</span></span></label>
+      <label class="check"><input type="radio" name="mode" value="commun">
+        <span><strong>Même mot de passe provisoire pour tous</strong>
+          <input name="mot_de_passe" type="text" minlength="8" placeholder="8 caractères au moins" autocomplete="off" style="max-width:220px"></span></label>
+    </fieldset>
+    <div class="form-actions"><button class="btn primary">Créer les {{ accounts.missing | length }} compte(s) manquant(s)</button></div>
+    <p class="muted small">Exemples : {% for e in accounts.missing[:6] %}<span class="mono">{{ e.matricule }}</span> {{ e.nom }}{{ ', ' if not loop.last }}{% endfor %}{{ ' …' if accounts.missing | length > 6 }}.
+      Relancez plus tard pour créer les comptes des nouveaux arrivants (les comptes existants ne sont jamais modifiés).</p>
+  </form>
+  {% else %}<p class="muted small">Tous les employés actifs ont un compte.</p>{% endif %}
+  {% endif %}
+</section>
+
 <section class="card">
-  <div class="table-wrap"><table>
+  <div class="card-head"><div><h2>Comptes ({{ users | length + 1 }})</h2></div>
+    <input type="search" id="user_filter" placeholder="Rechercher (identifiant, nom, matricule)…" aria-label="Rechercher un compte" style="max-width:320px"></div>
+  <div class="table-wrap"><table id="users_table">
     <thead><tr><th>Identifiant</th><th>Nom</th><th>Rôle</th><th>Périmètre du suivi</th><th>État</th><th>Dernière connexion</th><th></th></tr></thead>
     <tbody>
       <tr class="muted"><td class="mono">{{ rescue }}</td><td>Compte de secours (fichier .env)</td><td>Administrateur</td><td>Tout le personnel</td><td>actif</td><td>—</td><td></td></tr>
@@ -72,4 +108,16 @@
     personnes placées sous lui dans la hiérarchie (sans effet pour un administrateur).</p>
   <div class="form-actions"><button class="btn primary">Créer</button></div>
 </form>
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {  // recherche instantanée dans la liste des comptes (utile avec un compte par employé)
+  const input = document.getElementById('user_filter'), table = document.getElementById('users_table');
+  if (!input || !table) return;
+  input.addEventListener('input', () => {
+    const q = input.value.trim().toLowerCase();
+    table.querySelectorAll('tbody > tr').forEach(tr => { tr.hidden = q && !tr.textContent.toLowerCase().includes(q); });
+  });
+})();
+</script>
 {% endblock %}

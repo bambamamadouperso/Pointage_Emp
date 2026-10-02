@@ -60,6 +60,17 @@ def authenticate(username: str, password: str) -> Optional[str]:
         return user.role
 
 
+def account_state(username: str) -> tuple[Optional[str], bool]:
+    """(rôle actuel, mot de passe provisoire à changer) ; rôle None si le compte n'existe plus ou est désactivé."""
+    if is_rescue_admin(username):
+        return "admin", False
+    with SessionLocal() as db:
+        user = db.query(User).filter(User.username == username).one_or_none()
+        if user is None or not user.active or user.role not in ROLES:
+            return None, False
+        return user.role, bool(user.must_change_password)
+
+
 def current_role(username: str) -> Optional[str]:
     """Rôle actuel (relu à chaque requête : un changement de rôle ou une désactivation s'applique aussitôt)."""
     if is_rescue_admin(username):

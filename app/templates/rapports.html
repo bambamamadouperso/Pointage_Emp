@@ -151,6 +151,7 @@
   </section>
 </div>
 
+{% if data.sites %}{{ group_table('Par site', data.sites, 'site', 'Site') }}{% endif %}
 {% if data.directions %}{{ group_table('Par direction', data.directions, 'direction', 'Direction') }}{% endif %}
 {% if data.categories %}{{ group_table('Par statut du personnel', data.categories, 'categorie', 'Statut du personnel') }}{% endif %}
 {{ group_table('Par service', data.services, 'service', 'Service') }}
@@ -183,7 +184,7 @@
     <tbody>{% for e in data.employes[:100] %}
       <tr><td class="mono small">{{ e.matricule }}</td>
         <td class="nowrap">{{ e.nom }} {{ e.prenom or '' }}{% if e.terrain %} <span class="badge st-field" title="Agent terrain">terrain</span>{% endif %}</td>
-        <td class="small">{{ e.service or '—' }}{% if e.direction %}<br><span class="muted">{{ e.direction }}</span>{% endif %}</td>{% if categories %}<td class="small">{{ e.categorie or '—' }}</td>{% endif %}<td class="right">{{ pct(e.taux_presence) }}</td>
+        <td class="small">{{ e.service or '—' }}{% if e.direction or e.site %}<br><span class="muted">{{ [e.direction, e.site] | select | join(' · ') }}</span>{% endif %}</td>{% if categories %}<td class="small">{{ e.categorie or '—' }}</td>{% endif %}<td class="right">{{ pct(e.taux_presence) }}</td>
         <td class="right {{ 'hot' if e.absences >= 3 }}">{{ e.absences or '·' }}</td><td class="right {{ 'hot' if e.retards >= 3 }}">{{ e.retards or '·' }}</td>
         <td class="right">{{ hhmm(timedelta(minutes=e.retard_min_total | float)) if e.retard_min_total else '·' }}</td>
         <td class="right">{% if e.arrivee_moy_min %}{{ '%02d' | format((e.arrivee_moy_min // 60) | int) }}h{{ '%02d' | format((e.arrivee_moy_min % 60) | int) }}{% else %}—{% endif %}</td>

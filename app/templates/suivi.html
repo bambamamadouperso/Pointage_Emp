@@ -88,6 +88,7 @@
 {% if f.q %}{% set _ = active_filters.append(('Employé : « ' ~ f.q ~ ' »', request.query_params | with_param('q', ''))) %}{% endif %}
 {% if f.service %}{% set _ = active_filters.append(('Service : ' ~ f.service | join(', '), request.query_params | with_param('service', ''))) %}{% endif %}
 {% if f.direction %}{% set _ = active_filters.append(('Direction : ' ~ f.direction | join(', '), request.query_params | with_param('direction', ''))) %}{% endif %}
+{% if f.site %}{% set _ = active_filters.append(('Site : ' ~ f.site | join(', '), request.query_params | with_param('site', ''))) %}{% endif %}
 {% if f.categorie %}{% set _ = active_filters.append(('Statut du personnel : ' ~ f.categorie | join(', '), request.query_params | with_param('categorie', ''))) %}{% endif %}
 {% if f.team %}{% set _ = active_filters.append(('Équipe de ' ~ (team_label or f.team) ~ (' · directs (N-1)' if f.directs else ''), (request.query_params | with_param('equipe', '')) )) %}{% endif %}
 {% if f.population %}{% set _ = active_filters.append(('Personnes : ' ~ ('employés de la liste' if f.population == 'liste' else 'hors liste'), request.query_params | with_param('pop', ''))) %}{% endif %}
@@ -176,7 +177,7 @@
         {% if not single_day %}<td class="nowrap">{{ r.jour | jour_fr(True) }}</td>{% endif %}
         <td class="mono">{{ r.matricule }}</td>
         <td class="nowrap">{% if r.hors_liste %}<span class="badge st-out" title="A pointé mais n'est pas dans la table des employés">Hors liste</span>{% else %}{{ r.nom }} {{ r.prenom or '' }}{% endif %}</td>
-        <td>{{ r.service or '—' }}{% if r.direction %}<br><span class="muted small" title="Direction">{{ r.direction }}</span>{% endif %}</td>
+        <td>{{ r.service or '—' }}{% if r.direction or r.site %}<br><span class="muted small" title="Direction · site">{{ [r.direction, r.site] | select | join(' · ') }}</span>{% endif %}</td>
         {% if has_hierarchy %}<td class="small">{{ r.responsable or '—' }}</td>{% endif %}
         <td>{{ hhmm(r.premier_pointage) }}</td>
         <td>{{ hhmm(r.dernier_pointage) if r.nb_pointages > 1 else '—' }}{% if r.nb_pointages > 1 and r.dernier_pointage.date() > r.jour %} <span class="muted small" title="Le lendemain (poste de nuit)">+1 j</span>{% endif %}</td>

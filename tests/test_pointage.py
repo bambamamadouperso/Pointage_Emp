@@ -1511,3 +1511,116 @@ def test_direction_filter_and_reports(configured, pg, logged_client):
         assert "installées" in logged_client.post("/admin/pointage", data=restore, follow_redirects=True).text
         with pg.begin() as c:
             c.execute(text(f'ALTER TABLE {SCHEMA}."Personnel" DROP COLUMN IF EXISTS "Direction"'))
+
+
+def test_site_filter_and_reports(configured, pg, logged_client):
+    """Site (Usine, Plateau) : colonne de Personnel proposée, filtre du suivi et des rapports, « Par site », exports."""
+    import io
+
+    from openpyxl import load_workbook
+
+    with pg.begin() as c:
+        c.execute(text(f'ALTER TABLE {SCHEMA}."Personnel" ADD COLUMN IF NOT EXISTS "Site" text'))
+        c.execute(text(f"""UPDATE {SCHEMA}."Personnel" SET "Site" = CASE WHEN "IDPersonnel" IN (101, 102, 106, 107)
+                          THEN 'Usine' ELSE 'Plateau' END"""))
+    with SessionLocal() as db:
+        cfg = db.query(PointageConfig).one()
+        original, conn_id = cfg.data, cfg.conn_id
+    try:
+        section = logged_client.get("/admin/pointage").text.split('id="site"')[1].split("</fieldset>")[0]
+        assert '<option value="Site" selected' in section and "Usine, Plateau" in section
+        data = {**pointage.Mapping.from_json(original).__dict__, "site_col": "Site", "site_in": "person", "conn_id": conn_id}
+        assert "installées" in logged_client.post("/admin/pointage", data=data, follow_redirects=True).text
+        assert rows(pg, MON)[("E003", MON)].site == "Plateau"
+        page = logged_client.get(f"/suivi?date={MON.isoformat()}&site=Usine").text
+        assert 'name="site"' in page and "Site : Usine" in page
+        assert "E001</td>" in page and "E007</td>" in page and "E003</td>" not in page
+        xlsx = load_workbook(io.BytesIO(logged_client.get(f"/suivi/export.xlsx?date={MON.isoformat()}&site=Plateau").content))
+        assert xlsx.active.cell(1, 19).value == "Site" and dict(xlsx["Filtres"].iter_rows(values_only=True))["Site"] == "Plateau"
+        url = f"/rapports?p=perso&du={MON.isoformat()}&au={(MON + timedelta(days=4)).isoformat()}"
+        rep = logged_client.get(url).text
+        assert "Par site" in rep and ">Usine</a>" in rep and ">Plateau</a>" in rep
+        plateau = logged_client.get(url + "&site=Plateau").text
+        assert "E003</td>" in plateau and "E001</td>" not in plateau
+        wb = load_workbook(io.BytesIO(logged_client.get("/rapports/export.xlsx?" + url.split("?", 1)[1]).content))
+        assert "Sites" in wb.sheetnames and wb["Employés"].cell(1, 23).value == "Site"
+    finally:
+        restore = {**pointage.Mapping.from_json(original).__dict__, "conn_id": conn_id}
+        assert "installées" in logged_client.post("/admin/pointage", data=restore, follow_redirects=True).text
+        with pg.begin() as c:
+            c.execute(text(f'ALTER TABLE {SCHEMA}."Personnel" DROP COLUMN IF EXISTS "Site"'))
+
+
+def test_employee_accounts_see_self_and_team(configured, logged_client):
+    """Comptes des employés : création en masse (identifiant = matricule, mots de passe provisoires dans un fichier
+    Excel), changement obligatoire à la première connexion, chacun voit ses données et celles de son équipe."""
+    import io
+
+    from fastapi.testclient import TestClient
+    from openpyxl import load_workbook
+
+    from app.main import app
+    from app.models import User
+
+    # Comptes déjà rattachés à ces matricules par d'autres tests : détachés le temps du test, puis restaurés.
+    with SessionLocal() as db:
+        linked = {u.id: u.emp_matricule for u in db.query(User).filter(User.emp_matricule.like("E00%"))}
+        for u in db.query(User).filter(User.id.in_(linked)):
+            u.emp_matricule = None
+        db.commit()
+    page = logged_client.get("/admin/users").text
+    assert "Comptes des employés" in page and "sans compte" in page
+    assert "8 caractères" in logged_client.post("/admin/users/comptes-employes", data={"mode": "commun", "mot_de_passe": "court"},
+                                                follow_redirects=True).text
+    try:
+        r = logged_client.post("/admin/users/comptes-employes", data={"mode": "aleatoire"})
+        assert r.headers["content-type"].startswith("application/vnd.openxmlformats")
+        ws = load_workbook(io.BytesIO(r.content)).active
+        creds = {row[0]: row[4] for row in ws.iter_rows(min_row=2, values_only=True)}
+        assert set(creds) == {"E001", "E002", "E003", "E004", "E005", "E007"}  # E006 inactif : pas de compte
+        assert all(len(p) == 10 for p in creds.values()) and len(set(creds.values())) == 6
+        with SessionLocal() as db:
+            awa = db.query(User).filter(User.username == "E001").one()
+            assert (awa.role, awa.scope, awa.emp_matricule, awa.must_change_password, awa.full_name) == (
+                "lecteur", "equipe", "E001", True, "Diallo Awa")
+        assert "Tous les employés actifs ont déjà un compte" in logged_client.post(
+            "/admin/users/comptes-employes", data={"mode": "aleatoire"}, follow_redirects=True).text
+
+        def login(mat):
+            c = TestClient(app)
+            r = c.post("/login", data={"username": mat, "password": creds[mat]}, follow_redirects=True)
+            assert "mot de passe provisoire" in r.text  # changement obligatoire
+            assert c.get("/suivi", follow_redirects=False).headers["location"] == "/compte"
+            r = c.post("/compte", data={"current": creds[mat], "new": "MonNouveau1", "confirm": "MonNouveau1"},
+                       follow_redirects=True)
+            assert "Mot de passe modifié" in r.text
+            return c
+
+        # Diallo (E001) encadre Ndiaye, Sow (et, sous Sow, Fall et Ba) : elle voit toute son équipe, pas Diop.
+        awa = login("E001")
+        team = awa.get(f"/suivi?date={MON.isoformat()}").text
+        for mat in ("E001", "E002", "E003", "E004", "E005"):
+            assert f"{mat}</td>" in team, mat
+        assert "E007</td>" not in team and "Hors liste" not in team.split("<tbody>")[1]
+        # Ndiaye (E002) n'encadre personne : il ne voit que lui-même, y compris dans les rapports et l'export.
+        moussa = login("E002")
+        own = moussa.get(f"/suivi?date={MON.isoformat()}").text
+        assert "E002</td>" in own and "E001</td>" not in own and "E003</td>" not in own
+        rep = moussa.get(f"/rapports?p=perso&du={MON.isoformat()}&au={MON.isoformat()}").text
+        assert "Ndiaye Moussa" in rep and "Diallo Awa" not in rep.split("Par employé")[-1]
+        assert moussa.get("/admin/users", follow_redirects=False).status_code in (302, 303)  # pas d'administration
+        for c in (awa, moussa):
+            c.close()
+        # Réinitialisation par un administrateur : de nouveau provisoire.
+        with SessionLocal() as db:
+            uid = db.query(User).filter(User.username == "E002").one().id
+        logged_client.post(f"/admin/users/{uid}/password", data={"password": "Provisoire9"})
+        with SessionLocal() as db:
+            assert db.get(User, uid).must_change_password is True
+    finally:
+        with SessionLocal() as db:
+            db.query(User).filter(User.username.in_(["E001", "E002", "E003", "E004", "E005", "E007"])).delete(
+                synchronize_session=False)
+            for u in db.query(User).filter(User.id.in_(linked)):
+                u.emp_matricule = linked[u.id]
+            db.commit()
