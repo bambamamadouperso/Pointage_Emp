@@ -1624,3 +1624,93 @@ def test_employee_accounts_see_self_and_team(configured, logged_client):
             for u in db.query(User).filter(User.id.in_(linked)):
                 u.emp_matricule = linked[u.id]
             db.commit()
+
+
+def test_staff_login_with_email_and_standard_password(configured, pg, logged_client):
+    """Tout le personnel : connexion avec l'e-mail de la fiche et le mot de passe standard, compte ouvert à la première
+    connexion, périmètre « son équipe » ; mot de passe personnel ensuite ; employé inactif refusé ; accès fermable."""
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    from app.models import StaffAccessSettings, User
+
+    with pg.begin() as c:
+        c.execute(text(f'ALTER TABLE {SCHEMA}."Personnel" ADD COLUMN IF NOT EXISTS "Email" text'))
+        c.execute(text(f'UPDATE {SCHEMA}."Personnel" SET "Email" = lower("Prenom" || \'.\' || "Nom") || \'@exemple.com\''))
+    with SessionLocal() as db:
+        cfg = db.query(PointageConfig).one()
+        original, conn_id = cfg.data, cfg.conn_id
+    data = {**pointage.Mapping.from_json(original).__dict__, "email_col": "Email", "email_in": "person", "conn_id": conn_id}
+
+    def client():
+        return TestClient(app)
+
+    try:
+        assert "installées" in logged_client.post("/admin/pointage", data=data, follow_redirects=True).text
+        page = logged_client.get("/admin/users").text
+        assert "Accès de tout le personnel" in page and "avec une adresse e-mail" in page
+        r = logged_client.post("/admin/users/acces-personnel", data={"enabled": "true"}, follow_redirects=True)
+        assert "Définissez le mot de passe standard" in r.text
+        r = logged_client.post("/admin/users/acces-personnel", data={"enabled": "true", "mot_de_passe": "Standard2026"},
+                               follow_redirects=True)
+        assert "Accès du personnel ouvert" in r.text
+
+        # Première connexion de Diallo (E001) : e-mail en majuscules accepté, compte créé, voit son équipe.
+        awa = client()
+        r = awa.post("/login", data={"username": "Awa.Diallo@Exemple.com", "password": "Standard2026"}, follow_redirects=True)
+        assert "Suivi journalier" in r.text
+        with SessionLocal() as db:
+            u = db.query(User).filter(User.username == "awa.diallo@exemple.com").one()
+            assert (u.role, u.scope, u.emp_matricule, u.auto_account, u.must_change_password) == ("lecteur", "equipe", "E001", True, False)
+        team = awa.get(f"/suivi?date={MON.isoformat()}").text
+        assert "E002</td>" in team and "E004</td>" in team and "E007</td>" not in team
+        # Mauvais mot de passe, adresse inconnue, employé inactif (Gueye, E006) : refusés.
+        for user, pwd in (("awa.diallo@exemple.com", "mauvais!"), ("inconnu@exemple.com", "Standard2026"),
+                          ("ousmane.gueye@exemple.com", "Standard2026")):
+            assert "Identifiants incorrects" in client().post("/login", data={"username": user, "password": pwd},
+                                                              follow_redirects=True).text, user
+        # Mot de passe personnel : le mot de passe standard ne vaut plus pour elle.
+        r = awa.post("/compte", data={"current": "Standard2026", "new": "AwaPerso99", "confirm": "AwaPerso99"},
+                     follow_redirects=True)
+        assert "Mot de passe modifié" in r.text
+        assert "Identifiants incorrects" in client().post("/login", data={"username": "awa.diallo@exemple.com",
+                                                                          "password": "Standard2026"}, follow_redirects=True).text
+        assert "Suivi journalier" in client().post("/login", data={"username": "awa.diallo@exemple.com",
+                                                                   "password": "AwaPerso99"}, follow_redirects=True).text
+        # Nouveau mot de passe standard (et mot de passe personnel exigé) : vaut pour ceux qui n'en ont pas choisi.
+        moussa = client()
+        assert "Suivi journalier" in moussa.post("/login", data={"username": "moussa.ndiaye@exemple.com",
+                                                                 "password": "Standard2026"}, follow_redirects=True).text
+        logged_client.post("/admin/users/acces-personnel", data={"enabled": "true", "mot_de_passe": "Nouveau2027",
+                                                                 "force_change": "true"})
+        assert "Identifiants incorrects" in client().post("/login", data={"username": "moussa.ndiaye@exemple.com",
+                                                                          "password": "Standard2026"}, follow_redirects=True).text
+        r = client().post("/login", data={"username": "moussa.ndiaye@exemple.com", "password": "Nouveau2027"}, follow_redirects=True)
+        assert "mot de passe provisoire" in r.text  # mot de passe personnel exigé
+        # Compte créé auparavant par matricule (même e-mail), sans mot de passe personnel : le standard vaut aussi.
+        with SessionLocal() as db:
+            db.add(User(username="E003", email="fatou.sow@exemple.com", emp_matricule="E003", role="lecteur",
+                        scope="equipe", password_hash="x", active=True))
+            db.commit()
+        fatou = client()
+        fatou.post("/login", data={"username": "fatou.sow@exemple.com", "password": "Nouveau2027"})
+        assert fatou.get("/compte").status_code == 200 and "E003" in fatou.get("/compte").text
+        with SessionLocal() as db:
+            db.query(User).filter(User.username == "E003").delete()
+            db.commit()
+        # Accès fermé : plus de connexion par le mot de passe standard ; l'administrateur et Awa (personnel) passent.
+        logged_client.post("/admin/users/acces-personnel", data={"mot_de_passe": ""})
+        assert "Identifiants incorrects" in client().post("/login", data={"username": "fatou.sow@exemple.com",
+                                                                          "password": "Nouveau2027"}, follow_redirects=True).text
+        assert "Suivi journalier" in client().post("/login", data={"username": "awa.diallo@exemple.com",
+                                                                   "password": "AwaPerso99"}, follow_redirects=True).text
+        assert client().post("/login", data={"username": "admin", "password": "secret"}, follow_redirects=False).status_code == 303
+    finally:
+        with SessionLocal() as db:
+            db.query(User).filter(User.auto_account.is_(True)).delete(synchronize_session=False)
+            db.query(StaffAccessSettings).delete()
+            db.commit()
+        restore = {**pointage.Mapping.from_json(original).__dict__, "conn_id": conn_id}
+        assert "installées" in logged_client.post("/admin/pointage", data=restore, follow_redirects=True).text
+        with pg.begin() as c:
+            c.execute(text(f'ALTER TABLE {SCHEMA}."Personnel" DROP COLUMN IF EXISTS "Email"'))

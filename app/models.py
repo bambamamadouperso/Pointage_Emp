@@ -267,6 +267,10 @@ class User(Base):
     sick_leave_hr: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True, default=False)
     # Mot de passe provisoire (compte créé ou réinitialisé par un administrateur) : à changer à la connexion.
     must_change_password: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True, default=False)
+    # Compte créé automatiquement à la première connexion d'un employé (e-mail + mot de passe standard) ;
+    # personal_password : l'employé a choisi son propre mot de passe (le mot de passe standard ne vaut plus pour lui).
+    auto_account: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True, default=False)
+    personal_password: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True, default=False)
     # Adresse e-mail du compte (notifications) ; à défaut, celle de la fiche employé (matricule).
     email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 
@@ -493,3 +497,17 @@ class DigestLog(Base):
     status: Mapped[str] = mapped_column(String(20), default="sent")  # sent, failed, skipped
     error: Mapped[str] = mapped_column(Text, default="")
     attempts: Mapped[int] = mapped_column(Integer, default=1)
+
+
+class StaffAccessSettings(Base):
+    """Accès de tout le personnel : connexion avec l'e-mail de la fiche employé et un mot de passe standard commun."""
+
+    __tablename__ = "staff_access_settings"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    password_hash: Mapped[str] = mapped_column(Text, default="")
+    # Exiger un mot de passe personnel à la première connexion (le mot de passe standard ne sert qu'une fois).
+    force_change: Mapped[bool] = mapped_column(Boolean, default=False)
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    updated_by: Mapped[str] = mapped_column(String(100), default="")

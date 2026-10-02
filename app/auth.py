@@ -46,18 +46,52 @@ def is_rescue_admin(username: str) -> bool:
 
 
 def authenticate(username: str, password: str) -> Optional[str]:
-    """Renvoie le rôle de l'utilisateur si les identifiants sont bons, sinon None."""
-    username = username.strip()
-    if is_rescue_admin(username):
+    """Rôle de l'utilisateur si les identifiants sont bons, sinon None (voir login)."""
+    found = login(username, password)
+    return found[0] if found else None
+
+
+def login(identifier: str, password: str) -> Optional[tuple[str, str]]:
+    """(rôle, identifiant du compte) si la connexion est acceptée, sinon None.
+
+    L'identifiant peut être celui du compte ou son adresse e-mail. Un employé (accès de tout le personnel) se
+    connecte avec l'e-mail de sa fiche et le mot de passe standard tant qu'il n'a pas choisi le sien ; son compte
+    est créé à la première connexion."""
+    from . import staff_access
+    from sqlalchemy import func
+
+    identifier = identifier.strip()
+    if is_rescue_admin(identifier):
         ok = secrets.compare_digest(password.encode(), settings.admin_password.encode())
-        return "admin" if ok else None
+        return ("admin", identifier) if ok else None
     with SessionLocal() as db:
-        user = db.query(User).filter(User.username == username).one_or_none()
-        if user is None or not user.active or not verify_password(password, user.password_hash):
-            return None
-        user.last_login_at = utcnow()
-        db.commit()
-        return user.role
+        user = db.query(User).filter(User.username == identifier).one_or_none()
+        if user is None and "@" in identifier:
+            email = identifier.lower()
+            user = db.query(User).filter((func.lower(User.username) == email) | (func.lower(User.email) == email)) \
+                .order_by(User.id).first()
+        if user is not None:
+            if not user.active:
+                return None
+            if user.auto_account:
+                # Compte d'employé : il doit toujours figurer parmi les employés actifs.
+                if staff_access.find_employee(db, user.email or user.username) is None:
+                    return None
+                if not user.personal_password:
+                    return (user.role, user.username) if staff_access.login(db, user.username, password) else None
+            if not verify_password(password, user.password_hash):
+                # Compte d'employé créé autrement (ex. par matricule) et sans mot de passe personnel : le mot de passe
+                # standard de l'accès du personnel vaut aussi pour lui, s'il est encore actif.
+                if not (user.role == "lecteur" and user.emp_matricule and not user.personal_password
+                        and user.email and staff_access.standard_ok(db, user.email, password)):
+                    return None
+                if staff_access.get_settings(db).force_change:
+                    user.must_change_password = True
+            user.last_login_at = utcnow()
+            db.commit()
+            return user.role, user.username
+        created = staff_access.login(db, identifier, password) if "@" in identifier else None
+        return (created.role, created.username) if created else None
 
 
 def account_state(username: str) -> tuple[Optional[str], bool]:

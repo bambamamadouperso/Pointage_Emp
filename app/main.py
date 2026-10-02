@@ -134,13 +134,14 @@ def login_page(request: Request):
 
 @app.post("/login")
 def login(request: Request, username: str = Form(...), password: str = Form(...)):
-    role = auth.authenticate(username, password)
-    if role:
+    found = auth.login(username, password)
+    if found:
+        role, account = found
         request.session.clear()
-        request.session["user"] = username.strip()
+        request.session["user"] = account
         request.session["role"] = role
         auth.audit(request, "Connexion", details=f"rôle {ROLES.get(role, role)}")
-        if auth.account_state(username.strip())[1]:
+        if auth.account_state(account)[1]:
             flash(request, "Bienvenue ! Choisissez votre mot de passe personnel pour remplacer le mot de passe provisoire.",
                   "warn")
             return redirect("/compte")
@@ -175,13 +176,21 @@ def change_password(request: Request, current: str = Form(...), new: str = Form(
     with SessionLocal() as db:
         user = db.query(User).filter(User.username == username).one_or_none()
         problem = auth.password_problem(new) or (None if new == confirm else "La confirmation ne correspond pas.")
-        if user is None or not auth.verify_password(current, user.password_hash):
+        if user is not None and user.auto_account and not user.personal_password:
+            # Employé connecté avec le mot de passe standard : c'est lui qui fait foi (il a pu changer depuis).
+            from . import staff_access
+
+            current_ok = auth.verify_password(current, staff_access.get_settings(db).password_hash or "")
+        else:
+            current_ok = user is not None and auth.verify_password(current, user.password_hash)
+        if not current_ok:
             problem = "Mot de passe actuel incorrect."
         if problem:
             flash(request, problem, "err")
             return redirect("/compte")
         user.password_hash = auth.hash_password(new)
         user.must_change_password = False
+        user.personal_password = True  # le mot de passe standard ne vaut plus pour ce compte
         db.commit()
     auth.audit(request, "Mot de passe modifié", f"utilisateur {username}")
     flash(request, "Mot de passe modifié.", "ok")

@@ -913,8 +913,40 @@ def _employee_accounts(db: Session) -> dict:
 
 @router.get("/users")
 def users(request: Request, db: Session = Depends(get_db)):
+    from .. import staff_access
+
     return render(request, "admin/users.html", users=db.scalars(select(User).order_by(User.username)).all(),
-                  roles=ROLES, rescue=auth.settings.admin_username, accounts=_employee_accounts(db))
+                  roles=ROLES, rescue=auth.settings.admin_username, accounts=_employee_accounts(db),
+                  staff=staff_access.get_settings(db), staff_info=staff_access.overview(db))
+
+
+@router.post("/users/acces-personnel")
+def staff_access_save(request: Request, enabled: bool = Form(False), mot_de_passe: str = Form(""),
+                      force_change: bool = Form(False), db: Session = Depends(get_db)):
+    """Accès de tout le personnel : e-mail de la fiche employé + mot de passe standard commun."""
+    from .. import staff_access
+
+    s = staff_access.get_settings(db)
+    mot_de_passe = mot_de_passe.strip()
+    if mot_de_passe and auth.password_problem(mot_de_passe):
+        flash(request, f"Mot de passe standard : {auth.password_problem(mot_de_passe)}", "err")
+        return redirect("/admin/users#acces-personnel")
+    if enabled and not (mot_de_passe or s.password_hash):
+        flash(request, "Définissez le mot de passe standard avant d'ouvrir l'accès au personnel.", "err")
+        return redirect("/admin/users#acces-personnel")
+    changed_password = bool(mot_de_passe)
+    if changed_password:
+        s.password_hash = auth.hash_password(mot_de_passe)
+    s.enabled, s.force_change = enabled, force_change
+    s.updated_at, s.updated_by = utcnow(), request.session.get("user", "")
+    db.commit()
+    auth.audit(request, "Accès du personnel", "ouvert" if enabled else "fermé",
+               f"mot de passe standard {'modifié' if changed_password else 'inchangé'}, "
+               f"mot de passe personnel exigé : {'oui' if force_change else 'non'}")
+    flash(request, ("Accès du personnel ouvert : chaque employé actif se connecte avec l'e-mail de sa fiche et le mot de "
+                    "passe standard." if enabled else "Accès du personnel fermé (les comptes administrateurs ne changent pas).")
+          + (" Nouveau mot de passe standard enregistré." if changed_password else ""), "ok")
+    return redirect("/admin/users#acces-personnel")
 
 
 @router.post("/users/comptes-employes")

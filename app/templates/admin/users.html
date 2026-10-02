@@ -9,7 +9,44 @@
   <a href="/admin" class="muted">← Administration</a>
 </div>
 
-<section class="card" id="comptes-employes">
+<form method="post" action="/admin/users/acces-personnel" class="card form" id="acces-personnel">
+  <div class="card-head"><div><h2>Accès de tout le personnel</h2>
+    <p class="muted small">Chaque employé actif se connecte avec <strong>l'adresse e-mail de sa fiche</strong> et le <strong>mot de passe
+      standard</strong> ci-dessous, sans compte à créer : le compte s'ouvre à sa première connexion. Il voit ses pointages, ses rapports et
+      ceux de toutes les personnes placées sous lui (N-1, N-2…). Les comptes administrateurs ne changent pas.</p></div>
+    <span class="badge {{ 'ok' if staff.enabled else '' }}">{{ 'Ouvert' if staff.enabled else 'Fermé' }}</span></div>
+  {% if not staff_info.configured %}
+    <div class="flash warn">Choisissez d'abord la colonne <strong>Adresse e-mail</strong> des employés dans
+      <a href="/admin/pointage">Source des pointages</a> : c'est elle qui sert d'identifiant.</div>
+  {% elif staff_info.error %}<div class="flash err">{{ staff_info.error }}</div>
+  {% else %}
+  <div class="account-stats">
+    <div><strong>{{ staff_info.employes }}</strong><span>employés actifs</span></div>
+    <div><strong>{{ staff_info.avec_email }}</strong><span>avec une adresse e-mail</span></div>
+    <div class="{{ 'warn-text' if staff_info.sans_email }}"><strong>{{ staff_info.sans_email | length }}</strong><span>sans e-mail (pas d'accès)</span></div>
+    <div><strong>{{ staff_info.comptes }}</strong><span>déjà connectés</span></div>
+  </div>
+  {% if staff_info.sans_email %}<p class="muted small">Sans adresse dans leur fiche : {% for e in staff_info.sans_email[:8] %}<span class="mono">{{ e.matricule }}</span> {{ e.nom }}{{ ', ' if not loop.last }}{% endfor %}{{ ' …' if staff_info.sans_email | length > 8 }}.</p>{% endif %}
+  {% if staff_info.doublons %}<div class="flash warn">Adresse(s) présente(s) sur plusieurs fiches, connexion refusée pour ces personnes :
+    {{ staff_info.doublons[:5] | join(', ') }}.</div>{% endif %}
+  {% endif %}
+  <label class="check"><input type="checkbox" name="enabled" value="true" {{ 'checked' if staff.enabled }}>
+    <span><strong>Ouvrir l'accès à tout le personnel</strong> (e-mail + mot de passe standard)</span></label>
+  <div class="row">
+    <label>Mot de passe standard {% if staff.password_hash %}<span class="muted small">(défini — laisser vide pour le conserver)</span>{% endif %}
+      <input type="text" name="mot_de_passe" minlength="8" autocomplete="off" placeholder="{{ 'inchangé' if staff.password_hash else '8 caractères au moins' }}"></label>
+  </div>
+  <label class="check"><input type="checkbox" name="force_change" value="true" {{ 'checked' if staff.force_change }}>
+    <span>Exiger que chacun choisisse son <strong>mot de passe personnel</strong> à sa première connexion
+      <span class="muted small">(recommandé : sinon, toute personne connaissant le mot de passe standard et l'e-mail d'un collègue peut voir ses pointages)</span></span></label>
+  <p class="muted small">Un employé peut à tout moment choisir son propre mot de passe (Mon compte) : le mot de passe standard ne vaut alors plus
+    pour lui. Un employé qui n'est plus actif dans la liste ne peut plus se connecter.</p>
+  <div class="form-actions"><button class="btn primary">Enregistrer</button></div>
+</form>
+
+<details class="card" id="comptes-employes-details">
+<summary><strong>Autre méthode : comptes par matricule</strong> <span class="muted small">(mots de passe individuels dans un fichier Excel)</span></summary>
+<section id="comptes-employes">
   <div class="card-head"><div><h2>Comptes des employés</h2>
     <p class="muted small">Chaque employé se connecte avec son <strong>matricule</strong> et voit ses propres pointages, ses rapports
       et ceux de toutes les personnes placées sous lui dans la hiérarchie (N-1, N-2…). Rôle lecteur ; mot de passe provisoire à
@@ -42,6 +79,7 @@
   {% else %}<p class="muted small">Tous les employés actifs ont un compte.</p>{% endif %}
   {% endif %}
 </section>
+</details>
 
 <section class="card">
   <div class="card-head"><div><h2>Comptes ({{ users | length + 1 }})</h2></div>
