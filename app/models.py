@@ -511,3 +511,61 @@ class StaffAccessSettings(Base):
     force_change: Mapped[bool] = mapped_column(Boolean, default=False)
     updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     updated_by: Mapped[str] = mapped_column(String(100), default="")
+
+
+REMINDER_KINDS = {"arrivee": "Arrivée non pointée", "depart": "Départ non pointé", "oubli": "Oubli de la veille"}
+
+
+class ReminderSettings(Base):
+    """Rappels de pointage envoyés aux employés : heures d'envoi, délais des horaires postés, destinataires (une ligne)."""
+
+    __tablename__ = "reminder_settings"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    # Arrivée : employé attendu qui n'a pas encore badgé (horaire de bureau : à l'heure indiquée ; poste planifié :
+    # N minutes après le début de son poste).
+    arrival_enabled: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True, default=False)
+    arrival_time: Mapped[Optional[str]] = mapped_column(String(5), nullable=True, default="08:15")
+    arrival_delay: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=15)
+    # Départ : employé qui n'a badgé que son arrivée (un seul pointage) à l'heure indiquée, ou N minutes après la fin
+    # de son poste planifié.
+    departure_enabled: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True, default=False)
+    departure_time: Mapped[Optional[str]] = mapped_column(String(5), nullable=True, default="17:45")
+    departure_delay: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=30)
+    # Oubli de la veille : rappel le matin des journées restées incomplètes (un seul pointage), 3 jours au plus.
+    forgot_enabled: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True, default=False)
+    forgot_time: Mapped[Optional[str]] = mapped_column(String(5), nullable=True, default="09:00")
+    forgot_cc_manager: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True, default=False)
+    # Destinataires : filtres (JSON, vide = tous) et matricules exclus (séparés par des virgules ou des retours à la ligne).
+    services: Mapped[Optional[str]] = mapped_column(Text, nullable=True, default="[]")
+    sites: Mapped[Optional[str]] = mapped_column(Text, nullable=True, default="[]")
+    directions: Mapped[Optional[str]] = mapped_column(Text, nullable=True, default="[]")
+    excluded: Mapped[Optional[str]] = mapped_column(Text, nullable=True, default="")
+    # Garde-fou : pas de rappel d'arrivée / de départ si les pointages n'ont pas été synchronisés depuis N minutes.
+    max_lag_minutes: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=60)
+    message: Mapped[Optional[str]] = mapped_column(Text, nullable=True, default="")  # texte ajouté à chaque rappel
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    updated_by: Mapped[str] = mapped_column(String(100), default="")
+    last_run_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    last_run_summary: Mapped[str] = mapped_column(Text, default="")
+
+
+class ReminderLog(Base):
+    """Un rappel envoyé (ou ignoré, ou en échec) : un seul par employé, type de rappel et journée de travail."""
+
+    __tablename__ = "reminder_log"
+    __table_args__ = (UniqueConstraint("kind", "jour", "emp_key", name="uq_reminder_day"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+    kind: Mapped[str] = mapped_column(String(20))
+    jour: Mapped[datetime] = mapped_column(DateTime)
+    emp_key: Mapped[str] = mapped_column(String(100))
+    matricule: Mapped[str] = mapped_column(String(100), default="")
+    name: Mapped[str] = mapped_column(String(255), default="")
+    mode: Mapped[str] = mapped_column(String(20), default="test")
+    recipient: Mapped[str] = mapped_column(Text, default="")
+    intended: Mapped[str] = mapped_column(String(255), default="")
+    status: Mapped[str] = mapped_column(String(20), default="sent")  # sent, failed, skipped
+    error: Mapped[str] = mapped_column(Text, default="")
+    attempts: Mapped[int] = mapped_column(Integer, default=1)

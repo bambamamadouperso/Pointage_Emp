@@ -1,0 +1,432 @@
+"""Rappels de pointage envoyés par e-mail aux employés, pour limiter les oublis de badge.
+
+Trois rappels, chacun activable et à heure paramétrable :
+- arrivée : employé attendu aujourd'hui (jour ouvré, ni congé, ni arrêt, ni télétravail, ni terrain, ni mission…)
+  qui n'a pas encore badgé, à l'heure indiquée ; agent en horaires postés : N minutes après le début de son poste ;
+- départ : employé qui n'a qu'un seul pointage (son arrivée) à l'heure indiquée ; poste planifié : N minutes après
+  la fin de son poste (nuits comprises) ;
+- oubli de la veille : le matin, rappel des journées restées incomplètes (un seul pointage) des 3 derniers jours,
+  avec copie au responsable si souhaité.
+
+Garde-fous (comme les résumés) : serveur SMTP et mode test / production des « Mails de badge » ; un seul rappel par
+employé, type et journée (journal reminder_log), 3 tentatives au plus ; un rappel n'est plus envoyé 3 heures après son
+heure prévue (redémarrage de l'application) ; aucun rappel si les pointages ne sont plus synchronisés (sinon des
+employés qui ont badgé recevraient un rappel à tort).
+"""
+import html
+import json
+import logging
+import re
+import threading
+from datetime import date, datetime, time, timedelta
+from typing import Optional
+
+from sqlalchemy import select, text
+
+from . import pointage
+from .database import SessionLocal
+from .digests import _context, _copy, french_day, local_now
+from .joblog import write_log
+from .models import (REMINDER_KINDS, JobRun, ReminderLog, ReminderSettings, SyncJob, TableMapping, utcnow)
+
+logger = logging.getLogger("rappels")
+MAX_ATTEMPTS = 3
+WINDOW = timedelta(hours=3)  # au-delà, un rappel non envoyé (application arrêtée) est abandonné
+LOOKBACK_DAYS = 3            # oubli de la veille : journées incomplètes des 3 derniers jours
+_TIME = re.compile(r"^([01]?\d|2[0-3])[:hH]([0-5]\d)$")
+
+
+# --------------------------------------------------------------------------- réglages
+
+
+def get_settings(db) -> ReminderSettings:
+    row = db.scalars(select(ReminderSettings).order_by(ReminderSettings.id)).first()
+    if row is None:
+        row = ReminderSettings(arrival_enabled=False, arrival_time="08:15", arrival_delay=15, departure_enabled=False,
+                               departure_time="17:45", departure_delay=30, forgot_enabled=False, forgot_time="09:00",
+                               forgot_cc_manager=False, services="[]", sites="[]", directions="[]", excluded="",
+                               max_lag_minutes=60, message="")
+        db.add(row)
+        db.commit()
+    return row
+
+
+def parse_time(value: str) -> Optional[str]:
+    """« 8h15 », « 08:15 » → « 08:15 » ; None si l'heure est invalide."""
+    m = _TIME.match((value or "").strip())
+    return f"{int(m.group(1)):02d}:{m.group(2)}" if m else None
+
+
+def clock(value: Optional[str], default: str) -> time:
+    h, m = (int(x) for x in (parse_time(value or "") or default).split(":"))
+    return time(h, m)
+
+
+def values(raw: Optional[str]) -> list[str]:
+    try:
+        data = json.loads(raw or "[]")
+    except ValueError:
+        return []
+    return [str(v) for v in data if str(v).strip()] if isinstance(data, list) else []
+
+
+def excluded_keys(raw: Optional[str]) -> set[str]:
+    return {v.strip().lower() for v in re.split(r"[,;\s]+", raw or "") if v.strip()}
+
+
+def enabled_kinds(s: ReminderSettings) -> list[str]:
+    return [k for k, on in (("arrivee", s.arrival_enabled), ("depart", s.departure_enabled),
+                            ("oubli", s.forgot_enabled)) if on]
+
+
+# --------------------------------------------------------------------------- qui doit recevoir un rappel
+
+
+def day_rows(engine, m: pointage.Mapping, du: date, au: date) -> list[dict]:
+    """Journées calculées (statut, pointages) des employés actifs, avec leur poste planifié et leur responsable."""
+    S = pointage.qi(m.objs)
+    with engine.connect() as c:
+        return [dict(r) for r in c.execute(text(f"""
+            SELECT j.emp_key, j.matricule, j.nom, j.prenom, j.service, j.direction, j.site, j.jour, j.statut,
+                   j.nb_pointages AS nb, j.premier_pointage AS p1, j.dernier_pointage AS p2,
+                   e.email, r.email AS resp_email, concat_ws(' ', r.prenom, r.nom) AS resp_nom,
+                   s.code AS poste_code, s.type AS poste_type, s.s_debut, s.s_fin
+            FROM {S}.f_pointage_journalier(:du, :au) j
+            JOIN {S}.v_pointage_employes e ON e.emp_key = j.emp_key
+            LEFT JOIN {S}.v_pointage_employes r ON r.emp_key = e.responsable_key
+            LEFT JOIN LATERAL (
+                SELECT po.code, po.type, pp.jour + po.debut AS s_debut,
+                       pp.jour + po.fin + CASE WHEN po.fin <= po.debut THEN interval '1 day' ELSE interval '0' END AS s_fin
+                FROM {S}.pointage_planning pp JOIN {S}.pointage_postes po ON po.code = pp.code
+                WHERE pp.jour = j.jour AND pp.matricule IN (e.matricule, e.emp_key)
+                ORDER BY (pp.matricule = e.matricule) DESC LIMIT 1
+            ) s ON true
+            WHERE NOT j.hors_liste AND e.actif
+            ORDER BY j.nom, j.prenom, j.jour"""), {"du": du, "au": au}).mappings()]
+
+
+def _targeted(row: dict, s: ReminderSettings) -> bool:
+    """Employé dans le périmètre des rappels (services, sites, directions choisis ; matricules exclus)."""
+    for field, raw in (("service", s.services), ("site", s.sites), ("direction", s.directions)):
+        chosen = values(raw)
+        if chosen and (row.get(field) or "") not in chosen:
+            return False
+    excluded = excluded_keys(s.excluded)
+    return not ({(row.get("matricule") or "").lower(), (row.get("emp_key") or "").lower()} & excluded)
+
+
+def due_at(kind: str, row: dict, s: ReminderSettings, today: date) -> Optional[datetime]:
+    """Heure prévue du rappel pour cette journée, ou None si l'employé n'est pas concerné."""
+    shift = row.get("poste_type") == "travail" and row.get("s_debut") is not None
+    if kind == "arrivee":
+        if row["statut"] != "ABSENT":
+            return None
+        if shift:
+            return row["s_debut"] + timedelta(minutes=s.arrival_delay or 0)
+        return datetime.combine(today, clock(s.arrival_time, "08:15")) if row["jour"] == today else None
+    if kind == "depart":
+        if row["statut"] != "INCOMPLET":  # un seul pointage : l'arrivée (même définition que le suivi)
+            return None
+        if shift:
+            return row["s_fin"] + timedelta(minutes=s.departure_delay or 0)
+        return datetime.combine(today, clock(s.departure_time, "17:45")) if row["jour"] == today else None
+    if kind == "oubli":
+        if row["statut"] != "INCOMPLET" or not (today - timedelta(days=LOOKBACK_DAYS) <= row["jour"] < today):
+            return None
+        return datetime.combine(today, clock(s.forgot_time, "09:00"))
+    return None
+
+
+def candidates(rows: list[dict], s: ReminderSettings, now: datetime, kinds: list[str],
+               timed: bool = True) -> list[tuple[str, dict, datetime]]:
+    """(type, journée, heure prévue) des rappels à envoyer. timed=False : toutes les personnes concernées aujourd'hui,
+    même si l'heure du rappel n'est pas encore venue (aperçu de l'administration)."""
+    out = []
+    for row in rows:
+        if not _targeted(row, s):
+            continue
+        for kind in kinds:
+            when = due_at(kind, row, s, now.date())
+            if when is None:
+                continue
+            if timed and not (when <= now < when + WINDOW):
+                continue
+            if not timed and when + WINDOW <= now:
+                continue  # rappel de la nuit dernière, déjà passé
+            out.append((kind, row, when))
+    return out
+
+
+def last_sync(db, m: pointage.Mapping) -> Optional[datetime]:
+    """Fin (UTC) de la dernière synchronisation réussie de la table des pointages ; None si aucun job ne l'alimente."""
+    job_ids = list(db.scalars(select(TableMapping.job_id).join(SyncJob).where(
+        SyncJob.target_schema == m.schema, TableMapping.target_table == m.punch_table)))
+    if not job_ids:
+        return None
+    return db.scalar(select(JobRun.finished_at).where(JobRun.job_id.in_(job_ids),
+                                                      JobRun.status.in_(("success", "partial")))
+                     .order_by(JobRun.finished_at.desc()).limit(1)) or datetime(1970, 1, 1)
+
+
+def stale_reason(db, m: pointage.Mapping, s: ReminderSettings) -> Optional[str]:
+    """Raison de ne rien envoyer (pointages plus synchronisés depuis trop longtemps), sinon None."""
+    if not s.max_lag_minutes:
+        return None
+    last = last_sync(db, m)
+    if last is None:
+        return None  # table des pointages alimentée hors de l'application : pas de contrôle possible
+    lag = utcnow() - last
+    if lag > timedelta(minutes=s.max_lag_minutes):
+        minutes = int(lag.total_seconds() // 60)
+        when = f"depuis {minutes} min" if minutes < 24 * 60 else "depuis plus d'un jour"
+        return f"pointages non synchronisés {when} (seuil : {s.max_lag_minutes} min)"
+    return None
+
+
+# --------------------------------------------------------------------------- contenu
+
+
+def _hm(value) -> str:
+    return f"{value:%H}h{value:%M}" if value else "—"
+
+
+def _poste(row: dict) -> str:
+    if row.get("poste_type") == "travail" and row.get("s_debut"):
+        return f"poste {row['poste_code']} ({_hm(row['s_debut'])} – {_hm(row['s_fin'])})"
+    return ""
+
+
+def render(kind: str, row: dict, company: str = "", message: str = "") -> tuple[str, str, str]:
+    """(objet, HTML, texte) d'un rappel."""
+    prenom = (row.get("prenom") or row.get("nom") or "").strip()
+    jour = french_day(row["jour"])
+    poste = _poste(row)
+    if kind == "arrivee":
+        subject = "Rappel : votre arrivée n'est pas encore pointée"
+        title = "Pensez à pointer votre arrivée"
+        lines = [f"Nous n'avons encore enregistré aucun pointage pour vous aujourd'hui, {jour}"
+                 + (f" ({poste})" if poste else "") + ".",
+                 "Si vous êtes arrivé(e), badgez dès maintenant. Si vous êtes absent(e) (congé, maladie, mission, "
+                 "télétravail…), prévenez votre responsable pour que votre journée soit correctement enregistrée."]
+    elif kind == "depart":
+        subject = "Rappel : pensez à pointer votre départ"
+        title = "Pensez à pointer votre départ"
+        lines = [f"Votre dernier pointage aujourd'hui date de {_hm(row.get('p2'))}"
+                 + (f" ({poste})" if poste else "") + " : vous êtes toujours enregistré(e) comme présent(e).",
+                 "Pensez à badger en quittant votre poste, sans quoi votre journée restera incomplète."]
+    else:
+        subject = f"Pointage incomplet le {jour}"
+        title = "Un pointage manque sur votre journée"
+        lines = [f"Un seul pointage a été enregistré le {jour}, à {_hm(row.get('p1'))}"
+                 + (f" ({poste})" if poste else "") + " : il manque votre arrivée ou votre départ.",
+                 "Signalez l'heure manquante à votre responsable pour régulariser votre journée, et pensez à badger "
+                 "à chaque entrée et sortie."]
+    extra = (message or "").strip()
+    paragraphs = "".join(f'<p style="margin:0 0 12px;font-size:15px;line-height:1.55;color:#2c3a4b;">{html.escape(t, quote=False)}</p>'
+                         for t in lines)
+    if extra:
+        paragraphs += ('<p style="margin:14px 0 0;padding:12px 14px;background:#f2f7f7;border-radius:8px;font-size:14px;'
+                       'line-height:1.5;color:#2c3a4b;">' + html.escape(extra, quote=False).replace("\n", "<br>") + "</p>")
+    body = f"""<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>{html.escape(subject)}</title></head>
+<body style="margin:0;padding:0;background:#f2f5f9;font-family:'Segoe UI',Helvetica,Arial,sans-serif;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f2f5f9;"><tr><td align="center" style="padding:24px 12px;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;">
+<tr><td style="background:#ffffff;border-radius:14px;padding:26px 28px;border-top:5px solid #0e6e70;">
+  <p style="margin:0 0 6px;font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:#0e6e70;font-weight:700;">Rappel de pointage</p>
+  <h1 style="margin:0 0 16px;font-size:21px;line-height:1.3;color:#0b1a2b;">{html.escape(title, quote=False)}</h1>
+  <p style="margin:0 0 12px;font-size:15px;line-height:1.55;color:#2c3a4b;">Bonjour {html.escape(prenom)},</p>
+  {paragraphs}
+  <p style="margin:18px 0 0;font-size:12px;color:#7a8796;">Matricule {html.escape(row.get('matricule') or '')}</p>
+</td></tr>
+<tr><td style="padding:16px 8px 0;text-align:center;font-size:12px;color:#a3afbc;">Message automatique — merci de ne pas y répondre.{(' © ' + html.escape(company)) if company else ''}</td></tr>
+</table></td></tr></table></body></html>"""
+    text_body = f"Bonjour {prenom},\n\n" + "\n\n".join(lines) + (f"\n\n{extra}" if extra else "") \
+        + f"\n\nMatricule {row.get('matricule') or ''}\n\nMessage automatique — merci de ne pas y répondre."
+    return subject, body, text_body
+
+
+def full_name(row: dict) -> str:
+    return " ".join(x for x in (row.get("nom"), row.get("prenom")) if x) or row.get("matricule") or row["emp_key"]
+
+
+def build(kind: str, row: dict, s: ReminderSettings, ms, force_to: Optional[str] = None):
+    """Message prêt à partir, ou (None, raison) : (message, None) sinon."""
+    from .mails import compose, valid_email
+
+    subject, body, text_body = render(kind, row, ms.company, s.message or "")
+    email = (row.get("email") or "").strip()
+    if force_to:
+        test = ms.__class__(**{**_copy(ms), "mode": "test", "test_recipients": force_to})
+        return compose(test, subject, body, text_body, email or "(aucune adresse)", full_name(row)), None
+    if not valid_email(email):
+        return None, "aucune adresse e-mail"
+    msg = compose(ms, subject, body, text_body, email, full_name(row))
+    if msg is None:
+        return None, "mode test sans adresse de test"
+    cc = (row.get("resp_email") or "").strip()
+    if kind == "oubli" and s.forgot_cc_manager and ms.mode == "production" and valid_email(cc) and cc != email:
+        msg["Cc"] = cc
+    return msg, None
+
+
+# --------------------------------------------------------------------------- envoi planifié
+
+_lock = threading.Lock()
+
+
+def run_due(now: Optional[datetime] = None) -> dict:
+    """Envoie les rappels dus (appelé toutes les 5 minutes). Ne lève jamais d'exception."""
+    if not _lock.acquire(blocking=False):
+        return {"status": "busy"}
+    try:
+        return _run_due(now or local_now())
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Rappels de pointage impossibles")
+        write_log("ERROR", f"Rappels de pointage : traitement impossible ({exc.__class__.__name__}: {exc}).")
+        return {"status": "error", "error": str(exc)}
+    finally:
+        _lock.release()
+
+
+def _first_due(s: ReminderSettings, now: datetime) -> bool:
+    """Au moins un rappel peut être dû : évite d'interroger PostgreSQL toutes les 5 minutes pour rien."""
+    if s.arrival_enabled or s.departure_enabled:
+        return True  # postes planifiés : heures propres à chacun
+    return s.forgot_enabled and now.time() >= clock(s.forgot_time, "09:00") \
+        and datetime.combine(now.date(), clock(s.forgot_time, "09:00")) + WINDOW > now
+
+
+def _run_due(now: datetime) -> dict:
+    from .mails import _quit, get_settings as mail_settings_of, open_smtp
+
+    with SessionLocal() as db:
+        s = get_settings(db)
+        kinds = enabled_kinds(s)
+        if not kinds or not _first_due(s, now):
+            return {"status": "idle"}
+        ms = mail_settings_of(db)
+        if not ms.smtp_host or not ms.from_email:
+            return {"status": "unconfigured"}
+        engine, m = _context()
+        if engine is None:
+            return {"status": "unconfigured"}
+        try:
+            reason = stale_reason(db, m, s)
+            if reason:
+                s.last_run_at, s.last_run_summary = utcnow(), f"aucun rappel envoyé : {reason}"
+                db.commit()
+                return {"status": "stale", "reason": reason}
+            rows = day_rows(engine, m, now.date() - timedelta(days=LOOKBACK_DAYS), now.date())
+        finally:
+            engine.dispose()
+        todo = candidates(rows, s, now, kinds)
+        if not todo:
+            return {"status": "idle"}
+        logs = {(l.kind, l.jour.date(), l.emp_key): l for l in db.scalars(select(ReminderLog).where(
+            ReminderLog.jour >= datetime.combine(now.date() - timedelta(days=LOOKBACK_DAYS + 1), time())))}
+        counts = {"sent": 0, "skipped": 0, "failed": 0}
+        client = None
+        try:
+            for kind, row, _ in todo:
+                log = logs.get((kind, row["jour"], row["emp_key"]))
+                if log is not None and (log.status != "failed" or log.attempts >= MAX_ATTEMPTS):
+                    continue
+                if log is None:
+                    log = ReminderLog(kind=kind, jour=datetime.combine(row["jour"], time()), emp_key=row["emp_key"],
+                                      attempts=0)
+                    db.add(log)
+                    logs[(kind, row["jour"], row["emp_key"])] = log
+                log.attempts += 1
+                log.matricule, log.name, log.mode = row.get("matricule") or "", full_name(row), ms.mode
+                log.intended = row.get("email") or ""
+                try:
+                    msg, why = build(kind, row, s, ms)
+                    if msg is None:
+                        log.status, log.recipient, log.error = "skipped", "", why
+                    else:
+                        if client is None:
+                            client = open_smtp(ms)
+                        client.send_message(msg)
+                        log.status, log.error = "sent", ""
+                        log.recipient = msg["To"] + (f" (copie : {msg['Cc']})" if msg["Cc"] else "")
+                except Exception as exc:  # noqa: BLE001
+                    log.status, log.error = "failed", f"{exc.__class__.__name__}: {exc}"[:500]
+                    if client is not None:
+                        _quit(client)
+                        client = None
+                counts[log.status] += 1
+                db.commit()
+        finally:
+            if client is not None:
+                _quit(client)
+        if not any(counts.values()):
+            return {"status": "idle"}
+        s = get_settings(db)
+        s.last_run_at = utcnow()
+        s.last_run_summary = (f"{counts['sent']} envoyé(s), {counts['skipped']} ignoré(s), {counts['failed']} échec(s)"
+                              + ("" if ms.mode == "production" else " — mode test"))
+        db.commit()
+        if counts["sent"] or counts["failed"]:
+            write_log("INFO" if not counts["failed"] else "WARNING", f"Rappels de pointage : {s.last_run_summary}.")
+        return {"status": "done", **counts}
+
+
+# --------------------------------------------------------------------------- administration : aperçu et essai
+
+
+def situation(now: Optional[datetime] = None) -> dict:
+    """Personnes concernées aujourd'hui par chaque rappel (même désactivé), heure prévue et état d'envoi."""
+    now = now or local_now()
+    engine, m = _context()
+    if engine is None:
+        raise ValueError("Le module de pointage n'est pas configuré.")
+    try:
+        with SessionLocal() as db:
+            s = get_settings(db)
+            rows = day_rows(engine, m, now.date() - timedelta(days=LOOKBACK_DAYS), now.date())
+            sent = {(l.kind, l.jour.date(), l.emp_key): l for l in db.scalars(select(ReminderLog).where(
+                ReminderLog.jour >= datetime.combine(now.date() - timedelta(days=LOOKBACK_DAYS + 1), time())))}
+            out = {k: [] for k in REMINDER_KINDS}
+            for kind, row, when in candidates(rows, s, now, list(REMINDER_KINDS), timed=False):
+                log = sent.get((kind, row["jour"], row["emp_key"]))
+                out[kind].append({"row": row, "name": full_name(row), "when": when, "due": when <= now,
+                                  "poste": _poste(row), "log": log})
+            for items in out.values():
+                items.sort(key=lambda x: (x["when"], x["name"]))
+            return {"items": out, "with_email": sum(1 for r in rows if r["jour"] == now.date() and r.get("email")),
+                    "employees": len({r["emp_key"] for r in rows}), "stale": stale_reason(db, m, s),
+                    "last_sync": last_sync(db, m), "rows": rows}
+    finally:
+        engine.dispose()
+
+
+def sample_row(kind: str, today: Optional[date] = None) -> dict:
+    today = today or local_now().date()
+    day = today - timedelta(days=1) if kind == "oubli" else today
+    return {"emp_key": "exemple", "matricule": "E000", "nom": "Exemple", "prenom": "Camille", "jour": day,
+            "statut": "INCOMPLET", "nb": 1, "p1": datetime.combine(day, time(7, 52)),
+            "p2": datetime.combine(day, time(7, 52)), "email": "camille.exemple@exemple.com", "poste_type": None}
+
+
+def preview(kind: str) -> tuple[str, str]:
+    from .mails import get_settings as mail_settings_of
+
+    with SessionLocal() as db:
+        s, ms = get_settings(db), mail_settings_of(db)
+        subject, body, _ = render(kind, sample_row(kind), ms.company, s.message or "")
+        return subject, body
+
+
+def send_test(kind: str, to: str) -> str:
+    """Rappel d'exemple envoyé à une adresse (bandeau « MODE TEST »)."""
+    from .mails import _quit, get_settings as mail_settings_of, open_smtp
+
+    with SessionLocal() as db:
+        s, ms = get_settings(db), mail_settings_of(db)
+        msg, _ = build(kind, sample_row(kind), s, ms, force_to=to)
+        client = open_smtp(ms)
+        try:
+            client.send_message(msg)
+        finally:
+            _quit(client)
+        return msg["To"]

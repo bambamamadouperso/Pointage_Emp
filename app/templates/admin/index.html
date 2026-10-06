@@ -4,7 +4,7 @@
 {% set is_admin = can(role, 'admin') %}
 <div class="page-head"><div><h1>{{ 'Administration' if is_admin else 'Ressources humaines' }}</h1>
   <p class="muted">{% if is_admin %}Réservé au rôle administrateur.{% else %}Rôle RH : paramètres, plannings, agents terrain,
-    arrêts maladie et résumés, sur tout le personnel. La synchronisation et les sources de données restent réservées à l'administrateur.{% endif %}</p></div></div>
+    arrêts maladie, résumés et rappels de pointage, sur tout le personnel. La synchronisation et les sources de données restent réservées à l'administrateur.{% endif %}</p></div></div>
 
 <section class="admin-grid">
   <a class="card" href="/admin/parametres"><h2>Paramètres horaires</h2>
@@ -22,6 +22,9 @@
     <p class="muted small">Confirmation envoyée aux employés abonnés à chaque pointage : serveur SMTP, mode test, modèle HTML.</p></a>{% endif %}
   <a class="card" href="/admin/resumes"><h2>Résumés par mail</h2>
     <p class="muted small">Point quotidien ou hebdomadaire des pointages envoyé à chaque responsable sur son équipe (N-1), avec constats et tendances.</p></a>
+  <a class="card" href="/admin/rappels"><h2>Rappels de pointage</h2>
+    <p class="muted small">E-mail aux employés qui n'ont pas badgé leur arrivée ou leur départ, et rappel des journées restées
+      incomplètes : heures d'envoi paramétrables, horaires postés pris en compte.</p></a>
   <a class="card" href="/admin/arrets"><h2>Circuit des arrêts maladie</h2>
     <p class="muted small">Étapes de validation des arrêts déclarés par les employés ; les agents RH habilités saisissent des arrêts validés d'office.</p></a>
   {% if is_admin %}<a class="card" href="/admin/users"><h2>Utilisateurs et rôles</h2>

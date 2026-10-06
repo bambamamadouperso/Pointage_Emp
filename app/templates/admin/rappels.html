@@ -1,0 +1,168 @@
+{% extends "base.html" %}
+{% block title %}Rappels de pointage{% endblock %}
+{% macro choice_list(name, label, options, selected, all_label) %}
+<div class="field">
+  <span class="field-label">{{ label }}</span>
+  <details class="ms-box">
+    <summary class="ms-summary">{% if selected %}<span class="ms-text">{{ selected | join(', ') }}</span>{% else %}<span class="ms-all">{{ all_label }}</span>{% endif %}</summary>
+    <div class="ms-panel" role="group" aria-label="{{ label }}"><div class="ms-list">
+      {% for o in options %}<label class="check"><input type="checkbox" name="{{ name }}" value="{{ o }}" {{ 'checked' if o in selected }}><span>{{ o }}</span></label>{% endfor %}
+      {% for o in selected if o not in options %}<label class="check"><input type="checkbox" name="{{ name }}" value="{{ o }}" checked><span>{{ o }}</span></label>{% endfor %}
+      {% if not options and not selected %}<p class="muted small">Aucune valeur (colonne non configurée).</p>{% endif %}
+    </div></div>
+  </details>
+</div>
+{% endmacro %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Rappels de pointage</h1>
+    <p class="muted">Un e-mail est envoyé aux employés qui risquent d'oublier de badger : arrivée non pointée, départ non pointé,
+      et rappel des journées restées incomplètes. Chaque rappel est activable séparément, à l'heure de votre choix.</p></div>
+  <a href="/admin" class="muted">← {{ 'Administration' if can(role, 'admin') else 'Ressources humaines' }}</a>
+</div>
+{% if error %}<div class="flash warn">{{ error }}</div>{% endif %}
+{% if not email_configured and not error %}<div class="flash warn">Aucune colonne « Adresse e-mail » n'est configurée pour les employés
+  (Source des pointages → Liste des employés) : les rappels ne pourront partir vers personne.</div>{% endif %}
+
+<section class="card rules">
+  <h2>Envoi</h2>
+  <ul class="rule-list">
+    <li>Serveur SMTP des {% if can(role, 'admin') %}<a href="/admin/mails">Mails de badge</a>{% else %}Mails de badge{% endif %} :
+      {% if mail.smtp_host and mail.from_email %}<strong>{{ mail.smtp_host }}</strong>, expéditeur {{ mail.from_email }}
+      {% else %}<span class="warn-text">non configuré — aucun rappel ne partira</span>{% endif %}.</li>
+    <li>Mode : {% if mail.mode == 'production' %}<span class="badge ok">Production</span> — chaque rappel part vers l'employé (adresse de sa fiche).
+      {% else %}<span class="badge warn">Test</span> — tous les rappels partent vers les adresses de test ({{ mail.test_recipients or 'aucune' }}),
+      avec un bandeau « MODE TEST » indiquant le destinataire prévu.{% endif %}</li>
+    <li>Ne reçoivent un rappel que les personnes <strong>attendues</strong> ce jour-là : jour ouvré ou poste planifié, sans congé,
+      arrêt maladie, télétravail, mission, formation ni repos, hors agents terrain.</li>
+    <li>Un seul rappel par employé, type et journée ; vérification toutes les 5 minutes ; un rappel non parti {{ window_hours }} h
+      après son heure prévue (application arrêtée) est abandonné.
+      {% if s.last_run_at %}Dernier envoi : {{ s.last_run_at | dt }} — {{ s.last_run_summary }}.{% endif %}</li>
+    {% if state %}<li>Pointages synchronisés :
+      {% if state.last_sync is none %}table alimentée hors de l'application (pas de contrôle de fraîcheur)
+      {% elif state.stale %}<span class="warn-text">{{ state.stale }} — les rappels sont suspendus</span>
+      {% else %}dernière synchronisation le {{ state.last_sync | dt }}{% endif %}.</li>{% endif %}
+  </ul>
+</section>
+
+<form method="post" action="/admin/rappels/parametres" class="card form">
+  <h2>Rappels et heures d'envoi</h2>
+  <div class="digest-plan">
+    <label class="check"><input type="checkbox" name="arrival_enabled" value="true" {{ 'checked' if s.arrival_enabled }}>
+      <span><strong>Arrivée non pointée</strong> — l'employé attendu n'a encore aucun pointage</span></label>
+    <div class="inline">
+      <label>Horaire de bureau : à <input name="arrival_time" value="{{ s.arrival_time or '08:15' }}" size="5" placeholder="08:15"></label>
+      <label>Horaires postés : <input name="arrival_delay" value="{{ s.arrival_delay if s.arrival_delay is not none else 15 }}" size="4" inputmode="numeric"> min après le début du poste</label>
+    </div>
+  </div>
+  <div class="digest-plan">
+    <label class="check"><input type="checkbox" name="departure_enabled" value="true" {{ 'checked' if s.departure_enabled }}>
+      <span><strong>Départ non pointé</strong> — l'employé n'a badgé que son arrivée (un seul pointage)</span></label>
+    <div class="inline">
+      <label>Horaire de bureau : à <input name="departure_time" value="{{ s.departure_time or '17:45' }}" size="5" placeholder="17:45"></label>
+      <label>Horaires postés : <input name="departure_delay" value="{{ s.departure_delay if s.departure_delay is not none else 30 }}" size="4" inputmode="numeric"> min après la fin du poste</label>
+    </div>
+  </div>
+  <div class="digest-plan">
+    <label class="check"><input type="checkbox" name="forgot_enabled" value="true" {{ 'checked' if s.forgot_enabled }}>
+      <span><strong>Oubli de la veille</strong> — journée restée incomplète (un seul pointage), rappelée le lendemain ({{ lookback }} jours au plus)</span></label>
+    <div class="inline">
+      <label>Chaque matin à <input name="forgot_time" value="{{ s.forgot_time or '09:00' }}" size="5" placeholder="09:00"></label>
+      <label class="check"><input type="checkbox" name="forgot_cc_manager" value="true" {{ 'checked' if s.forgot_cc_manager }}>
+        <span>Mettre le responsable N+1 en copie (mode production)</span></label>
+    </div>
+  </div>
+
+  <h3>Destinataires</h3>
+  <p class="muted small">Sans sélection : tous les employés actifs qui ont une adresse e-mail.</p>
+  <div class="row">
+    {{ choice_list('service', 'Services', choices.service, chosen.service, 'Tous les services') }}
+    {{ choice_list('site', 'Sites', choices.site, chosen.site, 'Tous les sites') }}
+    {{ choice_list('direction', 'Directions', choices.direction, chosen.direction, 'Toutes les directions') }}
+  </div>
+  <label>Matricules exclus <span class="muted small">(séparés par des virgules ou des retours à la ligne)</span>
+    <textarea name="excluded" rows="2" placeholder="E012, E045">{{ s.excluded or '' }}</textarea></label>
+  <label>Message ajouté à chaque rappel <span class="muted small">(facultatif, ex. contact RH)</span>
+    <textarea name="message" rows="2" placeholder="En cas d'oubli, contactez votre responsable ou rh@exemple.com.">{{ s.message or '' }}</textarea></label>
+  <div class="inline"><label>Garde-fou : ne rien envoyer si les pointages n'ont pas été synchronisés depuis
+    <input name="max_lag_minutes" value="{{ s.max_lag_minutes if s.max_lag_minutes is not none else 60 }}" size="4" inputmode="numeric"> min</label></div>
+  <p class="muted small">0 = sans contrôle. Évite d'envoyer un rappel à quelqu'un qui a badgé mais dont le pointage n'est pas encore arrivé.</p>
+  <div class="form-actions"><button class="btn primary">Enregistrer</button></div>
+</form>
+
+{% if state %}
+<section class="card" id="situation">
+  <div class="card-head"><div><h2>Situation du jour</h2>
+    <p class="muted small">Personnes concernées à {{ now.strftime('%H:%M') }} par chaque rappel (même désactivé) et heure prévue d'envoi.
+      {{ state.employees }} employé(s) actif(s) dans le périmètre de calcul.</p></div></div>
+  {% for kind, label in kinds.items() %}{% set items = state['items'][kind] %}{% set on = kind in enabled %}
+  <details class="reminder-group" {{ 'open' if items and items | length <= 15 }}>
+  <summary><strong>{{ label }}</strong> <span class="badge">{{ items | length }}</span>
+    {% if not on %}<span class="badge">rappel désactivé</span>{% endif %}</summary>
+  {% if not items %}<p class="empty">Personne pour le moment.</p>{% else %}
+  <div class="table-wrap"><table>
+    <thead><tr><th>Employé</th><th>Journée</th><th>Poste</th><th>Pointages</th><th>Adresse</th><th>Rappel prévu</th><th>État</th></tr></thead>
+    <tbody>{% for it in items[:200] %}
+      <tr><td><span class="mono small">{{ it.row.matricule }}</span> {{ it.name }}</td>
+        <td class="small nowrap">{{ it.row.jour | jour_fr(True) }}</td>
+        <td class="small">{{ it.poste or 'Horaire de bureau' }}</td>
+        <td class="small">{{ it.row.nb }}{% if it.row.p1 %} · {{ it.row.p1.strftime('%H:%M') }}{% if it.row.nb > 1 %} → {{ it.row.p2.strftime('%H:%M') }}{% endif %}{% endif %}</td>
+        <td class="small">{{ it.row.email or '—' }}</td>
+        <td class="small nowrap">{{ it.when.strftime('%d/%m %H:%M') }}</td>
+        <td>{% if it.log %}<span class="badge {{ {'sent': 'ok', 'failed': 'err', 'skipped': ''}[it.log.status] }}">{{ {'sent': 'Envoyé', 'failed': 'Échec', 'skipped': 'Ignoré'}[it.log.status] }}</span>
+          {% elif not on %}<span class="muted small">—</span>
+          {% elif it.due %}<span class="badge warn">À envoyer</span>{% else %}<span class="badge">Prévu</span>{% endif %}</td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+  {% if items | length > 200 %}<p class="muted small">… et {{ items | length - 200 }} autre(s).</p>{% endif %}
+  {% endif %}
+  </details>
+  {% endfor %}
+</section>
+{% endif %}
+
+<section class="card">
+  <h2>Aperçu et essai</h2>
+  <form method="get" action="/admin/rappels/apercu" target="apercu" class="inline" id="preview_form">
+    <label>Rappel <select name="kind">{% for k, label in kinds.items() %}<option value="{{ k }}">{{ label }}</option>{% endfor %}</select></label>
+    <button class="btn">Afficher l'aperçu</button>
+  </form>
+  <iframe name="apercu" title="Aperçu du rappel" class="mail-preview" style="width:100%;height:520px;border:1px solid var(--border);border-radius:10px;margin-top:.8rem;background:#f2f5f9"></iframe>
+  <form method="post" action="/admin/rappels/essai" class="inline" style="margin-top:.8rem">
+    <input type="hidden" name="kind" id="essai_kind">
+    <label>Envoyer cet aperçu à <input type="email" name="to" required placeholder="moi@exemple.com"></label>
+    <button class="btn">Envoyer un essai</button>
+  </form>
+</section>
+
+<section class="card" id="journal">
+  <div class="card-head"><div><h2>Journal des rappels</h2></div>
+    <form method="post" action="/admin/rappels/envoyer" data-confirm="Envoyer maintenant les rappels dus (heure prévue atteinte, pas encore envoyés) ?">
+      <button class="btn small">Envoyer les rappels dus maintenant</button></form></div>
+  {% if not logs %}<p class="empty">Aucun rappel envoyé pour l'instant.</p>{% else %}
+  <div class="table-wrap"><table>
+    <thead><tr><th>Date</th><th>Rappel</th><th>Journée</th><th>Employé</th><th>Destinataire</th><th>Mode</th><th>État</th></tr></thead>
+    <tbody>{% for l in logs %}
+      <tr><td class="small nowrap">{{ l.created_at | dt }}</td><td>{{ kinds.get(l.kind, l.kind) }}</td>
+        <td class="small nowrap">{{ l.jour.strftime('%d/%m/%Y') }}</td>
+        <td><span class="mono small">{{ l.matricule }}</span> {{ l.name }}</td><td class="small">{{ l.recipient or l.intended or '—' }}</td>
+        <td class="small">{{ 'Production' if l.mode == 'production' else 'Test' }}</td>
+        <td><span class="badge {{ {'sent': 'ok', 'failed': 'err', 'skipped': ''}[l.status] }}">{{ {'sent': 'Envoyé', 'failed': 'Échec', 'skipped': 'Ignoré'}[l.status] }}</span>
+          {% if l.error %}<span class="muted small">{{ l.error }}</span>{% endif %}</td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+  {% endif %}
+</section>
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  const pf = document.getElementById('preview_form');
+  const sync = () => { document.getElementById('essai_kind').value = pf.kind.value; };
+  pf.addEventListener('change', () => { sync(); pf.requestSubmit ? pf.requestSubmit() : pf.submit(); });
+  pf.addEventListener('submit', sync);
+  sync();
+  pf.requestSubmit ? pf.requestSubmit() : pf.submit();
+})();
+</script>
+{% endblock %}

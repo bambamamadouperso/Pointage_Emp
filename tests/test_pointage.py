@@ -305,7 +305,7 @@ def test_rh_role_sees_everyone_without_sync(configured, client):
     admin = client.get("/admin").text
     assert "Horaires postés" in admin and "Source des pointages" not in admin and "Traitements planifiés" not in admin
     for path in ("/admin/parametres", "/admin/planning", "/admin/terrain", "/admin/arrets", "/admin/resumes",
-                 "/rapports", "/arrets"):
+                 "/admin/rappels", "/rapports", "/arrets"):
         assert client.get(path, follow_redirects=False).status_code == 200, path
     for path in ("/", "/jobs", "/runs", "/logs", "/data", "/connections", "/connections/new", "/admin/pointage",
                  "/admin/mails", "/admin/users", "/admin/audit"):
@@ -1745,3 +1745,145 @@ def test_staff_login_with_email_and_standard_password(configured, pg, logged_cli
         assert "installées" in logged_client.post("/admin/pointage", data=restore, follow_redirects=True).text
         with pg.begin() as c:
             c.execute(text(f'ALTER TABLE {SCHEMA}."Personnel" DROP COLUMN IF EXISTS "Email"'))
+
+
+def test_punch_reminders(configured, pg, logged_client, monkeypatch):
+    """Rappels de pointage : arrivée non pointée (heure de bureau ou début de poste + délai), départ non pointé, oubli
+    de la veille (copie au responsable), filtres, garde-fou de synchronisation, un seul rappel par journée."""
+    from app import mails, rappels
+    from app.models import MailSettings, ReminderLog
+
+    with pg.begin() as c:
+        c.execute(text(f'ALTER TABLE {SCHEMA}."Personnel" ADD COLUMN IF NOT EXISTS "Email" text'))
+        c.execute(text(f'UPDATE {SCHEMA}."Personnel" SET "Email" = lower("Prenom" || \'.\' || "Nom") || \'@exemple.com\''))
+    with SessionLocal() as db:
+        cfg = db.query(PointageConfig).one()
+        original, conn_id = cfg.data, cfg.conn_id
+    data = {**pointage.Mapping.from_json(original).__dict__, "email_col": "Email", "email_in": "person", "conn_id": conn_id}
+    delivered = []
+
+    class FakeSMTP:
+        def __init__(self, host, port, timeout=None): pass
+        def ehlo(self): pass
+        def starttls(self, context=None): pass
+        def login(self, user, pwd): pass
+        def send_message(self, msg): delivered.append(msg)
+        def quit(self): pass
+
+    monkeypatch.setattr(mails.smtplib, "SMTP", FakeSMTP)
+
+    def configure(**values):
+        with SessionLocal() as db:
+            s = rappels.get_settings(db)
+            for k, v in {"arrival_enabled": False, "departure_enabled": False, "forgot_enabled": False, "services": "[]",
+                         "sites": "[]", "directions": "[]", "excluded": "", "forgot_cc_manager": False, **values}.items():
+                setattr(s, k, v)
+            db.commit()
+
+    try:
+        assert "installées" in logged_client.post("/admin/pointage", data=data, follow_redirects=True).text
+        with SessionLocal() as db:
+            ms = mails.get_settings(db)
+            ms.smtp_host, ms.from_email, ms.mode, ms.test_recipients = "smtp.test", "pointage@exemple.com", "test", "qa@exemple.com"
+            db.commit()
+
+        # Paramétrage depuis l'administration (heures au format libre « 8h20 », délais des postes).
+        r = logged_client.post("/admin/rappels/parametres", data={"arrival_time": "25:00", "departure_time": "17:45",
+                                                                 "forgot_time": "09:00"}, follow_redirects=True)
+        assert "Heure du rappel d&#39;arrivée invalide" in r.text
+        r = logged_client.post("/admin/rappels/parametres", data={
+            "arrival_enabled": "true", "arrival_time": "8h20", "arrival_delay": "15", "departure_time": "17:45",
+            "departure_delay": "30", "forgot_time": "09:00", "max_lag_minutes": "60", "message": "Contact : rh@exemple.com"},
+            follow_redirects=True)
+        assert "Paramètres des rappels enregistrés" in r.text
+        with SessionLocal() as db:
+            s = rappels.get_settings(db)
+            assert (s.arrival_enabled, s.arrival_time, s.departure_enabled) == (True, "08:20", False)
+
+        # Arrivée : à 8h20, seule Ba Khady (E005, aucun pointage le lundi) est attendue sans avoir badgé.
+        assert rappels.run_due(datetime(2026, 9, 21, 8, 10)) == {"status": "idle"}  # heure non atteinte
+        assert rappels.run_due(datetime(2026, 9, 21, 8, 30)) == {"status": "done", "sent": 1, "skipped": 0, "failed": 0}
+        msg = delivered[-1]
+        assert msg["To"] == "qa@exemple.com" and msg["Subject"] == "[TEST] Rappel : votre arrivée n'est pas encore pointée"
+        body = msg.get_body(("html",)).get_content()
+        assert "Bonjour Khady" in body and "khady.ba@exemple.com" in body and "Contact : rh@exemple.com" in body
+        assert rappels.run_due(datetime(2026, 9, 21, 8, 45)) == {"status": "idle"}  # un seul rappel par journée
+        assert rappels.run_due(datetime(2026, 9, 21, 11, 30)) == {"status": "idle"}
+
+        # Départ : à 17h45, Fall Ibou (E004) n'a badgé que son arrivée (7h40).
+        configure(departure_enabled=True)
+        assert rappels.run_due(datetime(2026, 9, 21, 17, 50)) == {"status": "done", "sent": 1, "skipped": 0, "failed": 0}
+        assert delivered[-1]["Subject"] == "[TEST] Rappel : pensez à pointer votre départ"
+        assert "Votre dernier pointage aujourd'hui date de 07h40" in delivered[-1].get_body(("html",)).get_content()
+
+        # Oubli de la veille, en production : à l'employé, responsable N+1 (Sow Fatou) en copie.
+        configure(forgot_enabled=True, forgot_cc_manager=True)
+        with SessionLocal() as db:
+            db.query(MailSettings).one().mode = "production"
+            db.commit()
+        assert rappels.run_due(datetime(2026, 9, 22, 9, 5)) == {"status": "done", "sent": 1, "skipped": 0, "failed": 0}
+        msg = delivered[-1]
+        assert (msg["To"], msg["Cc"]) == ("ibou.fall@exemple.com", "fatou.sow@exemple.com")
+        assert msg["Subject"] == "Pointage incomplet le lundi 21 septembre 2026"
+        assert "Un seul pointage a été enregistré le lundi 21 septembre 2026, à 07h40" in msg.get_body(("html",)).get_content()
+        with SessionLocal() as db:
+            db.query(MailSettings).one().mode = "test"
+            db.query(ReminderLog).delete()
+            db.commit()
+
+        # Filtres : matricule exclu, service non retenu.
+        configure(departure_enabled=True, excluded="E004")
+        assert rappels.run_due(datetime(2026, 9, 21, 17, 50)) == {"status": "idle"}
+        configure(departure_enabled=True, services='["Production"]')  # Fall Ibou est au service RH
+        assert rappels.run_due(datetime(2026, 9, 21, 17, 50)) == {"status": "idle"}
+
+        # Horaires postés : poste de 14h à 22h planifié pour Ba Khady → rappel 15 min après le début du poste.
+        with pg.begin() as c:
+            c.execute(text(f"INSERT INTO {SCHEMA}.pointage_postes (code, libelle, type, debut, fin) "
+                           f"VALUES ('RAPP', 'Après-midi', 'travail', '14:00', '22:00') ON CONFLICT (code) DO NOTHING"))
+            c.execute(text(f"INSERT INTO {SCHEMA}.pointage_planning (matricule, jour, code) VALUES ('E005', :d, 'RAPP')"),
+                      {"d": MON})
+        configure(arrival_enabled=True, arrival_time="08:20", arrival_delay=15)
+        with SessionLocal() as db:
+            m = pointage.Mapping.from_json(db.query(PointageConfig).one().data)
+            s = rappels.get_settings(db)
+        rows = rappels.day_rows(pg, m, MON, MON)
+        due = {(k, r["matricule"]): w for k, r, w in rappels.candidates(rows, s, datetime(2026, 9, 21, 8, 30), ["arrivee"],
+                                                                          timed=False)}
+        assert due == {("arrivee", "E005"): datetime(2026, 9, 21, 14, 15)}
+        assert rappels.run_due(datetime(2026, 9, 21, 8, 30)) == {"status": "idle"}
+        assert rappels.run_due(datetime(2026, 9, 21, 14, 20))["sent"] == 1
+        assert "(poste RAPP (14h00 – 22h00))" in delivered[-1].get_body(("html",)).get_content()
+        assert rappels.run_due(datetime(2026, 9, 21, 17, 20)) == {"status": "idle"}  # pas de doublon
+
+        # Garde-fou : pointages non synchronisés depuis 2 h → aucun rappel.
+        with SessionLocal() as db:
+            db.query(ReminderLog).delete()
+            db.commit()
+        monkeypatch.setattr(rappels, "last_sync", lambda db, m: rappels.utcnow() - timedelta(hours=2))
+        result = rappels.run_due(datetime(2026, 9, 21, 14, 20))
+        assert result["status"] == "stale" and "non synchronisés depuis 120 min" in result["reason"]
+        monkeypatch.undo()
+        monkeypatch.setattr(mails.smtplib, "SMTP", FakeSMTP)
+
+        # Administration : situation, aperçu, essai, journal ; accessible au rôle RH.
+        page = logged_client.get("/admin/rappels").text
+        assert "Situation du jour" in page and "Rappels et heures d'envoi" in page and 'value="08:20"' in page
+        assert "Pensez à pointer votre départ" in logged_client.get("/admin/rappels/apercu?kind=depart").text
+        r = logged_client.post("/admin/rappels/essai", data={"kind": "oubli", "to": "moi@exemple.com"}, follow_redirects=True)
+        assert "Rappel d&#39;essai « Oubli de la veille » envoyé à moi@exemple.com" in r.text
+        assert delivered[-1]["To"] == "moi@exemple.com" and delivered[-1]["Subject"].startswith("[TEST] Pointage incomplet")
+        assert "Rappels de pointage" in logged_client.get("/admin").text
+    finally:
+        with pg.begin() as c:
+            c.execute(text(f"DELETE FROM {SCHEMA}.pointage_planning WHERE code = 'RAPP'"))
+            c.execute(text(f"DELETE FROM {SCHEMA}.pointage_postes WHERE code = 'RAPP'"))
+        with SessionLocal() as db:
+            db.query(ReminderLog).delete()
+            s = rappels.get_settings(db)
+            s.arrival_enabled = s.departure_enabled = s.forgot_enabled = False
+            s.services, s.excluded, s.message = "[]", "", ""
+            ms = db.query(MailSettings).first()
+            ms.smtp_host, ms.from_email, ms.mode, ms.test_recipients = "", "", "test", ""
+            db.commit()
+        logged_client.post("/admin/pointage", data={**pointage.Mapping.from_json(original).__dict__, "conn_id": conn_id})

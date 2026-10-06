@@ -124,6 +124,22 @@ un poste planifié couvert par une mission approuvée devient « En mission », 
 et de ponctualité avec l'évolution, absences, retards, oublis de badge, autres situations, détail par collaborateur.
 Serveur SMTP et mode test/production des mails de badge ; un seul envoi par responsable et par période.
 
+**Rappels de pointage** (*Administration → Rappels de pointage*) : e-mail aux employés pour limiter les oublis de
+badge. Trois rappels, activables séparément, à heure paramétrable :
+- *arrivée non pointée* : employé attendu (jour ouvré, sans congé, arrêt, télétravail, mission, formation ni repos,
+  hors agents terrain) sans aucun pointage à l'heure choisie (ex. 08:15) ; agent en horaires postés : N minutes
+  après le début de son poste ;
+- *départ non pointé* : employé qui n'a badgé que son arrivée à l'heure choisie (ex. 17:45) ; poste planifié :
+  N minutes après la fin du poste (nuits comprises) ;
+- *oubli de la veille* : chaque matin, rappel des journées restées incomplètes (un seul pointage) des 3 derniers
+  jours, avec le responsable N+1 en copie si souhaité.
+
+Destinataires filtrables par service, site et direction, matricules exclus, message libre ajouté à chaque rappel.
+Un seul rappel par employé, type et journée ; vérification toutes les 5 minutes ; aucun envoi si les pointages ne
+sont plus synchronisés depuis le délai choisi (garde-fou). Même serveur SMTP et même mode test/production que les
+mails de badge. La page montre la situation du jour (qui recevrait quel rappel, à quelle heure), un aperçu, un essai
+et le journal des envois.
+
 **Arrêts maladie** (*Arrêts maladie*, *Administration → Circuit arrêts maladie*) : déclaration par l'employé avec
 justificatif, circuit de validation paramétrable, saisie RH validée d'office. **Notifications par e-mail**
 (facultatives) : le valideur de l'étape en cours est prévenu, puis l'employé quand l'arrêt est validé ou refusé ;
@@ -138,7 +154,7 @@ envoi via le serveur SMTP des mails de badge et soumis à son mode test / produc
 | Rôle | Accès |
 |---|---|
 | Lecteur | Suivi journalier et export Excel |
-| RH | Suivi, rapports et exports de **tout le personnel** (même rattaché à un employé), paramètres horaires et jours fériés, horaires postés, agents terrain, circuit et traitement des arrêts maladie, résumés par mail — **sans** synchronisation (tableau de bord, jobs, exécutions, logs, données) ni sources de données (connexions, source des pointages), ni utilisateurs, mails de badge ou audit |
+| RH | Suivi, rapports et exports de **tout le personnel** (même rattaché à un employé), paramètres horaires et jours fériés, horaires postés, agents terrain, circuit et traitement des arrêts maladie, résumés par mail, rappels de pointage — **sans** synchronisation (tableau de bord, jobs, exécutions, logs, données) ni sources de données (connexions, source des pointages), ni utilisateurs, mails de badge ou audit |
 | Manager | + tableau de bord, jobs (consultation, lancement, arrêt), exécutions, logs, données |
 | Administrateur | Tout : connexions, modification des jobs, paramètres, source des pointages, utilisateurs, audit |
 
