@@ -10,7 +10,7 @@ from .. import auth, pointage, rappels
 from ..database import get_db
 from ..errors import friendly
 from ..mails import get_settings as mail_settings_of, valid_email
-from ..models import REMINDER_KINDS, ReminderLog, utcnow
+from ..models import REMINDER_AUDIENCES, REMINDER_KINDS, ReminderLog, utcnow
 from ..sync import make_engine
 from ..web import flash, redirect, render, require_login
 from .suivi import load_config
@@ -51,7 +51,8 @@ def page(request: Request, db: Session = Depends(get_db)):
                   "site": rappels.values(s.sites), "direction": rappels.values(s.directions)},
                   email_configured=bool(mapping and mapping.email_col), now=rappels.local_now(),
                   lookback=rappels.LOOKBACK_DAYS, texts=rappels.custom_texts(s), defaults=rappels.DEFAULT_TEXTS,
-                  variables=rappels.VARIABLES, window_hours=int(rappels.WINDOW.total_seconds() // 3600))
+                  variables=rappels.VARIABLES, audiences=REMINDER_AUDIENCES, audience=rappels.audience(s),
+                  subscribers=len(rappels.subscribers(db)), window_hours=int(rappels.WINDOW.total_seconds() // 3600))
 
 
 def _minutes(value: str, label: str) -> int:
@@ -107,6 +108,7 @@ async def save_settings(request: Request, db: Session = Depends(get_db)):
     s.services = json.dumps(pointage.multi([str(v) for v in form.getlist("service")]), ensure_ascii=False)
     s.sites = json.dumps(pointage.multi([str(v) for v in form.getlist("site")]), ensure_ascii=False)
     s.directions = json.dumps(pointage.multi([str(v) for v in form.getlist("direction")]), ensure_ascii=False)
+    s.audience = get("audience", "abonnes") if get("audience", "abonnes") in REMINDER_AUDIENCES else "abonnes"
     s.excluded = get("excluded")[:5000]
     s.max_lag_minutes = max_lag
     s.message = get("message")[:2000]
@@ -121,7 +123,7 @@ async def save_settings(request: Request, db: Session = Depends(get_db)):
                f"avertissement du soir {state(s.predeparture_enabled, f'{s.predeparture_time}, postes -{s.predeparture_before} min')}, "
                f"départ non pointé {state(s.departure_enabled, f'{s.departure_time}, postes +{s.departure_delay} min')}, "
                f"oubli de la veille {state(s.forgot_enabled, s.forgot_time)}, "
-               f"services {rappels.values(s.services) or 'tous'}, sites {rappels.values(s.sites) or 'tous'}, "
+               f"destinataires {s.audience}, services {rappels.values(s.services) or 'tous'}, sites {rappels.values(s.sites) or 'tous'}, "
                f"directions {rappels.values(s.directions) or 'toutes'}")
     flash(request, "Paramètres des rappels enregistrés.", "ok")
     return redirect("/admin/rappels")

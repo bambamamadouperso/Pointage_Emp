@@ -140,7 +140,11 @@ personnalisable (objet et texte, variables `{prenom}`, `{nom}`, `{matricule}`, `
 - *oubli de la veille* : chaque matin, rappel des journées restées incomplètes (un seul pointage) des 3 derniers
   jours, avec le responsable N+1 en copie si souhaité.
 
-Destinataires filtrables par service, site et direction, matricules exclus, message libre ajouté à chaque rappel.
+Les rappels ont la même présentation que le mail de confirmation de badge (en-tête de l'entreprise, case
+« Arrivée / Date », pointages de la journée), en orange pour un avertissement et en rouge pour une alerte.
+**Destinataires** : par défaut, les employés cochés dans *Mails de badge → Abonnés*, à la même adresse que leur
+confirmation de pointage (ou, au choix, tous les employés actifs ayant une adresse e-mail) ; filtres supplémentaires
+par service, site et direction, matricules exclus, message libre ajouté à chaque rappel.
 Un seul rappel par employé, type et journée ; vérification toutes les 5 minutes ; aucun envoi si les pointages ne
 sont plus synchronisés depuis le délai choisi (garde-fou). Même serveur SMTP et même mode test/production que les
 mails de badge. La page montre la situation du jour (qui recevrait quel message, à quelle heure), un aperçu, un essai

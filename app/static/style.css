@@ -887,3 +887,4 @@ select.multi-cols option:checked { background: var(--primary-soft); color: var(-
 .custom-text label { display: block; margin-top: .4rem; }
 .custom-text input, .custom-text textarea { width: 100%; }
 h3.moment { margin: 1.1rem 0 .2rem; font-size: .8rem; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.audience { display: grid; gap: .4rem; margin: .4rem 0 .8rem; }

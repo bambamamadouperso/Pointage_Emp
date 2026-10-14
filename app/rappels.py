@@ -32,7 +32,8 @@ from . import pointage
 from .database import SessionLocal
 from .digests import _context, _copy, french_day, local_now
 from .joblog import write_log
-from .models import (REMINDER_KINDS, JobRun, ReminderLog, ReminderSettings, SyncJob, TableMapping, utcnow)
+from .models import (REMINDER_AUDIENCES, REMINDER_KINDS, JobRun, MailSubscriber, ReminderLog, ReminderSettings,
+                     SyncJob, TableMapping, utcnow)
 
 logger = logging.getLogger("rappels")
 MAX_ATTEMPTS = 3
@@ -94,7 +95,7 @@ def get_settings(db) -> ReminderSettings:
                                forgot_cc_manager=False, alert_enabled=False, alert_time="09:30", alert_delay=60,
                                alert_cc_manager=False, predeparture_enabled=False, predeparture_time="16:45",
                                predeparture_before=15, texts="{}", services="[]", sites="[]", directions="[]",
-                               excluded="", max_lag_minutes=60, message="")
+                               excluded="", max_lag_minutes=60, message="", audience="abonnes")
         db.add(row)
         db.commit()
     return row
@@ -163,6 +164,24 @@ def day_rows(engine, m: pointage.Mapping, du: date, au: date) -> list[dict]:
             ) s ON true
             WHERE NOT j.hors_liste AND e.actif
             ORDER BY j.nom, j.prenom, j.jour"""), {"du": du, "au": au}).mappings()]
+
+
+def audience(s: ReminderSettings) -> str:
+    return s.audience if s.audience in REMINDER_AUDIENCES else "abonnes"
+
+
+def subscribers(db) -> dict[str, str]:
+    """Employés abonnés aux mails de badge : {clé employé: adresse saisie (vide = adresse de la fiche)}."""
+    return {x.emp_key: (x.email or "").strip() for x in db.scalars(select(MailSubscriber))}
+
+
+def for_audience(db, s: ReminderSettings, rows: list[dict]) -> list[dict]:
+    """Journées des destinataires choisis : par défaut, seulement les employés cochés dans « Mails de badge →
+    Abonnés », avec l'adresse saisie pour eux si elle existe (comme pour la confirmation de pointage)."""
+    if audience(s) != "abonnes":
+        return rows
+    subs = subscribers(db)
+    return [{**r, "email": subs[r["emp_key"]] or r.get("email")} for r in rows if r["emp_key"] in subs]
 
 
 def _targeted(row: dict, s: ReminderSettings) -> bool:
@@ -281,9 +300,39 @@ def text_context(row: dict) -> dict:
             "_poste": f" ({poste})" if poste else "", "arrivee": _hm(row.get("p1")), "dernier": _hm(row.get("p2"))}
 
 
+# Présentation des rappels, sur le modèle du mail de confirmation de badge : (bandeau, pastille, couleur, fond de
+# la pastille, intitulé de la case de gauche, valeur de la case de gauche).
+_LOOK = {
+    "arrivee": ("Rappel de pointage", "!", "#b45309", "#fff4e0", "Arrivée", "Non pointée"),
+    "alerte": ("Alerte de pointage", "!", "#be123c", "#ffe4e6", "Arrivée", "Non pointée"),
+    "avant_depart": ("Rappel de pointage", "&#9719;", "#b45309", "#fff4e0", "Arrivée", None),
+    "depart": ("Départ non pointé", "!", "#b45309", "#fff4e0", "Départ", "Non pointé"),
+    "oubli": ("Pointage incomplet", "!", "#be123c", "#ffe4e6", "Pointage manquant", "Arrivée ou départ"),
+}
+
+
+def _day_punches(row: dict) -> str:
+    """Pointages connus de la journée (premier et dernier), au format de la liste du mail de badge."""
+    nb = row.get("nb") or 0
+    if not nb:
+        items = [("Aucun pointage enregistré", "—")]
+    else:
+        items = [("Arrivée", _hm(row.get("p1")))]
+        if nb > 1:
+            items.append(("Dernier pointage", _hm(row.get("p2"))))
+        if nb > 2:
+            items.append(("Nombre de pointages", str(nb)))
+    cell = "padding:8px 0;border-bottom:1px solid #eef2f6;font-size:14px;"
+    return ('<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">' + "".join(
+        f'<tr><td style="{cell}color:#46566a;">{html.escape(label)}</td>'
+        f'<td align="right" style="{cell}font-weight:600;color:#0b1a2b;">{html.escape(value)}</td></tr>'
+        for label, value in items) + "</table>")
+
+
 def render(kind: str, row: dict, company: str = "", message: str = "",
            custom: Optional[dict] = None) -> tuple[str, str, str]:
-    """(objet, HTML, texte) d'un rappel ; custom = objet et texte personnalisés de ce type (vides = par défaut)."""
+    """(objet, HTML, texte) d'un rappel, présenté comme le mail de confirmation de badge ; custom = objet et texte
+    personnalisés de ce type (vides = par défaut)."""
     ctx = text_context(row)
     prenom = ctx["prenom"]
     default, custom = DEFAULT_TEXTS[kind], custom or {}
@@ -291,26 +340,87 @@ def render(kind: str, row: dict, company: str = "", message: str = "",
     title = subject if custom.get("subject") else default["title"]
     lines = [p.strip() for p in re.split(r"\n\s*\n", fill(custom.get("body") or default["body"], ctx)) if p.strip()]
     extra = (message or "").strip()
-    paragraphs = "".join(f'<p style="margin:0 0 12px;font-size:15px;line-height:1.55;color:#2c3a4b;">'
-                         f'{html.escape(t, quote=False).replace(chr(10), "<br>")}</p>' for t in lines)
+    band, icon, color, soft, left_label, left_value = _LOOK[kind]
+    left_value = left_value or _hm(row.get("p1"))
+    font = "font-family:'Segoe UI',Helvetica,Arial,sans-serif;"
+    esc = lambda t: html.escape(t, quote=False)  # noqa: E731
+    paragraphs = "".join(f'<p style="margin:12px 0 0;font-size:15px;line-height:1.6;color:#46566a;">'
+                         f'{esc(t).replace(chr(10), "<br>")}</p>' for t in lines)
     if extra:
-        paragraphs += ('<p style="margin:14px 0 0;padding:12px 14px;background:#f2f7f7;border-radius:8px;font-size:14px;'
-                       'line-height:1.5;color:#2c3a4b;">' + html.escape(extra, quote=False).replace("\n", "<br>") + "</p>")
-    body = f"""<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>{html.escape(subject)}</title></head>
-<body style="margin:0;padding:0;background:#f2f5f9;font-family:'Segoe UI',Helvetica,Arial,sans-serif;">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f2f5f9;"><tr><td align="center" style="padding:24px 12px;">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;">
-<tr><td style="background:#ffffff;border-radius:14px;padding:26px 28px;border-top:5px solid #0e6e70;">
-  <p style="margin:0 0 6px;font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:#0e6e70;font-weight:700;">Rappel de pointage</p>
-  <h1 style="margin:0 0 16px;font-size:21px;line-height:1.3;color:#0b1a2b;">{html.escape(title, quote=False)}</h1>
-  <p style="margin:0 0 12px;font-size:15px;line-height:1.55;color:#2c3a4b;">Bonjour {html.escape(prenom)},</p>
-  {paragraphs}
-  <p style="margin:18px 0 0;font-size:12px;color:#7a8796;">Matricule {html.escape(row.get('matricule') or '')}</p>
-</td></tr>
-<tr><td style="padding:16px 8px 0;text-align:center;font-size:12px;color:#a3afbc;">Message automatique — merci de ne pas y répondre.{(' © ' + html.escape(company)) if company else ''}</td></tr>
-</table></td></tr></table></body></html>"""
-    text_body = f"Bonjour {prenom},\n\n" + "\n\n".join(lines) + (f"\n\n{extra}" if extra else "") \
-        + f"\n\nMatricule {row.get('matricule') or ''}\n\nMessage automatique — merci de ne pas y répondre."
+        paragraphs += (f'<p style="margin:16px 0 0;padding:12px 14px;background:#f7f9fc;border:1px solid #e6ecf3;'
+                       f'border-radius:10px;font-size:14px;line-height:1.55;color:#46566a;">'
+                       f'{esc(extra).replace(chr(10), "<br>")}</p>')
+    entreprise = esc(company or "")
+    service = esc(row.get("service") or "")
+    body = f"""<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light only">
+<title>{esc(subject)}</title>
+</head>
+<body style="margin:0;padding:0;background:#f2f5f9;-webkit-text-size-adjust:100%;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f2f5f9;">
+  <tr><td align="center" style="padding:32px 12px;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;">
+
+      <tr><td style="padding:0 4px 18px;{font}">
+        <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
+          <td style="width:34px;height:34px;background:#0e7c6e;border-radius:9px;text-align:center;vertical-align:middle;color:#ffffff;font-size:18px;line-height:34px;">&#9719;</td>
+          <td style="padding-left:10px;font-size:15px;font-weight:700;color:#0b1a2b;letter-spacing:-0.2px;">{entreprise}</td>
+        </tr></table>
+      </td></tr>
+
+      <tr><td style="background:#ffffff;border:1px solid #e3e9f0;border-radius:16px;overflow:hidden;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+          <tr><td style="height:4px;background:{color};font-size:0;line-height:0;">&nbsp;</td></tr>
+          <tr><td style="padding:34px 36px 8px;{font}">
+            <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
+              <td style="width:44px;height:44px;border-radius:50%;background:{soft};text-align:center;vertical-align:middle;color:{color};font-size:22px;font-weight:700;line-height:44px;">{icon}</td>
+            </tr></table>
+            <p style="margin:20px 0 6px;font-size:13px;font-weight:600;letter-spacing:1.2px;text-transform:uppercase;color:{color};">{esc(band)}</p>
+            <h1 style="margin:0;font-size:24px;line-height:1.3;font-weight:700;color:#0b1a2b;letter-spacing:-0.3px;">Bonjour {esc(prenom)},</h1>
+            <p style="margin:12px 0 0;font-size:16px;line-height:1.5;font-weight:600;color:#0b1a2b;">{esc(title)}</p>
+            {paragraphs}
+          </td></tr>
+          <tr><td style="padding:22px 36px 6px;{font}">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f7f9fc;border:1px solid #e6ecf3;border-radius:12px;">
+              <tr>
+                <td style="padding:18px 20px;border-right:1px solid #e6ecf3;" width="50%">
+                  <p style="margin:0;font-size:12px;color:#7a8898;text-transform:uppercase;letter-spacing:.8px;">{esc(left_label)}</p>
+                  <p style="margin:4px 0 0;font-size:22px;font-weight:700;color:{color if not row.get('nb') or kind != 'avant_depart' else '#0b1a2b'};letter-spacing:-0.4px;">{esc(left_value)}</p>
+                </td>
+                <td style="padding:18px 20px;" width="50%">
+                  <p style="margin:0;font-size:12px;color:#7a8898;text-transform:uppercase;letter-spacing:.8px;">Date</p>
+                  <p style="margin:6px 0 0;font-size:15px;font-weight:600;color:#0b1a2b;">{esc(ctx["date"])}</p>
+                </td>
+              </tr>
+            </table>
+          </td></tr>
+          <tr><td style="padding:16px 36px 4px;{font}">
+            <p style="margin:0 0 8px;font-size:13px;font-weight:600;color:#0b1a2b;">Vos pointages de la journée</p>
+            {_day_punches(row)}
+          </td></tr>
+          <tr><td style="padding:14px 36px 30px;{font}">
+            <p style="margin:0;font-size:13px;line-height:1.6;color:#7a8898;">Matricule {esc(ctx["matricule"])}{(' · ' + service) if service else ''}{(' · ' + esc(ctx["poste"])) if ctx["poste"] else ''}</p>
+          </td></tr>
+        </table>
+      </td></tr>
+
+      <tr><td style="padding:20px 8px 0;{font}text-align:center;">
+        <p style="margin:0;font-size:12px;line-height:1.6;color:#8896a6;">Si vous pensez qu'il s'agit d'une erreur, prévenez votre responsable ou le service RH.</p>
+        <p style="margin:8px 0 0;font-size:12px;color:#a3afbc;">Message automatique — merci de ne pas y répondre. © {row["jour"].year} {entreprise}</p>
+      </td></tr>
+
+    </table>
+  </td></tr>
+</table>
+</body>
+</html>
+"""
+    text_body = f"Bonjour {prenom},\n\n{title}\n\n" + "\n\n".join(lines) + (f"\n\n{extra}" if extra else "") \
+        + f"\n\nMatricule {ctx['matricule']}\n\nMessage automatique — merci de ne pas y répondre."
     return subject, body, text_body
 
 
@@ -386,7 +496,7 @@ def _run_due(now: datetime) -> dict:
                 s.last_run_at, s.last_run_summary = utcnow(), f"aucun rappel envoyé : {reason}"
                 db.commit()
                 return {"status": "stale", "reason": reason}
-            rows = day_rows(engine, m, now.date() - timedelta(days=LOOKBACK_DAYS), now.date())
+            rows = for_audience(db, s, day_rows(engine, m, now.date() - timedelta(days=LOOKBACK_DAYS), now.date()))
         finally:
             engine.dispose()
         todo = candidates(rows, s, now, kinds)
@@ -453,7 +563,7 @@ def situation(now: Optional[datetime] = None) -> dict:
     try:
         with SessionLocal() as db:
             s = get_settings(db)
-            rows = day_rows(engine, m, now.date() - timedelta(days=LOOKBACK_DAYS), now.date())
+            rows = for_audience(db, s, day_rows(engine, m, now.date() - timedelta(days=LOOKBACK_DAYS), now.date()))
             sent = {(l.kind, l.jour.date(), l.emp_key): l for l in db.scalars(select(ReminderLog).where(
                 ReminderLog.jour >= datetime.combine(now.date() - timedelta(days=LOOKBACK_DAYS + 1), time())))}
             out = {k: [] for k in REMINDER_KINDS}
@@ -465,7 +575,7 @@ def situation(now: Optional[datetime] = None) -> dict:
                 items.sort(key=lambda x: (x["when"], x["name"]))
             return {"items": out, "with_email": sum(1 for r in rows if r["jour"] == now.date() and r.get("email")),
                     "employees": len({r["emp_key"] for r in rows}), "stale": stale_reason(db, m, s),
-                    "last_sync": last_sync(db, m), "rows": rows}
+                    "last_sync": last_sync(db, m), "rows": rows, "subscribers": len(subscribers(db))}
     finally:
         engine.dispose()
 
@@ -473,9 +583,10 @@ def situation(now: Optional[datetime] = None) -> dict:
 def sample_row(kind: str, today: Optional[date] = None) -> dict:
     today = today or local_now().date()
     day = today - timedelta(days=1) if kind == "oubli" else today
+    arrival = None if kind in ("arrivee", "alerte") else datetime.combine(day, time(7, 52))
     return {"emp_key": "exemple", "matricule": "E000", "nom": "Exemple", "prenom": "Camille", "jour": day,
-            "statut": "INCOMPLET", "nb": 1, "p1": datetime.combine(day, time(7, 52)),
-            "p2": datetime.combine(day, time(7, 52)), "email": "camille.exemple@exemple.com", "poste_type": None}
+            "statut": "ABSENT" if arrival is None else "INCOMPLET", "nb": 0 if arrival is None else 1, "p1": arrival,
+            "p2": arrival, "email": "camille.exemple@exemple.com", "poste_type": None, "service": "Service exemple"}
 
 
 def preview(kind: str) -> tuple[str, str]:

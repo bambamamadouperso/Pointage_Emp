@@ -1776,7 +1776,8 @@ def test_punch_reminders(configured, pg, logged_client, monkeypatch):
         with SessionLocal() as db:
             s = rappels.get_settings(db)
             for k, v in {"arrival_enabled": False, "departure_enabled": False, "forgot_enabled": False, "alert_enabled": False,
-                         "predeparture_enabled": False, "alert_cc_manager": False, "texts": "{}", "services": "[]",
+                         "predeparture_enabled": False, "alert_cc_manager": False, "texts": "{}", "audience": "tous",
+                         "services": "[]",
                          "sites": "[]", "directions": "[]", "excluded": "", "forgot_cc_manager": False, **values}.items():
                 setattr(s, k, v)
             db.commit()
@@ -1802,12 +1803,16 @@ def test_punch_reminders(configured, pg, logged_client, monkeypatch):
             assert (s.arrival_enabled, s.arrival_time, s.departure_enabled) == (True, "08:20", False)
 
         # Arrivée : à 8h20, seule Ba Khady (E005, aucun pointage le lundi) est attendue sans avoir badgé.
+        configure(arrival_enabled=True, arrival_time="08:20")  # destinataires : tous les employés (abonnés : plus bas)
         assert rappels.run_due(datetime(2026, 9, 21, 8, 10)) == {"status": "idle"}  # heure non atteinte
         assert rappels.run_due(datetime(2026, 9, 21, 8, 30)) == {"status": "done", "sent": 1, "skipped": 0, "failed": 0}
         msg = delivered[-1]
         assert msg["To"] == "qa@exemple.com" and msg["Subject"] == "[TEST] Rappel : votre arrivée n'est pas encore pointée"
         body = msg.get_body(("html",)).get_content()
         assert "Bonjour Khady" in body and "khady.ba@exemple.com" in body and "Contact : rh@exemple.com" in body
+        # Présenté comme le mail de confirmation de badge : bandeau, case « Arrivée / Date », pointages de la journée.
+        assert "Rappel de pointage</p>" in body and "Non pointée" in body and "Vos pointages de la journée" in body
+        assert "Aucun pointage enregistré" in body and "Matricule E005 · RH" in body
         assert rappels.run_due(datetime(2026, 9, 21, 8, 45)) == {"status": "idle"}  # un seul rappel par journée
         assert rappels.run_due(datetime(2026, 9, 21, 11, 30)) == {"status": "idle"}
 
@@ -1849,7 +1854,7 @@ def test_punch_reminders(configured, pg, logged_client, monkeypatch):
         # Avertissement du soir, texte personnalisé depuis l'administration : à 16h45, tous les employés encore
         # « entrés » (nombre impair de pointages) : Diallo Awa (3 pointages) et Fall Ibou (1 seul).
         r = logged_client.post("/admin/rappels/parametres", data={
-            "predeparture_enabled": "true", "predeparture_time": "16h45", "predeparture_before": "15",
+            "predeparture_enabled": "true", "predeparture_time": "16h45", "predeparture_before": "15", "audience": "tous",
             "subject_avant_depart": "{prenom}, pensez à badger ce soir",
             "body_avant_depart": "Arrivée enregistrée à {arrivee} ({date}).\n\nBonne soirée {prenom} {nom} !"},
             follow_redirects=True)
@@ -1860,10 +1865,33 @@ def test_punch_reminders(configured, pg, logged_client, monkeypatch):
         assert set(sent) == {"[TEST] Awa, pensez à badger ce soir", "[TEST] Ibou, pensez à badger ce soir"}
         body = sent["[TEST] Awa, pensez à badger ce soir"]
         assert "Arrivée enregistrée à 07h20 (lundi 21 septembre 2026)." in body and "Bonne soirée Awa Diallo !" in body
-        assert "Awa, pensez à badger ce soir</h1>" in body
+        assert "Awa, pensez à badger ce soir</p>" in body and "Bonjour Awa,</h1>" in body
         with SessionLocal() as db:
             db.query(ReminderLog).delete()
             db.commit()
+
+        # Destinataires par défaut : seulement les employés cochés dans Mails de badge → Abonnés, à l'adresse saisie
+        # pour eux (comme la confirmation de pointage). Fall Ibou abonné, Ba Khady non.
+        from app.models import MailSubscriber
+
+        with SessionLocal() as db:
+            db.query(MailSubscriber).delete()
+            db.add(MailSubscriber(emp_key="4", matricule="E004", name="Fall Ibou", email="ibou.perso@exemple.com"))
+            db.query(MailSettings).one().mode = "production"
+            db.commit()
+        configure(arrival_enabled=True, departure_enabled=True, audience="abonnes")
+        assert rappels.run_due(datetime(2026, 9, 21, 8, 30)) == {"status": "idle"}  # Ba Khady n'est pas abonnée
+        assert rappels.run_due(datetime(2026, 9, 21, 17, 50)) == {"status": "done", "sent": 1, "skipped": 0, "failed": 0}
+        assert delivered[-1]["To"] == "ibou.perso@exemple.com"
+        page = logged_client.get("/admin/rappels").text
+        assert "Employés abonnés aux mails de badge" in page and "(1 abonné(s))" in page
+        with SessionLocal() as db:
+            db.query(MailSubscriber).delete()
+            db.query(MailSettings).one().mode = "test"
+            db.query(ReminderLog).delete()
+            db.commit()
+        r = logged_client.post("/admin/rappels/parametres", data={"audience": "abonnes"}, follow_redirects=True)
+        assert "Aucun employé n'est abonné aux mails de badge" in r.text
 
         # Filtres : matricule exclu, service non retenu.
         configure(departure_enabled=True, excluded="E004")

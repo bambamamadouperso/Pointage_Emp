@@ -30,7 +30,9 @@
   <a href="/admin" class="muted">← {{ 'Administration' if can(role, 'admin') else 'Ressources humaines' }}</a>
 </div>
 {% if error %}<div class="flash warn">{{ error }}</div>{% endif %}
-{% if not email_configured and not error %}<div class="flash warn">Aucune colonne « Adresse e-mail » n'est configurée pour les employés
+{% if audience == 'abonnes' and not subscribers %}<div class="flash warn">Aucun employé n'est abonné aux mails de badge :
+  cochez-les dans Mails de badge → Abonnés, sinon aucun rappel ne partira.</div>{% endif %}
+{% if not email_configured and not error and audience == 'tous' %}<div class="flash warn">Aucune colonne « Adresse e-mail » n'est configurée pour les employés
   (Source des pointages → Liste des employés) : les rappels ne pourront partir vers personne.</div>{% endif %}
 
 <section class="card rules">
@@ -113,7 +115,15 @@
     {{ texte('oubli') }}
   </div>
   <h3>Destinataires</h3>
-  <p class="muted small">Sans sélection : tous les employés actifs qui ont une adresse e-mail.</p>
+  <div class="audience">
+    <label class="check"><input type="radio" name="audience" value="abonnes" {{ 'checked' if audience == 'abonnes' }}>
+      <span><strong>Employés abonnés aux mails de badge</strong> — ceux cochés dans
+        {% if can(role, 'admin') %}<a href="/admin/mails/abonnes">Mails de badge → Abonnés</a>{% else %}Mails de badge → Abonnés{% endif %},
+        avec la même adresse que leur confirmation de pointage ({{ subscribers }} abonné(s))</span></label>
+    <label class="check"><input type="radio" name="audience" value="tous" {{ 'checked' if audience == 'tous' }}>
+      <span>Tous les employés actifs ayant une adresse e-mail sur leur fiche</span></label>
+  </div>
+  <p class="muted small">Filtres supplémentaires (sans sélection : aucun filtre).</p>
   <div class="row">
     {{ choice_list('service', 'Services', choices.service, chosen.service, 'Tous les services') }}
     {{ choice_list('site', 'Sites', choices.site, chosen.site, 'Tous les sites') }}
@@ -133,7 +143,7 @@
 <section class="card" id="situation">
   <div class="card-head"><div><h2>Situation du jour</h2>
     <p class="muted small">Personnes concernées à {{ now.strftime('%H:%M') }} par chaque rappel (même désactivé) et heure prévue d'envoi.
-      {{ state.employees }} employé(s) actif(s) dans le périmètre de calcul.</p></div></div>
+      {{ state.employees }} employé(s) destinataire(s){% if audience == 'abonnes' %} (abonnés aux mails de badge){% endif %}.</p></div></div>
   {% for kind, label in kinds.items() %}{% set items = state['items'][kind] %}{% set on = kind in enabled %}
   <details class="reminder-group" {{ 'open' if items and items | length <= 15 }}>
   <summary><strong>{{ label }}</strong> <span class="badge">{{ items | length }}</span>

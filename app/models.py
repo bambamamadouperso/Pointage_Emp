@@ -524,6 +524,12 @@ REMINDER_KINDS = {
 }
 
 
+REMINDER_AUDIENCES = {
+    "abonnes": "Employés abonnés aux mails de badge (cochés dans Mails de badge → Abonnés)",
+    "tous": "Tous les employés actifs ayant une adresse e-mail",
+}
+
+
 class ReminderSettings(Base):
     """Rappels de pointage envoyés aux employés : heures d'envoi, délais des horaires postés, destinataires (une ligne)."""
 
@@ -562,6 +568,9 @@ class ReminderSettings(Base):
     sites: Mapped[Optional[str]] = mapped_column(Text, nullable=True, default="[]")
     directions: Mapped[Optional[str]] = mapped_column(Text, nullable=True, default="[]")
     excluded: Mapped[Optional[str]] = mapped_column(Text, nullable=True, default="")
+    # Destinataires : « abonnes » = employés cochés dans Mails de badge → Abonnés (par défaut), « tous » = tous les
+    # employés actifs ayant une adresse e-mail ; les filtres ci-dessus s'appliquent en plus.
+    audience: Mapped[Optional[str]] = mapped_column(String(20), nullable=True, default="abonnes")
     # Garde-fou : pas de rappel d'arrivée / de départ si les pointages n'ont pas été synchronisés depuis N minutes.
     max_lag_minutes: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=60)
     message: Mapped[Optional[str]] = mapped_column(Text, nullable=True, default="")  # texte ajouté à chaque rappel
