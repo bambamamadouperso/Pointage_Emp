@@ -50,7 +50,8 @@ def page(request: Request, db: Session = Depends(get_db)):
                   kinds=REMINDER_KINDS, enabled=rappels.enabled_kinds(s), choices=_choices(db), chosen={"service": rappels.values(s.services),
                   "site": rappels.values(s.sites), "direction": rappels.values(s.directions)},
                   email_configured=bool(mapping and mapping.email_col), now=rappels.local_now(),
-                  lookback=rappels.LOOKBACK_DAYS, window_hours=int(rappels.WINDOW.total_seconds() // 3600))
+                  lookback=rappels.LOOKBACK_DAYS, texts=rappels.custom_texts(s), defaults=rappels.DEFAULT_TEXTS,
+                  variables=rappels.VARIABLES, window_hours=int(rappels.WINDOW.total_seconds() // 3600))
 
 
 def _minutes(value: str, label: str) -> int:
@@ -68,15 +69,20 @@ async def save_settings(request: Request, db: Session = Depends(get_db)):
     form = await request.form()
     get = lambda key, default="": str(form.get(key, default) or default).strip()  # noqa: E731
     times = {}
-    for key, label in (("arrival_time", "Heure du rappel d'arrivée"), ("departure_time", "Heure du rappel de départ"),
-                       ("forgot_time", "Heure du rappel des oublis")):
-        times[key] = rappels.parse_time(get(key))
+    for key, label, default in (("arrival_time", "Heure du rappel d'arrivée", "08:15"),
+                                ("alert_time", "Heure de l'alerte du matin", "09:30"),
+                                ("predeparture_time", "Heure de l'avertissement du soir", "16:45"),
+                                ("departure_time", "Heure du rappel de départ", "17:45"),
+                                ("forgot_time", "Heure du rappel des oublis", "09:00")):
+        times[key] = rappels.parse_time(get(key, default))
         if times[key] is None:
             flash(request, f"{label} invalide : format HH:MM (ex. 08:15).", "err")
             return redirect("/admin/rappels")
     try:
         arrival_delay = _minutes(get("arrival_delay", "15"), "Délai après le début du poste")
         departure_delay = _minutes(get("departure_delay", "30"), "Délai après la fin du poste")
+        alert_delay = _minutes(get("alert_delay", "60"), "Délai de l'alerte après le début du poste")
+        predeparture_before = _minutes(get("predeparture_before", "15"), "Délai avant la fin du poste")
         max_lag = _minutes(get("max_lag_minutes", "60"), "Garde-fou de synchronisation")
     except ValueError as exc:
         flash(request, str(exc), "err")
@@ -88,6 +94,16 @@ async def save_settings(request: Request, db: Session = Depends(get_db)):
         times["departure_time"], departure_delay
     s.forgot_enabled, s.forgot_time = bool(form.get("forgot_enabled")), times["forgot_time"]
     s.forgot_cc_manager = bool(form.get("forgot_cc_manager"))
+    s.alert_enabled, s.alert_time, s.alert_delay = bool(form.get("alert_enabled")), times["alert_time"], alert_delay
+    s.alert_cc_manager = bool(form.get("alert_cc_manager"))
+    s.predeparture_enabled, s.predeparture_time, s.predeparture_before = bool(form.get("predeparture_enabled")), \
+        times["predeparture_time"], predeparture_before
+    texts = {}
+    for kind in REMINDER_KINDS:
+        subject, body = get(f"subject_{kind}")[:300], str(form.get(f"body_{kind}", "") or "").strip()[:4000]
+        if subject or body:
+            texts[kind] = {"subject": subject, "body": body}
+    s.texts = json.dumps(texts, ensure_ascii=False)
     s.services = json.dumps(pointage.multi([str(v) for v in form.getlist("service")]), ensure_ascii=False)
     s.sites = json.dumps(pointage.multi([str(v) for v in form.getlist("site")]), ensure_ascii=False)
     s.directions = json.dumps(pointage.multi([str(v) for v in form.getlist("direction")]), ensure_ascii=False)
@@ -100,8 +116,10 @@ async def save_settings(request: Request, db: Session = Depends(get_db)):
     def state(on, detail):
         return f"oui ({detail})" if on else "non"
     auth.audit(request, "Rappels de pointage : paramètres", "",
-               f"arrivée {state(s.arrival_enabled, f'{s.arrival_time}, postes +{s.arrival_delay} min')}, "
-               f"départ {state(s.departure_enabled, f'{s.departure_time}, postes +{s.departure_delay} min')}, "
+               f"avertissement du matin {state(s.arrival_enabled, f'{s.arrival_time}, postes +{s.arrival_delay} min')}, "
+               f"alerte du matin {state(s.alert_enabled, f'{s.alert_time}, postes +{s.alert_delay} min')}, "
+               f"avertissement du soir {state(s.predeparture_enabled, f'{s.predeparture_time}, postes -{s.predeparture_before} min')}, "
+               f"départ non pointé {state(s.departure_enabled, f'{s.departure_time}, postes +{s.departure_delay} min')}, "
                f"oubli de la veille {state(s.forgot_enabled, s.forgot_time)}, "
                f"services {rappels.values(s.services) or 'tous'}, sites {rappels.values(s.sites) or 'tous'}, "
                f"directions {rappels.values(s.directions) or 'toutes'}")

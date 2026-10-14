@@ -124,21 +124,31 @@ un poste planifié couvert par une mission approuvée devient « En mission », 
 et de ponctualité avec l'évolution, absences, retards, oublis de badge, autres situations, détail par collaborateur.
 Serveur SMTP et mode test/production des mails de badge ; un seul envoi par responsable et par période.
 
-**Rappels de pointage** (*Administration → Rappels de pointage*) : e-mail aux employés pour limiter les oublis de
-badge. Trois rappels, activables séparément, à heure paramétrable :
-- *arrivée non pointée* : employé attendu (jour ouvré, sans congé, arrêt, télétravail, mission, formation ni repos,
-  hors agents terrain) sans aucun pointage à l'heure choisie (ex. 08:15) ; agent en horaires postés : N minutes
-  après le début de son poste ;
-- *départ non pointé* : employé qui n'a badgé que son arrivée à l'heure choisie (ex. 17:45) ; poste planifié :
-  N minutes après la fin du poste (nuits comprises) ;
+**Rappels de pointage** (*Administration → Rappels de pointage*) : avertissements et alertes par e-mail aux
+employés pour limiter les oublis de badge. Cinq messages, activables séparément, à heure paramétrable et au texte
+personnalisable (objet et texte, variables `{prenom}`, `{nom}`, `{matricule}`, `{date}`, `{poste}`, `{arrivee}`,
+`{dernier}`) :
+- *matin — avertissement* (arrivée non pointée) : employé attendu (jour ouvré, sans congé, arrêt, télétravail,
+  mission, formation ni repos, hors agents terrain) sans aucun pointage à l'heure choisie (ex. 08:15) ; horaires
+  postés : N minutes après le début du poste ;
+- *matin — alerte* : toujours aucun pointage plus tard (ex. 09:30, ou N minutes après le début du poste), avec le
+  responsable N+1 en copie si souhaité ;
+- *soir — avertissement « n'oubliez pas de badger en partant »* : à tous les employés encore présents (nombre impair
+  de pointages) à l'heure choisie (ex. 16:45), ou N minutes avant la fin de leur poste ;
+- *soir — départ non pointé* : employé qui n'a badgé que son arrivée à l'heure choisie (ex. 17:45) ; poste
+  planifié : N minutes après la fin du poste (nuits comprises) ;
 - *oubli de la veille* : chaque matin, rappel des journées restées incomplètes (un seul pointage) des 3 derniers
   jours, avec le responsable N+1 en copie si souhaité.
 
 Destinataires filtrables par service, site et direction, matricules exclus, message libre ajouté à chaque rappel.
 Un seul rappel par employé, type et journée ; vérification toutes les 5 minutes ; aucun envoi si les pointages ne
 sont plus synchronisés depuis le délai choisi (garde-fou). Même serveur SMTP et même mode test/production que les
-mails de badge. La page montre la situation du jour (qui recevrait quel rappel, à quelle heure), un aperçu, un essai
+mails de badge. La page montre la situation du jour (qui recevrait quel message, à quelle heure), un aperçu, un essai
 et le journal des envois.
+
+**Durée validée masquable** (*Administration → Paramètres horaires → Affichage du suivi journalier*) : visible pour
+tous, seulement pour les RH et les administrateurs, ou masquée pour tous (écran du suivi et export Excel). Quand elle
+est visible, chacun peut aussi la masquer pour lui-même (« Masquer la durée validée » dans le suivi).
 
 **Arrêts maladie** (*Arrêts maladie*, *Administration → Circuit arrêts maladie*) : déclaration par l'employé avec
 justificatif, circuit de validation paramétrable, saisie RH validée d'office. **Notifications par e-mail**

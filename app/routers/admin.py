@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from .. import auth, pointage, scheduler
 from ..database import get_db
 from ..errors import friendly
-from ..models import ROLES, AuditEntry, Connection, PointageConfig, SyncJob, User, utcnow
+from ..models import ROLES, VALIDEE_DISPLAY, AuditEntry, Connection, PointageConfig, SyncJob, User, utcnow
 from ..sync import is_running, make_engine
 from ..web import flash, redirect, render, require_login
 
@@ -265,7 +265,27 @@ def params_page(request: Request, db: Session = Depends(get_db)):
             context["error"] = friendly(exc)
         finally:
             engine.dispose()
+    from .suivi import suivi_settings
+
+    context.update(validee_modes=VALIDEE_DISPLAY, validee_display=suivi_settings(db).validee_display or "tous")
     return render(request, "admin/parametres.html", **context)
+
+
+@router.post("/parametres/affichage")
+def display_save(request: Request, validee_display: str = Form("tous"), db: Session = Depends(get_db)):
+    """Visibilité de la durée validée dans le suivi journalier (écran et export)."""
+    from .suivi import suivi_settings
+
+    if validee_display not in VALIDEE_DISPLAY:
+        validee_display = "tous"
+    s = suivi_settings(db)
+    before = s.validee_display or "tous"
+    s.validee_display, s.updated_at, s.updated_by = validee_display, utcnow(), request.session.get("user", "")
+    db.commit()
+    auth.audit(request, "Affichage du suivi : durée validée", "",
+               f"{VALIDEE_DISPLAY[before]} → {VALIDEE_DISPLAY[validee_display]}")
+    flash(request, f"Durée validée dans le suivi : {VALIDEE_DISPLAY[validee_display].lower()}.", "ok")
+    return redirect("/admin/parametres#affichage")
 
 
 @router.post("/parametres")

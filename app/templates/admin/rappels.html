@@ -13,6 +13,15 @@
   </details>
 </div>
 {% endmacro %}
+{% macro texte(kind) %}{% set t = texts.get(kind, {}) %}
+<details class="custom-text" {{ 'open' if t.subject or t.body }}>
+  <summary>Personnaliser le message{% if t.subject or t.body %} <span class="badge ok">personnalisé</span>{% endif %}</summary>
+  <label>Objet <input name="subject_{{ kind }}" value="{{ t.subject or '' }}" placeholder="{{ defaults[kind].subject }}"></label>
+  <label>Texte <span class="muted small">(laisser vide pour le texte par défaut ; une ligne vide sépare deux paragraphes)</span>
+    <textarea name="body_{{ kind }}" rows="4" placeholder="{{ defaults[kind].body | replace('{_poste}', '') }}">{{ t.body or '' }}</textarea></label>
+  <p class="muted small">Variables : {% for v in variables %}<code>{{ '{' ~ v ~ '}' }}</code>{{ ', ' if not loop.last }}{% endfor %}.</p>
+</details>
+{% endmacro %}
 {% block content %}
 <div class="page-head">
   <div><h1>Rappels de pointage</h1>
@@ -47,13 +56,40 @@
 
 <form method="post" action="/admin/rappels/parametres" class="card form">
   <h2>Rappels et heures d'envoi</h2>
+  <p class="muted small">Chaque message est activable séparément. Horaire de bureau : heure fixe ; horaires postés (planning) :
+    heure calculée à partir du poste de chacun, nuits comprises.</p>
+
+  <h3 class="moment">Le matin</h3>
   <div class="digest-plan">
     <label class="check"><input type="checkbox" name="arrival_enabled" value="true" {{ 'checked' if s.arrival_enabled }}>
-      <span><strong>Arrivée non pointée</strong> — l'employé attendu n'a encore aucun pointage</span></label>
+      <span><strong>Avertissement : arrivée non pointée</strong> — l'employé attendu n'a encore aucun pointage</span></label>
     <div class="inline">
       <label>Horaire de bureau : à <input name="arrival_time" value="{{ s.arrival_time or '08:15' }}" size="5" placeholder="08:15"></label>
       <label>Horaires postés : <input name="arrival_delay" value="{{ s.arrival_delay if s.arrival_delay is not none else 15 }}" size="4" inputmode="numeric"> min après le début du poste</label>
     </div>
+    {{ texte('arrivee') }}
+  </div>
+  <div class="digest-plan">
+    <label class="check"><input type="checkbox" name="alert_enabled" value="true" {{ 'checked' if s.alert_enabled }}>
+      <span><strong>Alerte : toujours aucun pointage</strong> — second message, plus tard dans la matinée</span></label>
+    <div class="inline">
+      <label>Horaire de bureau : à <input name="alert_time" value="{{ s.alert_time or '09:30' }}" size="5" placeholder="09:30"></label>
+      <label>Horaires postés : <input name="alert_delay" value="{{ s.alert_delay if s.alert_delay is not none else 60 }}" size="4" inputmode="numeric"> min après le début du poste</label>
+      <label class="check"><input type="checkbox" name="alert_cc_manager" value="true" {{ 'checked' if s.alert_cc_manager }}>
+        <span>Responsable N+1 en copie (mode production)</span></label>
+    </div>
+    {{ texte('alerte') }}
+  </div>
+
+  <h3 class="moment">Le soir</h3>
+  <div class="digest-plan">
+    <label class="check"><input type="checkbox" name="predeparture_enabled" value="true" {{ 'checked' if s.predeparture_enabled }}>
+      <span><strong>Avertissement : n'oubliez pas de badger en partant</strong> — à tous les employés encore présents (nombre impair de pointages)</span></label>
+    <div class="inline">
+      <label>Horaire de bureau : à <input name="predeparture_time" value="{{ s.predeparture_time or '16:45' }}" size="5" placeholder="16:45"></label>
+      <label>Horaires postés : <input name="predeparture_before" value="{{ s.predeparture_before if s.predeparture_before is not none else 15 }}" size="4" inputmode="numeric"> min avant la fin du poste</label>
+    </div>
+    {{ texte('avant_depart') }}
   </div>
   <div class="digest-plan">
     <label class="check"><input type="checkbox" name="departure_enabled" value="true" {{ 'checked' if s.departure_enabled }}>
@@ -62,17 +98,20 @@
       <label>Horaire de bureau : à <input name="departure_time" value="{{ s.departure_time or '17:45' }}" size="5" placeholder="17:45"></label>
       <label>Horaires postés : <input name="departure_delay" value="{{ s.departure_delay if s.departure_delay is not none else 30 }}" size="4" inputmode="numeric"> min après la fin du poste</label>
     </div>
+    {{ texte('depart') }}
   </div>
+
+  <h3 class="moment">Le lendemain</h3>
   <div class="digest-plan">
     <label class="check"><input type="checkbox" name="forgot_enabled" value="true" {{ 'checked' if s.forgot_enabled }}>
       <span><strong>Oubli de la veille</strong> — journée restée incomplète (un seul pointage), rappelée le lendemain ({{ lookback }} jours au plus)</span></label>
     <div class="inline">
       <label>Chaque matin à <input name="forgot_time" value="{{ s.forgot_time or '09:00' }}" size="5" placeholder="09:00"></label>
       <label class="check"><input type="checkbox" name="forgot_cc_manager" value="true" {{ 'checked' if s.forgot_cc_manager }}>
-        <span>Mettre le responsable N+1 en copie (mode production)</span></label>
+        <span>Responsable N+1 en copie (mode production)</span></label>
     </div>
+    {{ texte('oubli') }}
   </div>
-
   <h3>Destinataires</h3>
   <p class="muted small">Sans sélection : tous les employés actifs qui ont une adresse e-mail.</p>
   <div class="row">

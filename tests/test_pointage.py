@@ -1775,7 +1775,8 @@ def test_punch_reminders(configured, pg, logged_client, monkeypatch):
     def configure(**values):
         with SessionLocal() as db:
             s = rappels.get_settings(db)
-            for k, v in {"arrival_enabled": False, "departure_enabled": False, "forgot_enabled": False, "services": "[]",
+            for k, v in {"arrival_enabled": False, "departure_enabled": False, "forgot_enabled": False, "alert_enabled": False,
+                         "predeparture_enabled": False, "alert_cc_manager": False, "texts": "{}", "services": "[]",
                          "sites": "[]", "directions": "[]", "excluded": "", "forgot_cc_manager": False, **values}.items():
                 setattr(s, k, v)
             db.commit()
@@ -1831,6 +1832,39 @@ def test_punch_reminders(configured, pg, logged_client, monkeypatch):
             db.query(ReminderLog).delete()
             db.commit()
 
+        # Alerte du matin (2e niveau) à 9h30 : toujours aucun pointage pour Ba Khady ; responsable (Sow Fatou) en copie.
+        configure(alert_enabled=True, alert_time="09:30", alert_cc_manager=True)
+        with SessionLocal() as db:
+            db.query(MailSettings).one().mode = "production"
+            db.commit()
+        assert rappels.run_due(datetime(2026, 9, 21, 9, 0)) == {"status": "idle"}
+        assert rappels.run_due(datetime(2026, 9, 21, 9, 35)) == {"status": "done", "sent": 1, "skipped": 0, "failed": 0}
+        msg = delivered[-1]
+        assert (msg["To"], msg["Cc"], msg["Subject"]) == ("khady.ba@exemple.com", "fatou.sow@exemple.com",
+                                                         "Alerte : aucun pointage enregistré ce matin")
+        with SessionLocal() as db:
+            db.query(MailSettings).one().mode = "test"
+            db.commit()
+
+        # Avertissement du soir, texte personnalisé depuis l'administration : à 16h45, tous les employés encore
+        # « entrés » (nombre impair de pointages) : Diallo Awa (3 pointages) et Fall Ibou (1 seul).
+        r = logged_client.post("/admin/rappels/parametres", data={
+            "predeparture_enabled": "true", "predeparture_time": "16h45", "predeparture_before": "15",
+            "subject_avant_depart": "{prenom}, pensez à badger ce soir",
+            "body_avant_depart": "Arrivée enregistrée à {arrivee} ({date}).\n\nBonne soirée {prenom} {nom} !"},
+            follow_redirects=True)
+        assert "Paramètres des rappels enregistrés" in r.text and "personnalisé" in r.text
+        before = len(delivered)
+        assert rappels.run_due(datetime(2026, 9, 21, 16, 50)) == {"status": "done", "sent": 2, "skipped": 0, "failed": 0}
+        sent = {m["Subject"]: m.get_body(("html",)).get_content() for m in delivered[before:]}
+        assert set(sent) == {"[TEST] Awa, pensez à badger ce soir", "[TEST] Ibou, pensez à badger ce soir"}
+        body = sent["[TEST] Awa, pensez à badger ce soir"]
+        assert "Arrivée enregistrée à 07h20 (lundi 21 septembre 2026)." in body and "Bonne soirée Awa Diallo !" in body
+        assert "Awa, pensez à badger ce soir</h1>" in body
+        with SessionLocal() as db:
+            db.query(ReminderLog).delete()
+            db.commit()
+
         # Filtres : matricule exclu, service non retenu.
         configure(departure_enabled=True, excluded="E004")
         assert rappels.run_due(datetime(2026, 9, 21, 17, 50)) == {"status": "idle"}
@@ -1881,9 +1915,56 @@ def test_punch_reminders(configured, pg, logged_client, monkeypatch):
         with SessionLocal() as db:
             db.query(ReminderLog).delete()
             s = rappels.get_settings(db)
-            s.arrival_enabled = s.departure_enabled = s.forgot_enabled = False
-            s.services, s.excluded, s.message = "[]", "", ""
+            s.arrival_enabled = s.departure_enabled = s.forgot_enabled = s.alert_enabled = s.predeparture_enabled = False
+            s.services, s.excluded, s.message, s.texts = "[]", "", "", "{}"
             ms = db.query(MailSettings).first()
             ms.smtp_host, ms.from_email, ms.mode, ms.test_recipients = "", "", "test", ""
             db.commit()
         logged_client.post("/admin/pointage", data={**pointage.Mapping.from_json(original).__dict__, "conn_id": conn_id})
+
+
+def test_hide_validated_duration(configured, logged_client):
+    """Durée validée du suivi : règle d'affichage (tous / RH et admin / personne) et choix personnel, écran et export."""
+    from fastapi.testclient import TestClient
+    from openpyxl import load_workbook
+
+    from app import auth
+    from app.main import app
+
+    url = f"/suivi?date={MON.isoformat()}"
+    page = logged_client.get(url).text
+    assert "Durée validée" in page and "Masquer la durée validée" in page
+    # Choix personnel : masquée à l'écran et dans l'export, puis réaffichée.
+    logged_client.get("/suivi/affichage?validee=0", headers={"referer": f"http://testserver{url}"})
+    page = logged_client.get(url).text
+    assert "Durée validée" not in page and "Afficher la durée validée" in page and "Durée effective moyenne" in page
+    ws = load_workbook(io.BytesIO(logged_client.get(f"/suivi/export.xlsx?date={MON.isoformat()}").content))["Suivi journalier"]
+    headers = [c.value for c in ws[1]]
+    assert "Durée validée" not in headers and "Durée validée (min)" not in headers
+    assert headers[10:12] == ["Durée effective", "Durée effective (min)"] and headers[12] == "Responsable"
+    logged_client.get("/suivi/affichage?validee=1")
+    assert "Durée validée" in logged_client.get(url).text
+
+    # Règle « RH et administrateurs » : un lecteur ne la voit plus (ni bouton pour la réafficher), l'admin si.
+    r = logged_client.post("/admin/parametres/affichage", data={"validee_display": "rh"}, follow_redirects=True)
+    assert "visible seulement pour les rh et les administrateurs" in r.text
+    with SessionLocal() as db:
+        db.query(User).filter_by(username="lect_vd").delete()
+        db.add(User(username="lect_vd", role="lecteur", password_hash=auth.hash_password("motdepasse7")))
+        db.commit()
+    try:
+        client = TestClient(app)
+        client.post("/login", data={"username": "lect_vd", "password": "motdepasse7"})
+        page = client.get(url).text
+        assert "Durée validée" not in page and "Afficher la durée validée" not in page
+        ws = load_workbook(io.BytesIO(client.get(f"/suivi/export.xlsx?date={MON.isoformat()}").content))["Suivi journalier"]
+        assert "Durée validée" not in [c.value for c in ws[1]]
+        assert "Durée validée" in logged_client.get(url).text
+        # Règle « masquée pour tous » : l'administrateur ne la voit plus non plus.
+        logged_client.post("/admin/parametres/affichage", data={"validee_display": "aucun"})
+        assert "Durée validée" not in logged_client.get(url).text
+    finally:
+        logged_client.post("/admin/parametres/affichage", data={"validee_display": "tous"})
+        with SessionLocal() as db:
+            db.query(User).filter_by(username="lect_vd").delete()
+            db.commit()

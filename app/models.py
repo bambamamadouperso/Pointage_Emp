@@ -513,7 +513,15 @@ class StaffAccessSettings(Base):
     updated_by: Mapped[str] = mapped_column(String(100), default="")
 
 
-REMINDER_KINDS = {"arrivee": "Arrivée non pointée", "depart": "Départ non pointé", "oubli": "Oubli de la veille"}
+# Ordre d'affichage : matin (avertissement puis alerte), soir (avertissement avant le départ, puis départ non pointé),
+# lendemain (oubli de la veille).
+REMINDER_KINDS = {
+    "arrivee": "Matin — avertissement : arrivée non pointée",
+    "alerte": "Matin — alerte : toujours aucun pointage",
+    "avant_depart": "Soir — avertissement : pensez à badger en partant",
+    "depart": "Soir — départ non pointé",
+    "oubli": "Oubli de la veille",
+}
 
 
 class ReminderSettings(Base):
@@ -532,6 +540,19 @@ class ReminderSettings(Base):
     departure_enabled: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True, default=False)
     departure_time: Mapped[Optional[str]] = mapped_column(String(5), nullable=True, default="17:45")
     departure_delay: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=30)
+    # Alerte du matin (2e niveau) : toujours aucun pointage à une heure plus tardive (poste planifié : N minutes après
+    # son début), avec le responsable N+1 en copie si souhaité.
+    alert_enabled: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True, default=False)
+    alert_time: Mapped[Optional[str]] = mapped_column(String(5), nullable=True, default="09:30")
+    alert_delay: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=60)
+    alert_cc_manager: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True, default=False)
+    # Avertissement du soir (préventif) : employé toujours « entré » (nombre impair de pointages) à l'heure indiquée,
+    # ou N minutes avant la fin de son poste planifié : « n'oubliez pas de badger en partant ».
+    predeparture_enabled: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True, default=False)
+    predeparture_time: Mapped[Optional[str]] = mapped_column(String(5), nullable=True, default="16:45")
+    predeparture_before: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=15)
+    # Objet et texte personnalisés par type de rappel (JSON {type: {"subject": …, "body": …}}, vide = texte par défaut).
+    texts: Mapped[Optional[str]] = mapped_column(Text, nullable=True, default="{}")
     # Oubli de la veille : rappel le matin des journées restées incomplètes (un seul pointage), 3 jours au plus.
     forgot_enabled: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True, default=False)
     forgot_time: Mapped[Optional[str]] = mapped_column(String(5), nullable=True, default="09:00")
@@ -569,3 +590,21 @@ class ReminderLog(Base):
     status: Mapped[str] = mapped_column(String(20), default="sent")  # sent, failed, skipped
     error: Mapped[str] = mapped_column(Text, default="")
     attempts: Mapped[int] = mapped_column(Integer, default=1)
+
+
+VALIDEE_DISPLAY = {
+    "tous": "Visible pour tous",
+    "rh": "Visible seulement pour les RH et les administrateurs",
+    "aucun": "Masquée pour tous",
+}
+
+
+class SuiviSettings(Base):
+    """Affichage du suivi journalier (une seule ligne) : visibilité de la durée validée."""
+
+    __tablename__ = "suivi_settings"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    validee_display: Mapped[Optional[str]] = mapped_column(String(20), nullable=True, default="tous")
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    updated_by: Mapped[str] = mapped_column(String(100), default="")

@@ -14,9 +14,9 @@ from ..auth import audit
 from ..database import get_db
 from ..joblog import write_log
 from ..errors import friendly
-from ..models import PointageConfig, User
+from ..models import VALIDEE_DISPLAY, PointageConfig, SuiviSettings, User
 from ..sync import make_engine
-from ..web import render, require_login
+from ..web import back_url, redirect, render, require_login
 
 router = APIRouter(prefix="/suivi", dependencies=[Depends(require_login)])
 
@@ -97,6 +97,29 @@ def objectif_minutes(engine, mapping, day) -> int:
         return 480
 
 
+def suivi_settings(db: Session) -> SuiviSettings:
+    row = db.query(SuiviSettings).order_by(SuiviSettings.id).first()
+    if row is None:
+        row = SuiviSettings(validee_display="tous")
+        db.add(row)
+        db.commit()
+    return row
+
+
+def validee_allowed(db: Session, role: Optional[str]) -> bool:
+    """La règle d'affichage (Paramètres horaires) autorise-t-elle ce rôle à voir la durée validée ?"""
+    mode = suivi_settings(db).validee_display or "tous"
+    if mode not in VALIDEE_DISPLAY:
+        mode = "tous"
+    return mode == "tous" or (mode == "rh" and role in ("admin", "rh"))
+
+
+def show_validee(request: Request, db: Session) -> tuple[bool, bool]:
+    """(autorisée par la règle, affichée) : chacun peut en plus la masquer pour lui-même (bouton du suivi)."""
+    allowed = validee_allowed(db, request.session.get("role"))
+    return allowed, allowed and not request.session.get("hide_validee")
+
+
 class ScopeError(Exception):
     pass
 
@@ -129,10 +152,18 @@ def apply_scope(request: Request, db: Session, engine, mapping: pointage.Mapping
     return found[1]
 
 
+@router.get("/affichage")
+def display_toggle(request: Request, validee: str = "1"):
+    """Masque ou réaffiche la durée validée pour l'utilisateur connecté (mémorisé pour sa session)."""
+    request.session["hide_validee"] = validee == "0"
+    return redirect(back_url(request, "/suivi"))
+
+
 @router.get("")
 def suivi(request: Request, db: Session = Depends(get_db)):
     cfg, mapping = load_config(db)
     f, warning = _filters(request)
+    validee_ok, validee_shown = show_validee(request, db)
     try:
         page = max(int(request.query_params.get("page", 1)), 1)
     except ValueError:
@@ -145,7 +176,8 @@ def suivi(request: Request, db: Session = Depends(get_db)):
     context = dict(f=f, warning=warning, today=date.today(), statuts=pointage.STATUTS, page=page, size=size, page_sizes=PAGE_SIZES,
                    hhmm=pointage.hhmm, configured=mapping is not None, data=None, error=None, services=[],
                    managers=[], categories=[], directions=[], dims=dimension_filters(mapping), objectif_min=480, scope_label=None, population=None, last_punch=None, stale=False, has_hierarchy=bool(mapping and mapping.hier_table),
-                   single_day=f.du == f.au, mode="jour" if f.du == f.au else "periode")
+                   single_day=f.du == f.au, mode="jour" if f.du == f.au else "periode",
+                   validee_ok=validee_ok, show_validee=validee_shown)
     if mapping is None:
         return render(request, "suivi.html", **context)
     engine = make_engine(cfg.conn, **pointage.WEB_LIMITS)
@@ -210,6 +242,7 @@ def export(request: Request, db: Session = Depends(get_db)):
     if mapping is None:
         return Response("Module de pointage non configuré.", status_code=400)
     f, _ = _filters(request)
+    _, with_validee = show_validee(request, db)
     engine = make_engine(cfg.conn, **pointage.WEB_LIMITS)
     try:
         apply_scope(request, db, engine, mapping, f)
@@ -292,6 +325,16 @@ def export(request: Request, db: Session = Depends(get_db)):
         ws.cell(row, col).number_format = "HH:MM"
     for col in (11, 12):
         ws.cell(row, col).number_format = "[H]:MM"
+    if not with_validee:
+        # Durée validée masquée (règle d'affichage ou choix de l'utilisateur) : colonnes retirées de l'export.
+        for col in (13, 11):
+            ws.delete_cols(col)
+        for i, cell in enumerate(ws[1], 1):
+            ws.column_dimensions[get_column_letter(i)].width = max(12, len(str(cell.value or "")) + 2)
+        ws.column_dimensions["C"].width = 24
+        ws.column_dimensions["E"].width = 22
+        ws.column_dimensions["M"].width = 26
+        ws.auto_filter.ref = f"A1:{get_column_letter(ws.max_column)}{len(rows) + 1}"
     info = wb.create_sheet("Filtres")
     for label, value in [
         ("Du", f.du.strftime("%d/%m/%Y")), ("Au", f.au.strftime("%d/%m/%Y")), ("Recherche", f.q or "—"),
@@ -302,6 +345,7 @@ def export(request: Request, db: Session = Depends(get_db)):
         ("Équipe", (f.team + (" (directs)" if f.directs else "")) if f.team else "Toutes"),
         ("Périmètre", "équipe du compte" if f.scope_root is not None else "tout le personnel"),
         ("Statuts", ", ".join(pointage.STATUTS[s][0] for s in f.statuts) or "Tous"),
+        ("Durée validée", "affichée" if with_validee else "masquée"),
         ("Lignes", len(rows)), ("Exporté par", request.session.get("user", "")),
     ]:
         info.append([label, value])

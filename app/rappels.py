@@ -1,10 +1,15 @@
 """Rappels de pointage envoyés par e-mail aux employés, pour limiter les oublis de badge.
 
-Trois rappels, chacun activable et à heure paramétrable :
-- arrivée : employé attendu aujourd'hui (jour ouvré, ni congé, ni arrêt, ni télétravail, ni terrain, ni mission…)
-  qui n'a pas encore badgé, à l'heure indiquée ; agent en horaires postés : N minutes après le début de son poste ;
-- départ : employé qui n'a qu'un seul pointage (son arrivée) à l'heure indiquée ; poste planifié : N minutes après
-  la fin de son poste (nuits comprises) ;
+Cinq messages, chacun activable, à heure paramétrable et au texte personnalisable :
+- matin, avertissement (arrivée non pointée) : employé attendu aujourd'hui (jour ouvré, ni congé, ni arrêt, ni
+  télétravail, ni terrain, ni mission…) qui n'a pas encore badgé, à l'heure indiquée ; agent en horaires postés :
+  N minutes après le début de son poste ;
+- matin, alerte : toujours aucun pointage à une heure plus tardive (poste : N minutes après son début), avec le
+  responsable N+1 en copie si souhaité ;
+- soir, avertissement avant le départ : employé toujours « entré » (nombre impair de pointages) à l'heure indiquée,
+  ou N minutes avant la fin de son poste : « n'oubliez pas de badger en partant » ;
+- soir, départ non pointé : employé qui n'a qu'un seul pointage (son arrivée) à l'heure indiquée ; poste planifié :
+  N minutes après la fin de son poste (nuits comprises) ;
 - oubli de la veille : le matin, rappel des journées restées incomplètes (un seul pointage) des 3 derniers jours,
   avec copie au responsable si souhaité.
 
@@ -34,6 +39,48 @@ MAX_ATTEMPTS = 3
 WINDOW = timedelta(hours=3)  # au-delà, un rappel non envoyé (application arrêtée) est abandonné
 LOOKBACK_DAYS = 3            # oubli de la veille : journées incomplètes des 3 derniers jours
 _TIME = re.compile(r"^([01]?\d|2[0-3])[:hH]([0-5]\d)$")
+PRESENT = ("A_L_HEURE", "RETARD", "INCOMPLET")
+
+# Textes par défaut. Variables : {prenom}, {nom}, {matricule}, {date}, {poste}, {arrivee} (1er pointage), {dernier}
+# (dernier pointage) ; {_poste} = « (poste …) » précédé d'une espace, ou rien (textes par défaut seulement).
+DEFAULT_TEXTS = {
+    "arrivee": {
+        "subject": "Rappel : votre arrivée n'est pas encore pointée",
+        "title": "Pensez à pointer votre arrivée",
+        "body": "Nous n'avons encore enregistré aucun pointage pour vous aujourd'hui, {date}{_poste}.\n\n"
+                "Si vous êtes arrivé(e), badgez dès maintenant. Si vous êtes absent(e) (congé, maladie, mission, "
+                "télétravail…), prévenez votre responsable pour que votre journée soit correctement enregistrée.",
+    },
+    "alerte": {
+        "subject": "Alerte : aucun pointage enregistré ce matin",
+        "title": "Aucun pointage ce matin",
+        "body": "Aucun pointage n'est encore enregistré pour vous aujourd'hui, {date}{_poste}.\n\n"
+                "Si vous êtes présent(e), badgez immédiatement. Sinon, informez sans attendre votre responsable de "
+                "votre absence.",
+    },
+    "avant_depart": {
+        "subject": "N'oubliez pas de badger en partant",
+        "title": "N'oubliez pas de badger en partant",
+        "body": "Vous avez pointé votre arrivée à {arrivee} aujourd'hui, {date}{_poste}.\n\n"
+                "Avant de quitter votre poste, pensez à badger votre départ : sans ce pointage, votre journée restera "
+                "incomplète.",
+    },
+    "depart": {
+        "subject": "Rappel : pensez à pointer votre départ",
+        "title": "Pensez à pointer votre départ",
+        "body": "Votre dernier pointage aujourd'hui date de {dernier}{_poste} : vous êtes toujours enregistré(e) "
+                "comme présent(e).\n\nPensez à badger en quittant votre poste, sans quoi votre journée restera "
+                "incomplète.",
+    },
+    "oubli": {
+        "subject": "Pointage incomplet le {date}",
+        "title": "Un pointage manque sur votre journée",
+        "body": "Un seul pointage a été enregistré le {date}, à {arrivee}{_poste} : il manque votre arrivée ou votre "
+                "départ.\n\nSignalez l'heure manquante à votre responsable pour régulariser votre journée, et pensez "
+                "à badger à chaque entrée et sortie.",
+    },
+}
+VARIABLES = ["prenom", "nom", "matricule", "date", "poste", "arrivee", "dernier"]
 
 
 # --------------------------------------------------------------------------- réglages
@@ -44,8 +91,10 @@ def get_settings(db) -> ReminderSettings:
     if row is None:
         row = ReminderSettings(arrival_enabled=False, arrival_time="08:15", arrival_delay=15, departure_enabled=False,
                                departure_time="17:45", departure_delay=30, forgot_enabled=False, forgot_time="09:00",
-                               forgot_cc_manager=False, services="[]", sites="[]", directions="[]", excluded="",
-                               max_lag_minutes=60, message="")
+                               forgot_cc_manager=False, alert_enabled=False, alert_time="09:30", alert_delay=60,
+                               alert_cc_manager=False, predeparture_enabled=False, predeparture_time="16:45",
+                               predeparture_before=15, texts="{}", services="[]", sites="[]", directions="[]",
+                               excluded="", max_lag_minutes=60, message="")
         db.add(row)
         db.commit()
     return row
@@ -75,8 +124,19 @@ def excluded_keys(raw: Optional[str]) -> set[str]:
 
 
 def enabled_kinds(s: ReminderSettings) -> list[str]:
-    return [k for k, on in (("arrivee", s.arrival_enabled), ("depart", s.departure_enabled),
-                            ("oubli", s.forgot_enabled)) if on]
+    on = {"arrivee": s.arrival_enabled, "alerte": s.alert_enabled, "avant_depart": s.predeparture_enabled,
+          "depart": s.departure_enabled, "oubli": s.forgot_enabled}
+    return [k for k in REMINDER_KINDS if on[k]]
+
+
+def custom_texts(s: ReminderSettings) -> dict:
+    """Objets et textes personnalisés : {type: {"subject": …, "body": …}} (valeurs vides = texte par défaut)."""
+    try:
+        data = json.loads(s.texts or "{}")
+    except ValueError:
+        return {}
+    return {k: {f: str(v.get(f) or "") for f in ("subject", "body")} for k, v in data.items()
+            if k in REMINDER_KINDS and isinstance(v, dict)}
 
 
 # --------------------------------------------------------------------------- qui doit recevoir un rappel
@@ -124,6 +184,19 @@ def due_at(kind: str, row: dict, s: ReminderSettings, today: date) -> Optional[d
         if shift:
             return row["s_debut"] + timedelta(minutes=s.arrival_delay or 0)
         return datetime.combine(today, clock(s.arrival_time, "08:15")) if row["jour"] == today else None
+    if kind == "alerte":
+        if row["statut"] != "ABSENT":
+            return None
+        if shift:
+            return row["s_debut"] + timedelta(minutes=s.alert_delay or 0)
+        return datetime.combine(today, clock(s.alert_time, "09:30")) if row["jour"] == today else None
+    if kind == "avant_depart":
+        # Toujours « entré » (nombre impair de pointages) : prévenir avant le départ.
+        if row["statut"] not in PRESENT or (row["nb"] or 0) % 2 == 0:
+            return None
+        if shift:
+            return row["s_fin"] - timedelta(minutes=s.predeparture_before or 0)
+        return datetime.combine(today, clock(s.predeparture_time, "16:45")) if row["jour"] == today else None
     if kind == "depart":
         if row["statut"] != "INCOMPLET":  # un seul pointage : l'arrivée (même définition que le suivi)
             return None
@@ -196,34 +269,30 @@ def _poste(row: dict) -> str:
     return ""
 
 
-def render(kind: str, row: dict, company: str = "", message: str = "") -> tuple[str, str, str]:
-    """(objet, HTML, texte) d'un rappel."""
-    prenom = (row.get("prenom") or row.get("nom") or "").strip()
-    jour = french_day(row["jour"])
+def fill(template: str, ctx: dict) -> str:
+    """Remplace les {variables} connues ; le reste du texte est laissé tel quel."""
+    return re.sub(r"\{(_?[a-z]+)\}", lambda m: str(ctx[m.group(1)]) if m.group(1) in ctx else m.group(0), template or "")
+
+
+def text_context(row: dict) -> dict:
     poste = _poste(row)
-    if kind == "arrivee":
-        subject = "Rappel : votre arrivée n'est pas encore pointée"
-        title = "Pensez à pointer votre arrivée"
-        lines = [f"Nous n'avons encore enregistré aucun pointage pour vous aujourd'hui, {jour}"
-                 + (f" ({poste})" if poste else "") + ".",
-                 "Si vous êtes arrivé(e), badgez dès maintenant. Si vous êtes absent(e) (congé, maladie, mission, "
-                 "télétravail…), prévenez votre responsable pour que votre journée soit correctement enregistrée."]
-    elif kind == "depart":
-        subject = "Rappel : pensez à pointer votre départ"
-        title = "Pensez à pointer votre départ"
-        lines = [f"Votre dernier pointage aujourd'hui date de {_hm(row.get('p2'))}"
-                 + (f" ({poste})" if poste else "") + " : vous êtes toujours enregistré(e) comme présent(e).",
-                 "Pensez à badger en quittant votre poste, sans quoi votre journée restera incomplète."]
-    else:
-        subject = f"Pointage incomplet le {jour}"
-        title = "Un pointage manque sur votre journée"
-        lines = [f"Un seul pointage a été enregistré le {jour}, à {_hm(row.get('p1'))}"
-                 + (f" ({poste})" if poste else "") + " : il manque votre arrivée ou votre départ.",
-                 "Signalez l'heure manquante à votre responsable pour régulariser votre journée, et pensez à badger "
-                 "à chaque entrée et sortie."]
+    return {"prenom": (row.get("prenom") or row.get("nom") or "").strip(), "nom": (row.get("nom") or "").strip(),
+            "matricule": row.get("matricule") or "", "date": french_day(row["jour"]), "poste": poste,
+            "_poste": f" ({poste})" if poste else "", "arrivee": _hm(row.get("p1")), "dernier": _hm(row.get("p2"))}
+
+
+def render(kind: str, row: dict, company: str = "", message: str = "",
+           custom: Optional[dict] = None) -> tuple[str, str, str]:
+    """(objet, HTML, texte) d'un rappel ; custom = objet et texte personnalisés de ce type (vides = par défaut)."""
+    ctx = text_context(row)
+    prenom = ctx["prenom"]
+    default, custom = DEFAULT_TEXTS[kind], custom or {}
+    subject = fill(custom.get("subject") or default["subject"], ctx).replace("\n", " ").strip()
+    title = subject if custom.get("subject") else default["title"]
+    lines = [p.strip() for p in re.split(r"\n\s*\n", fill(custom.get("body") or default["body"], ctx)) if p.strip()]
     extra = (message or "").strip()
-    paragraphs = "".join(f'<p style="margin:0 0 12px;font-size:15px;line-height:1.55;color:#2c3a4b;">{html.escape(t, quote=False)}</p>'
-                         for t in lines)
+    paragraphs = "".join(f'<p style="margin:0 0 12px;font-size:15px;line-height:1.55;color:#2c3a4b;">'
+                         f'{html.escape(t, quote=False).replace(chr(10), "<br>")}</p>' for t in lines)
     if extra:
         paragraphs += ('<p style="margin:14px 0 0;padding:12px 14px;background:#f2f7f7;border-radius:8px;font-size:14px;'
                        'line-height:1.5;color:#2c3a4b;">' + html.escape(extra, quote=False).replace("\n", "<br>") + "</p>")
@@ -253,7 +322,7 @@ def build(kind: str, row: dict, s: ReminderSettings, ms, force_to: Optional[str]
     """Message prêt à partir, ou (None, raison) : (message, None) sinon."""
     from .mails import compose, valid_email
 
-    subject, body, text_body = render(kind, row, ms.company, s.message or "")
+    subject, body, text_body = render(kind, row, ms.company, s.message or "", custom_texts(s).get(kind))
     email = (row.get("email") or "").strip()
     if force_to:
         test = ms.__class__(**{**_copy(ms), "mode": "test", "test_recipients": force_to})
@@ -264,7 +333,8 @@ def build(kind: str, row: dict, s: ReminderSettings, ms, force_to: Optional[str]
     if msg is None:
         return None, "mode test sans adresse de test"
     cc = (row.get("resp_email") or "").strip()
-    if kind == "oubli" and s.forgot_cc_manager and ms.mode == "production" and valid_email(cc) and cc != email:
+    copy = (kind == "oubli" and s.forgot_cc_manager) or (kind == "alerte" and s.alert_cc_manager)
+    if copy and ms.mode == "production" and valid_email(cc) and cc != email:
         msg["Cc"] = cc
     return msg, None
 
@@ -290,7 +360,7 @@ def run_due(now: Optional[datetime] = None) -> dict:
 
 def _first_due(s: ReminderSettings, now: datetime) -> bool:
     """Au moins un rappel peut être dû : évite d'interroger PostgreSQL toutes les 5 minutes pour rien."""
-    if s.arrival_enabled or s.departure_enabled:
+    if s.arrival_enabled or s.departure_enabled or s.alert_enabled or s.predeparture_enabled:
         return True  # postes planifiés : heures propres à chacun
     return s.forgot_enabled and now.time() >= clock(s.forgot_time, "09:00") \
         and datetime.combine(now.date(), clock(s.forgot_time, "09:00")) + WINDOW > now
@@ -413,7 +483,7 @@ def preview(kind: str) -> tuple[str, str]:
 
     with SessionLocal() as db:
         s, ms = get_settings(db), mail_settings_of(db)
-        subject, body, _ = render(kind, sample_row(kind), ms.company, s.message or "")
+        subject, body, _ = render(kind, sample_row(kind), ms.company, s.message or "", custom_texts(s).get(kind))
         return subject, body
 
 

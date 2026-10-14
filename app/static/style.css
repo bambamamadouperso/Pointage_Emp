@@ -881,3 +881,9 @@ select.multi-cols option:checked { background: var(--primary-soft); color: var(-
 .reminder-group > summary::before { content: "▸"; color: var(--muted); transition: transform .15s; }
 .reminder-group[open] > summary::before { transform: rotate(90deg); }
 .reminder-group > .table-wrap, .reminder-group > .empty { margin-top: .6rem; }
+.custom-text { margin-top: .5rem; flex: 0 0 100%; }
+.custom-text > summary { cursor: pointer; color: var(--primary); font-size: .85rem; font-weight: 600; }
+.custom-text[open] { padding: .6rem .8rem; background: var(--primary-soft); border-radius: 10px; }
+.custom-text label { display: block; margin-top: .4rem; }
+.custom-text input, .custom-text textarea { width: 100%; }
+h3.moment { margin: 1.1rem 0 .2rem; font-size: .8rem; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
