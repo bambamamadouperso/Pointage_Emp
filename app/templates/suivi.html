@@ -24,7 +24,31 @@
     {% else %}Un administrateur doit indiquer les tables des pointages et des employés.{% endif %}</div>
 {% else %}
 
+{% set team_label = (managers | selectattr(0, 'equalto', f.team) | map(attribute=1) | first) if f.team else '' %}
+{% set active_filters = [] %}
+{% if f.q %}{% set _ = active_filters.append(('Employé : « ' ~ f.q ~ ' »', request.query_params | with_param('q', ''))) %}{% endif %}
+{% if f.service %}{% set _ = active_filters.append(('Service : ' ~ f.service | join(', '), request.query_params | with_param('service', ''))) %}{% endif %}
+{% if f.direction %}{% set _ = active_filters.append(('Direction : ' ~ f.direction | join(', '), request.query_params | with_param('direction', ''))) %}{% endif %}
+{% if f.site %}{% set _ = active_filters.append(('Site : ' ~ f.site | join(', '), request.query_params | with_param('site', ''))) %}{% endif %}
+{% if f.horaires %}{% set _ = active_filters.append(('Horaires : ' ~ horaires[f.horaires], request.query_params | with_param('horaires', ''))) %}{% endif %}
+{% if f.categorie %}{% set _ = active_filters.append(('Statut du personnel : ' ~ f.categorie | join(', '), request.query_params | with_param('categorie', ''))) %}{% endif %}
+{% if f.team %}{% set _ = active_filters.append(('Équipe de ' ~ (team_label or f.team) ~ (' · directs (N-1)' if f.directs else ''), (request.query_params | with_param('equipe', '')) )) %}{% endif %}
+{% if f.population %}{% set _ = active_filters.append(('Personnes : ' ~ ('employés de la liste' if f.population == 'liste' else 'hors liste'), request.query_params | with_param('pop', ''))) %}{% endif %}
+{% if f.statuts %}{% set labels = [] %}{% for code in f.statuts %}{% set _ = labels.append(statuts[code][0]) %}{% endfor %}{% set _ = active_filters.append(('Statut : ' ~ labels | join(', '), request.query_params | set_statuts([]))) %}{% endif %}
 <form method="get" class="card suivi-filters" id="filters">
+  <div class="filters-head">
+    <button type="button" class="filters-toggle" data-filters-toggle aria-expanded="true" aria-controls="filters-body">
+      <svg class="ico" aria-hidden="true"><use href="#i-sliders"/></svg><span class="filters-title">Filtres</span>
+      <span class="filters-caret" aria-hidden="true">▾</span></button>
+    <span class="filters-summary muted small">{% if single_day %}{{ f.du | jour_fr }}{% else %}du {{ f.du.strftime('%d/%m/%Y') }} au {{ f.au.strftime('%d/%m/%Y') }}{% endif %}
+      · {% if active_filters %}{{ active_filters | length }} filtre(s) appliqué(s){% else %}aucun filtre{% endif %}</span>
+    {% if single_day %}<span class="filters-daynav">
+      <a class="btn ghost step" href="?{{ request.query_params | replace_param('date', (f.du - timedelta(days=1)).isoformat()) }}" title="Jour précédent" aria-label="Jour précédent">‹</a>
+      <a class="btn ghost step" href="?{{ request.query_params | replace_param('date', (f.du + timedelta(days=1)).isoformat()) }}" title="Jour suivant" aria-label="Jour suivant">›</a>
+    </span>{% endif %}
+    <button type="button" class="btn ghost small filters-btn" data-filters-toggle><span class="when-open">Réduire</span><span class="when-closed">Afficher les filtres</span></button>
+  </div>
+  <div class="filters-body" id="filters-body">
   <input type="hidden" name="sort" value="{{ f.sort }}">
   <input type="hidden" name="dir" value="{{ 'desc' if f.desc else 'asc' }}">
   <div class="row">
@@ -60,14 +84,14 @@
     </label>
     <label class="check directs" title="{{ 'Choisissez d\'abord un responsable dans « Équipe de »' if not f.team }}"><input type="checkbox" name="directs" value="1" {{ 'checked' if f.directs }} {{ 'disabled' if not f.team }}> Directs seulement (N-1)</label>
     {% endif %}
-    <label>Personnes
+    <label class="horaires">Personnes
       <select name="pop">
         <option value="">Toutes (liste + hors liste)</option>
         <option value="liste" {{ 'selected' if f.population == 'liste' }}>Employés de la liste</option>
         <option value="hors" {{ 'selected' if f.population == 'hors' }}>Hors liste (pointages sans fiche)</option>
       </select>
     </label>
-    <label>Horaires
+    <label class="horaires">Horaires
       <select name="horaires" title="Agents en horaires postés : au moins un jour planifié sur la période">
         <option value="">Tous (bureau et postés)</option>
         {% for code, label in horaires.items() %}<option value="{{ code }}" {{ 'selected' if f.horaires == code }}>{{ label }}</option>{% endfor %}
@@ -87,19 +111,9 @@
       <button class="btn primary" title="Les listes et cases s'appliquent immédiatement ; ce bouton sert à la recherche par nom">Appliquer</button>
     </div>
   </div>
+  </div>
 </form>
 
-{% set team_label = (managers | selectattr(0, 'equalto', f.team) | map(attribute=1) | first) if f.team else '' %}
-{% set active_filters = [] %}
-{% if f.q %}{% set _ = active_filters.append(('Employé : « ' ~ f.q ~ ' »', request.query_params | with_param('q', ''))) %}{% endif %}
-{% if f.service %}{% set _ = active_filters.append(('Service : ' ~ f.service | join(', '), request.query_params | with_param('service', ''))) %}{% endif %}
-{% if f.direction %}{% set _ = active_filters.append(('Direction : ' ~ f.direction | join(', '), request.query_params | with_param('direction', ''))) %}{% endif %}
-{% if f.site %}{% set _ = active_filters.append(('Site : ' ~ f.site | join(', '), request.query_params | with_param('site', ''))) %}{% endif %}
-{% if f.horaires %}{% set _ = active_filters.append(('Horaires : ' ~ horaires[f.horaires], request.query_params | with_param('horaires', ''))) %}{% endif %}
-{% if f.categorie %}{% set _ = active_filters.append(('Statut du personnel : ' ~ f.categorie | join(', '), request.query_params | with_param('categorie', ''))) %}{% endif %}
-{% if f.team %}{% set _ = active_filters.append(('Équipe de ' ~ (team_label or f.team) ~ (' · directs (N-1)' if f.directs else ''), (request.query_params | with_param('equipe', '')) )) %}{% endif %}
-{% if f.population %}{% set _ = active_filters.append(('Personnes : ' ~ ('employés de la liste' if f.population == 'liste' else 'hors liste'), request.query_params | with_param('pop', ''))) %}{% endif %}
-{% if f.statuts %}{% set labels = [] %}{% for code in f.statuts %}{% set _ = labels.append(statuts[code][0]) %}{% endfor %}{% set _ = active_filters.append(('Statut : ' ~ labels | join(', '), request.query_params | set_statuts([]))) %}{% endif %}
 {% if active_filters %}
 <div class="active-filters">
   <span class="muted small">Filtres appliqués :</span>
@@ -221,6 +235,23 @@
 {% endif %}
 {% endblock %}
 {% block scripts %}
+<script>
+  (function () {
+    const box = document.getElementById('filters');
+    if (!box) return;
+    const KEY = 'suivi.filtres.replies';
+    const set = (closed) => {
+      box.classList.toggle('collapsed', closed);
+      box.querySelectorAll('[aria-expanded]').forEach(b => b.setAttribute('aria-expanded', String(!closed)));
+    };
+    try { set(localStorage.getItem(KEY) === '1'); } catch (e) { /* stockage indisponible : déplié */ }
+    box.querySelectorAll('[data-filters-toggle]').forEach(b => b.addEventListener('click', () => {
+      const closed = !box.classList.contains('collapsed');
+      set(closed);
+      try { localStorage.setItem(KEY, closed ? '1' : '0'); } catch (e) { /* ignoré */ }
+    }));
+  })();
+</script>
 <script>
   const form = document.getElementById('filters');
   if (form) {
