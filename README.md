@@ -119,9 +119,12 @@ par employée (matricule, du, au).
   durée attribuée par jour paramétrable (*Paramètres horaires*, 8h par défaut). Compté comme un congé dans les
   rapports (ni absence, ni journée disponible).
 - *Période d'allaitement* : les heures d'allaitement (1 h, 2 h ou 3 h ; paramètre « Heures d'allaitement par jour »,
-  1 h par défaut, ou valeur choisie pour la période) complètent la durée travaillée jusqu'à l'objectif de durée :
-  7h travaillées + 1 h → 8h validées ; 6h + 1 h → 7h ; jamais au-delà de l'objectif ni moins que la durée travaillée.
-  La durée effective reste la durée réelle ; le suivi affiche la mention « Allaitement » (colonne dans l'export).
+  1 h par défaut, ou valeur choisie pour la période) peuvent être prises en début ou en fin de journée. La durée
+  validée part du **temps réellement travaillé** (du premier au dernier pointage, pause déduite) complété par les
+  heures d'allaitement jusqu'à l'objectif : 7h travaillées + 1 h → 8h validées ; 6h + 1 h → 7h ; jamais au-delà de
+  l'objectif ni moins que la durée travaillée. Le seuil de retard est décalé des heures d'allaitement (7h45 + 1 h →
+  retard à partir de 8h45). Une journée sans pointage reste une absence. La durée effective reste la durée réelle ;
+  le suivi affiche la mention « Allaitement » (colonne dans l'export).
 
 **Filtre « Horaires »** (*Suivi journalier* et *Rapports*, exports compris) : *tous*, *horaires postés* (agents qui
 ont au moins un jour dans le planning sur la période affichée) ou *horaire de bureau* (les autres), pour inclure ou

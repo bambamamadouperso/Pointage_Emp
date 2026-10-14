@@ -65,7 +65,7 @@ CONGES = ("CONGE_ANNUEL", "CONGE_EXCEP", "CONGE_MATERNITE")
 MATERNITY_KINDS = {"maternite": "Congé de maternité", "allaitement": "Période d'allaitement"}
 ALLAITEMENT_HOURS = ("01:00", "02:00", "03:00")
 # Version des objets PostgreSQL : si elle change, ils sont réinstallés automatiquement.
-SQL_VERSION = 19
+SQL_VERSION = 20
 # Taille maximale des fichiers importés (planning, agents terrain).
 MAX_IMPORT_MB = 50
 # Limites des requêtes lancées depuis les pages web : une attente de verrou ou une requête lente ne doit jamais
@@ -808,7 +808,8 @@ c AS (
              WHEN g.poste_type = 'travail' THEN
                  CASE WHEN g.n IS NULL THEN COALESCE(CASE WHEN g.maladie THEN 'ARRET_MALADIE' END, g.conge, g.tele, 'ABSENT')
                       WHEN g.n < 2 THEN 'INCOMPLET'
-                      WHEN g.p1 >= g.s_debut + g.tolerance THEN 'RETARD'
+                      -- Allaitement : l'heure peut être prise en début de poste, le seuil de retard est décalé d'autant.
+                      WHEN g.p1 >= g.s_debut + g.tolerance + COALESCE(g.allaitement, interval '0') THEN 'RETARD'
                       ELSE 'A_L_HEURE' END
              WHEN g.n IS NULL THEN CASE WHEN g.jour_ouvre
                                           THEN COALESCE(CASE WHEN g.maladie THEN 'ARRET_MALADIE' END, g.conge, g.tele,
@@ -817,7 +818,7 @@ c AS (
              -- Agent terrain qui passe au bureau un jour ouvré : ni retard ni pointage incomplet.
              WHEN g.terrain AND g.jour_ouvre THEN 'TERRAIN'
              WHEN g.n < 2 THEN 'INCOMPLET'
-             WHEN g.p1::time >= g.seuil_retard THEN 'RETARD'
+             WHEN g.p1::time >= g.seuil_retard + COALESCE(g.allaitement, interval '0') THEN 'RETARD'
              ELSE 'A_L_HEURE' END AS statut,
         CASE WHEN g.n >= 2 AND g.poste_type IS NOT NULL THEN g.s_pause
              WHEN g.n >= 2 THEN
@@ -842,8 +843,9 @@ SELECT c.emp_key, COALESCE(c.matricule, c.emp_key), COALESCE(c.nom, 'Hors liste'
        round((extract(epoch FROM w.hv) / 60)::numeric, 2), round((extract(epoch FROM v.de) / 60)::numeric, 2),
        c.hors_liste, c.terrain,
        CASE WHEN c.statut = 'RETARD' AND c.poste_type = 'travail'
-                THEN round((extract(epoch FROM c.p1 - c.s_debut) / 60)::numeric, 0)
-            WHEN c.statut = 'RETARD' THEN round((extract(epoch FROM c.p1::time - c.debut_journee) / 60)::numeric, 0) END,
+                THEN round((extract(epoch FROM c.p1 - c.s_debut - COALESCE(c.allaitement, interval '0')) / 60)::numeric, 0)
+            WHEN c.statut = 'RETARD' THEN round((extract(epoch FROM c.p1::time - c.debut_journee
+                                                         - COALESCE(c.allaitement, interval '0')) / 60)::numeric, 0) END,
        c.categorie,
        CASE WHEN c.poste_type = 'travail'
                  THEN c.poste_code || ' · ' || to_char(c.s_debut, 'HH24"h"MI') || '–' || to_char(c.s_fin, 'HH24"h"MI')
@@ -873,10 +875,12 @@ CROSS JOIN LATERAL (
                 WHEN c.n >= 2 THEN GREATEST((c.p2 - c.p1) - COALESCE(c.pause, interval '0'), interval '0') END AS de
 ) v
 CROSS JOIN LATERAL (
-    -- Période d'allaitement : les heures d'allaitement complètent la durée travaillée jusqu'à l'objectif (8h) ;
-    -- ex. 7h travaillées + 1h d'allaitement → 8h validées. Jamais au-delà de l'objectif, jamais moins que travaillé.
-    SELECT CASE WHEN c.allaitement IS NOT NULL AND v.hv IS NOT NULL AND c.statut IN ('A_L_HEURE', 'RETARD', 'TERRAIN')
-                THEN GREATEST(v.hv, LEAST(c.objectif, v.hv + c.allaitement)) ELSE v.hv END AS hv
+    -- Période d'allaitement : priorité au temps réellement travaillé (du 1er au dernier pointage, pause déduite),
+    -- complété par les heures d'allaitement jusqu'à l'objectif (8h) : 7h travaillées + 1h → 8h validées, que l'heure
+    -- ait été prise en début ou en fin de journée. Jamais au-delà de l'objectif, jamais moins que la durée validée.
+    SELECT CASE WHEN c.allaitement IS NOT NULL AND c.statut IN ('A_L_HEURE', 'RETARD', 'TERRAIN')
+                     AND COALESCE(v.de, v.hv) IS NOT NULL
+                THEN GREATEST(v.hv, LEAST(c.objectif, COALESCE(v.de, v.hv) + c.allaitement)) ELSE v.hv END AS hv
 ) w
 WHERE c.statut IS NOT NULL
 $fn$"""

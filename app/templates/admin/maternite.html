@@ -21,12 +21,15 @@
       l'employée badge : ni absence ni retard. Durée validée : <strong>{{ params.get('duree_maternite', '08:00') | replace(':', 'h') }}</strong>
       par jour (<a href="/admin/parametres">Paramètres horaires</a> → « Durée attribuée par jour de congé de maternité »).</li>
     <li><span class="badge st-ok">Allaitement</span> pendant la période d'allaitement, les heures d'allaitement
-      (<strong>{{ h_def_label }}</strong> par défaut, ou celles choisies pour la période : 1 h, 2 h ou 3 h) complètent la
-      durée travaillée jusqu'à l'objectif de <strong>{{ objectif | replace(':', 'h') }}</strong> :
+      (<strong>{{ h_def_label }}</strong> par défaut, ou celles choisies pour la période : 1 h, 2 h ou 3 h) peuvent être prises
+      en début ou en fin de journée :
       <ul>
-        <li>7h travaillées + 1h d'allaitement → <strong>8h validées</strong> ;</li>
-        <li>6h travaillées + 1h → 7h validées ; 6h + 2h → 8h ;</li>
-        <li>jamais au-delà de l'objectif, et jamais moins que la durée réellement travaillée (8h30 travaillées → 8h30).</li>
+        <li><strong>Durée validée</strong> : on part du <strong>temps réellement travaillé</strong> (du premier au dernier pointage,
+          pause déduite) et on y ajoute les heures d'allaitement, jusqu'à l'objectif de <strong>{{ objectif | replace(':', 'h') }}</strong> :
+          7h travaillées + 1h → <strong>8h validées</strong> ; 6h + 1h → 7h ; 6h + 2h → 8h ;
+          jamais au-delà de l'objectif, jamais moins que la durée travaillée (8h30 → 8h30).</li>
+        <li><strong>Retard</strong> : le seuil de retard est décalé des heures d'allaitement (ex. seuil 7h45 + 1h → retard à partir de 8h45) ;
+          les minutes de retard sont comptées à partir de ce seuil décalé. Un départ avancé est couvert par la règle de durée ci-dessus.</li>
       </ul>
       La durée effective reste la durée réelle ; la ligne du suivi porte la mention « Allaitement ».</li>
     <li>Une absence (aucun pointage) pendant l'allaitement reste une absence ; un congé, un arrêt maladie ou une mission gardent leur statut.</li>
