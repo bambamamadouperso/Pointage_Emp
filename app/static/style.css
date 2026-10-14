@@ -889,20 +889,20 @@ select.multi-cols option:checked { background: var(--primary-soft); color: var(-
 h3.moment { margin: 1.1rem 0 .2rem; font-size: .8rem; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
 .audience { display: grid; gap: .4rem; margin: .4rem 0 .8rem; }
 
-/* Suivi : bloc des filtres repliable (état mémorisé dans le navigateur) */
-.suivi-filters .filters-head { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; }
-.suivi-filters .filters-toggle { display: inline-flex; align-items: center; gap: .4rem; background: none; border: 0;
+/* Bloc des filtres repliable (suivi, rapports) : état mémorisé dans le navigateur */
+.filters-collapsible .filters-head { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; }
+.filters-collapsible .filters-toggle { display: inline-flex; align-items: center; gap: .4rem; background: none; border: 0;
   padding: 0; font: inherit; font-weight: 600; color: var(--text, inherit); cursor: pointer; }
-.suivi-filters .filters-toggle .ico { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; }
-.suivi-filters .filters-caret { color: var(--muted); transition: transform .15s; }
-.suivi-filters .filters-summary { flex: 1 1 auto; }
-.suivi-filters .filters-daynav { display: none; gap: .25rem; }
-.suivi-filters .filters-btn .when-closed { display: none; }
-.suivi-filters .filters-body { display: flex; flex-direction: column; gap: .6rem; }
-.suivi-filters .filters-body > .row:first-child { padding-top: .6rem; border-top: 1px solid var(--border); }
-.suivi-filters.collapsed .filters-body { display: none; }
-.suivi-filters.collapsed .filters-caret { transform: rotate(-90deg); }
-.suivi-filters.collapsed .filters-daynav { display: inline-flex; }
-.suivi-filters.collapsed .filters-btn .when-open { display: none; }
-.suivi-filters.collapsed .filters-btn .when-closed { display: inline; }
+.filters-collapsible .filters-toggle .ico { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; }
+.filters-collapsible .filters-caret { color: var(--muted); transition: transform .15s; }
+.filters-collapsible .filters-summary { flex: 1 1 auto; }
+.filters-collapsible .filters-daynav { display: none; gap: .25rem; }
+.filters-collapsible .filters-btn .when-closed { display: none; }
+.filters-collapsible .filters-body { display: flex; flex-direction: column; gap: .6rem; }
+.filters-collapsible .filters-body > :first-child { padding-top: .6rem; border-top: 1px solid var(--border); }
+.filters-collapsible.collapsed .filters-body { display: none; }
+.filters-collapsible.collapsed .filters-caret { transform: rotate(-90deg); }
+.filters-collapsible.collapsed .filters-daynav { display: inline-flex; }
+.filters-collapsible.collapsed .filters-btn .when-open { display: none; }
+.filters-collapsible.collapsed .filters-btn .when-closed { display: inline; }
 .suivi-filters .row > label.horaires { flex: 0 1 260px; }

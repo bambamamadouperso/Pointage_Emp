@@ -35,7 +35,7 @@
 {% if f.team %}{% set _ = active_filters.append(('Équipe de ' ~ (team_label or f.team) ~ (' · directs (N-1)' if f.directs else ''), (request.query_params | with_param('equipe', '')) )) %}{% endif %}
 {% if f.population %}{% set _ = active_filters.append(('Personnes : ' ~ ('employés de la liste' if f.population == 'liste' else 'hors liste'), request.query_params | with_param('pop', ''))) %}{% endif %}
 {% if f.statuts %}{% set labels = [] %}{% for code in f.statuts %}{% set _ = labels.append(statuts[code][0]) %}{% endfor %}{% set _ = active_filters.append(('Statut : ' ~ labels | join(', '), request.query_params | set_statuts([]))) %}{% endif %}
-<form method="get" class="card suivi-filters" id="filters">
+<form method="get" class="card suivi-filters filters-collapsible" id="filters" data-collapse-key="suivi">
   <div class="filters-head">
     <button type="button" class="filters-toggle" data-filters-toggle aria-expanded="true" aria-controls="filters-body">
       <svg class="ico" aria-hidden="true"><use href="#i-sliders"/></svg><span class="filters-title">Filtres</span>
@@ -235,23 +235,6 @@
 {% endif %}
 {% endblock %}
 {% block scripts %}
-<script>
-  (function () {
-    const box = document.getElementById('filters');
-    if (!box) return;
-    const KEY = 'suivi.filtres.replies';
-    const set = (closed) => {
-      box.classList.toggle('collapsed', closed);
-      box.querySelectorAll('[aria-expanded]').forEach(b => b.setAttribute('aria-expanded', String(!closed)));
-    };
-    try { set(localStorage.getItem(KEY) === '1'); } catch (e) { /* stockage indisponible : déplié */ }
-    box.querySelectorAll('[data-filters-toggle]').forEach(b => b.addEventListener('click', () => {
-      const closed = !box.classList.contains('collapsed');
-      set(closed);
-      try { localStorage.setItem(KEY, closed ? '1' : '0'); } catch (e) { /* ignoré */ }
-    }));
-  })();
-</script>
 <script>
   const form = document.getElementById('filters');
   if (form) {

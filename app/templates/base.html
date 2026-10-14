@@ -133,6 +133,20 @@
   document.addEventListener('keydown', e => { if (e.key === 'Escape') toggle(false); });
 
   // Listes à choix multiples : recherche, tout / aucun ; à la fermeture, la page se met à jour si le choix a changé.
+  // Blocs de filtres repliables : état (replié ou non) mémorisé par page dans le navigateur.
+  document.querySelectorAll('.filters-collapsible[data-collapse-key]').forEach(box => {
+    const key = 'filtres.replies.' + box.dataset.collapseKey;
+    const set = (closed) => {
+      box.classList.toggle('collapsed', closed);
+      box.querySelectorAll('[aria-expanded]').forEach(b => b.setAttribute('aria-expanded', String(!closed)));
+    };
+    try { set(localStorage.getItem(key) === '1'); } catch (e) { /* stockage indisponible : déplié */ }
+    box.querySelectorAll('[data-filters-toggle]').forEach(b => b.addEventListener('click', () => {
+      const closed = !box.classList.contains('collapsed');
+      set(closed);
+      try { localStorage.setItem(key, closed ? '1' : '0'); } catch (e) { /* ignoré */ }
+    }));
+  });
   document.querySelectorAll('[data-ms]').forEach(ms => {
     const box = ms.querySelector('details'), boxes = [...ms.querySelectorAll('.ms-list input[type=checkbox]')];
     const count = ms.querySelector('.ms-count'), search = ms.querySelector('.ms-search');

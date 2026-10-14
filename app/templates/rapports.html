@@ -40,7 +40,18 @@
 {% if not configured %}
   <div class="flash warn">Le module de pointage n'est pas encore configuré.</div>
 {% else %}
-<form method="get" class="card report-filters" id="rfilters">
+{% set nb_filtres = [f.service, f.categorie, f.direction, f.site, f.horaires, f.team] | select | list | length %}
+<form method="get" class="card report-filters filters-collapsible" id="rfilters" data-collapse-key="rapports">
+  <div class="filters-head">
+    <button type="button" class="filters-toggle" data-filters-toggle aria-expanded="true" aria-controls="rfilters-body">
+      <svg class="ico" aria-hidden="true"><use href="#i-sliders"/></svg><span class="filters-title">Filtres</span>
+      <span class="filters-caret" aria-hidden="true">▾</span></button>
+    <span class="filters-summary muted small">{{ (presets | selectattr(0, 'equalto', preset) | map(attribute=1) | first) or 'Période personnalisée' }}
+      (du {{ f.du.strftime('%d/%m/%Y') }} au {{ f.au.strftime('%d/%m/%Y') }})
+      · {% if nb_filtres %}{{ nb_filtres }} filtre(s) appliqué(s){% else %}aucun filtre{% endif %}</span>
+    <button type="button" class="btn ghost small filters-btn" data-filters-toggle><span class="when-open">Réduire</span><span class="when-closed">Afficher les filtres</span></button>
+  </div>
+  <div class="filters-body" id="rfilters-body">
   <div class="presets" role="group" aria-label="Période">
     {% for code, label in presets %}<a class="chip {{ 'selected' if preset == code }}" href="?{{ request.query_params | with_param('p', code) }}">{{ label }}</a>{% endfor %}
     <details class="custom" {{ 'open' if preset == 'perso' }}><summary class="chip {{ 'selected' if preset == 'perso' }}">Personnalisée…</summary>
@@ -60,6 +71,7 @@
       {% for key, label, n in managers %}<option value="{{ key }}" {{ 'selected' if f.team == key }}>{{ label }}</option>{% endfor %}</select></label>
     <label class="check"><input type="checkbox" name="directs" value="1" {{ 'checked' if f.directs }} {{ 'disabled' if not f.team }}> Directs seulement</label>
     {% endif %}
+  </div>
   </div>
 </form>
 
