@@ -85,6 +85,7 @@ def _filters(request: Request) -> tuple[pointage.Filters, Optional[str]]:
         desc=p.get("dir") == "desc", team=p.get("equipe", ""), directs=p.get("directs") == "1" and bool(p.get("equipe")),
         population=p.get("pop", "") if p.get("pop") in ("liste", "hors") else "", categorie=pointage.multi(p.getlist("categorie")),
         direction=pointage.multi(p.getlist("direction")), site=pointage.multi(p.getlist("site")),
+        horaires=p.get("horaires", "") if p.get("horaires") in pointage.HORAIRES else "",
     ), warning
 
 
@@ -177,7 +178,7 @@ def suivi(request: Request, db: Session = Depends(get_db)):
                    hhmm=pointage.hhmm, configured=mapping is not None, data=None, error=None, services=[],
                    managers=[], categories=[], directions=[], dims=dimension_filters(mapping), objectif_min=480, scope_label=None, population=None, last_punch=None, stale=False, has_hierarchy=bool(mapping and mapping.hier_table),
                    single_day=f.du == f.au, mode="jour" if f.du == f.au else "periode",
-                   validee_ok=validee_ok, show_validee=validee_shown)
+                   validee_ok=validee_ok, show_validee=validee_shown, horaires=pointage.HORAIRES)
     if mapping is None:
         return render(request, "suivi.html", **context)
     engine = make_engine(cfg.conn, **pointage.WEB_LIMITS)
@@ -345,6 +346,7 @@ def export(request: Request, db: Session = Depends(get_db)):
         ("Équipe", (f.team + (" (directs)" if f.directs else "")) if f.team else "Toutes"),
         ("Périmètre", "équipe du compte" if f.scope_root is not None else "tout le personnel"),
         ("Statuts", ", ".join(pointage.STATUTS[s][0] for s in f.statuts) or "Tous"),
+        ("Horaires", pointage.HORAIRES.get(f.horaires, "Tous (bureau et postés)")),
         ("Durée validée", "affichée" if with_validee else "masquée"),
         ("Lignes", len(rows)), ("Exporté par", request.session.get("user", "")),
     ]:

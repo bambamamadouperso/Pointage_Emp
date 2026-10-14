@@ -33,7 +33,8 @@ def _filters(request: Request) -> tuple[pointage.Filters, str]:
     team = p.get("equipe", "")
     return pointage.Filters(du=du, au=au, service=pointage.multi(p.getlist("service")), team=team, categorie=pointage.multi(p.getlist("categorie")),
                             direction=pointage.multi(p.getlist("direction")), site=pointage.multi(p.getlist("site")),
-                            directs=p.get("directs") == "1" and bool(team)), preset
+                            directs=p.get("directs") == "1" and bool(team),
+                            horaires=p.get("horaires", "") if p.get("horaires") in pointage.HORAIRES else ""), preset
 
 
 @router.get("")
@@ -45,7 +46,8 @@ def page(request: Request, db: Session = Depends(get_db)):
     context = dict(f=f, preset=preset, presets=rapports.PRESETS, sorts=SORTS, sort=sort, configured=mapping is not None,
                    data=None, error=None, services=[], managers=[], categories=[], directions=[], scope_label=None,
                    hhmm=pointage.hhmm, dims=dimension_filters(mapping),
-                   series=rapports.SERIES, has_hierarchy=bool(mapping and mapping.hier_table), today=date.today())
+                   series=rapports.SERIES, has_hierarchy=bool(mapping and mapping.hier_table), today=date.today(),
+                   horaires=pointage.HORAIRES)
     if mapping is None:
         return render(request, "rapports.html", **context)
     engine = make_engine(cfg.conn, **pointage.WEB_LIMITS)
@@ -158,6 +160,7 @@ def export(request: Request, db: Session = Depends(get_db)):
     for row in [("Du", f.du.strftime("%d/%m/%Y")), ("Au", f.au.strftime("%d/%m/%Y")), ("Service", ", ".join(f.service) or "Tous"), ("Statut du personnel", ", ".join(f.categorie) or "Tous"),
                 ("Direction", ", ".join(f.direction) or "Toutes"), ("Site", ", ".join(f.site) or "Tous"),
                 ("Équipe", (f.team + (" (directs)" if f.directs else "")) if f.team else "Toutes"),
+                ("Horaires", pointage.HORAIRES.get(f.horaires, "Tous (bureau et postés)")),
                 ("Exporté par", request.session.get("user", ""))]:
         info.append(row)
     buf = io.BytesIO()

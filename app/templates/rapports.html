@@ -52,6 +52,9 @@
     <input type="hidden" name="p" value="{{ preset }}">
     {{ multiselect('service', 'Service', services, f.service) }}
     {% include "_filtre_statut_personnel.html" %}
+    <label>Horaires <select name="horaires" title="Agents en horaires postés : au moins un jour planifié sur la période">
+      <option value="">Tous (bureau et postés)</option>
+      {% for code, label in horaires.items() %}<option value="{{ code }}" {{ 'selected' if f.horaires == code }}>{{ label }}</option>{% endfor %}</select></label>
     {% if has_hierarchy %}
     <label>Équipe de <select name="equipe"><option value="">{{ 'Toute mon équipe' if scope_label else 'Tout le personnel' }}</option>
       {% for key, label, n in managers %}<option value="{{ key }}" {{ 'selected' if f.team == key }}>{{ label }}</option>{% endfor %}</select></label>

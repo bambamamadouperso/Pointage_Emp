@@ -113,6 +113,10 @@ formation → « Formation », absence possible un week-end planifié. Tables Po
 (codes modifiables) et `pointage_planning` ; colonne `poste` dans `v_pointage_journalier`. La grille affiche les heures
 planifiées de chaque agent ; au-delà de 48 h par semaine en moyenne, l'agent est signalé (à l'import et en rouge).
 
+**Filtre « Horaires »** (*Suivi journalier* et *Rapports*, exports compris) : *tous*, *horaires postés* (agents qui
+ont au moins un jour dans le planning sur la période affichée) ou *horaire de bureau* (les autres), pour inclure ou
+exclure les agents postés des indicateurs et des tableaux.
+
 **Missions** (*Source des pointages → Missions*) : table des autorisations de mission (ex. feuille Smartsheet
 synchronisée), reliée aux employés par matricule ou par **adresse e-mail** (colonne « contact » Smartsheet) ;
 plusieurs colonnes « date aller » / « date retour » possibles (du premier aller au dernier retour) ; un jour ouvré ou

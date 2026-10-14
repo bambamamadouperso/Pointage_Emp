@@ -67,6 +67,12 @@
         <option value="hors" {{ 'selected' if f.population == 'hors' }}>Hors liste (pointages sans fiche)</option>
       </select>
     </label>
+    <label>Horaires
+      <select name="horaires" title="Agents en horaires postés : au moins un jour planifié sur la période">
+        <option value="">Tous (bureau et postés)</option>
+        {% for code, label in horaires.items() %}<option value="{{ code }}" {{ 'selected' if f.horaires == code }}>{{ label }}</option>{% endfor %}
+      </select>
+    </label>
   </div>
   <div class="row statut-row">
     <span class="muted small">Statut :</span>
@@ -89,6 +95,7 @@
 {% if f.service %}{% set _ = active_filters.append(('Service : ' ~ f.service | join(', '), request.query_params | with_param('service', ''))) %}{% endif %}
 {% if f.direction %}{% set _ = active_filters.append(('Direction : ' ~ f.direction | join(', '), request.query_params | with_param('direction', ''))) %}{% endif %}
 {% if f.site %}{% set _ = active_filters.append(('Site : ' ~ f.site | join(', '), request.query_params | with_param('site', ''))) %}{% endif %}
+{% if f.horaires %}{% set _ = active_filters.append(('Horaires : ' ~ horaires[f.horaires], request.query_params | with_param('horaires', ''))) %}{% endif %}
 {% if f.categorie %}{% set _ = active_filters.append(('Statut du personnel : ' ~ f.categorie | join(', '), request.query_params | with_param('categorie', ''))) %}{% endif %}
 {% if f.team %}{% set _ = active_filters.append(('Équipe de ' ~ (team_label or f.team) ~ (' · directs (N-1)' if f.directs else ''), (request.query_params | with_param('equipe', '')) )) %}{% endif %}
 {% if f.population %}{% set _ = active_filters.append(('Personnes : ' ~ ('employés de la liste' if f.population == 'liste' else 'hors liste'), request.query_params | with_param('pop', ''))) %}{% endif %}

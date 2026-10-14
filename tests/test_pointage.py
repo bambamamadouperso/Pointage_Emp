@@ -1996,3 +1996,42 @@ def test_hide_validated_duration(configured, logged_client):
         with SessionLocal() as db:
             db.query(User).filter_by(username="lect_vd").delete()
             db.commit()
+
+
+def test_shift_workers_filter(configured, pg, logged_client):
+    """Filtre « Horaires » : agents en horaires postés (au moins un jour planifié sur la période) seulement, ou
+    seulement les autres, dans le suivi, les rapports et leurs exports."""
+    from openpyxl import load_workbook
+
+    with pg.begin() as c:
+        c.execute(text(f"INSERT INTO {SCHEMA}.pointage_postes (code, libelle, type, debut, fin) "
+                       f"VALUES ('PF', 'Matin', 'travail', '06:00', '14:00') ON CONFLICT (code) DO NOTHING"))
+        c.execute(text(f"INSERT INTO {SCHEMA}.pointage_planning (matricule, jour, code) VALUES "
+                       f"('E004', :d, 'PF'), ('E005', :d, 'PF')"), {"d": MON})
+    try:
+        page = logged_client.get(f"/suivi?date={MON.isoformat()}&horaires=postes").text
+        assert "E004</td>" in page and "E005</td>" in page and "E001</td>" not in page and "E002</td>" not in page
+        assert "Horaires : Horaires postés (planning)" in page
+        page = logged_client.get(f"/suivi?date={MON.isoformat()}&horaires=bureau").text
+        assert "E001</td>" in page and "E004</td>" not in page and "E005</td>" not in page
+        # Mardi : le planning ne couvre que le lundi → plus personne n'est « posté » sur cette journée.
+        assert "E004</td>" not in logged_client.get(f"/suivi?date={TUE.isoformat()}&horaires=postes").text
+
+        def report_matricules(horaires):
+            url = f"/rapports/export.xlsx?p=perso&du={MON.isoformat()}&au={TUE.isoformat()}&horaires={horaires}"
+            wb = load_workbook(io.BytesIO(logged_client.get(url).content))
+            ws = wb["Employés"]
+            filtres = {r[0].value: r[1].value for r in wb["Filtres"].iter_rows()}
+            return {ws.cell(r, 1).value for r in range(2, ws.max_row + 1)}, filtres["Horaires"]
+
+        assert report_matricules("postes") == ({"E004", "E005"}, "Horaires postés (planning)")
+        bureau, label = report_matricules("bureau")
+        assert {"E001", "E002", "E003"} <= bureau and not {"E004", "E005"} & bureau
+        assert label == "Horaire de bureau (sans planning)"
+        assert {"E001", "E004"} <= report_matricules("")[0]
+        page = logged_client.get(f"/rapports?p=perso&du={MON.isoformat()}&au={TUE.isoformat()}&horaires=postes").text
+        assert '<option value="postes" selected>' in page and "Fall Ibou" in page
+    finally:
+        with pg.begin() as c:
+            c.execute(text(f"DELETE FROM {SCHEMA}.pointage_planning WHERE code = 'PF'"))
+            c.execute(text(f"DELETE FROM {SCHEMA}.pointage_postes WHERE code = 'PF'"))

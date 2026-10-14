@@ -1696,6 +1696,9 @@ class Filters:
     direction: list[str] = field(default_factory=list)  # une ou plusieurs directions (vide = toutes)
     site: list[str] = field(default_factory=list)       # un ou plusieurs sites : Usine, Plateau… (vide = tous)
     exclude: str = ""                 # clé d'un employé à écarter (ex. le responsable dans le résumé de son équipe)
+    # Horaires : "postes" = seulement les agents en horaires postés (au moins un jour planifié sur la période),
+    # "bureau" = seulement les autres ; vide = tous.
+    horaires: str = ""
 
 
 def _where(f: Filters, S: str = "") -> tuple[str, dict, list]:
@@ -1714,6 +1717,12 @@ def _where(f: Filters, S: str = "") -> tuple[str, dict, list]:
         clauses.append("(matricule ILIKE :q OR nom ILIKE :q OR prenom ILIKE :q "
                        "OR concat_ws(' ', nom, prenom) ILIKE :q OR concat_ws(' ', prenom, nom) ILIKE :q)")
         params["q"] = f"%{f.q}%"
+    if f.horaires in HORAIRES:
+        # Agent posté : au moins un jour du planning des horaires postés sur la période (par matricule ou clé).
+        # Colonnes qualifiées par l'alias t de la requête (le planning a lui aussi une colonne « matricule »).
+        planned = (f"EXISTS (SELECT 1 FROM {S}.pointage_planning pp WHERE pp.jour BETWEEN :du AND :au "
+                   f"AND pp.matricule IN (t.matricule, t.emp_key))")
+        clauses.append(planned if f.horaires == "postes" else f"NOT {planned}")
     if f.population == "liste":
         clauses.append("NOT hors_liste")
     elif f.population == "hors":
@@ -1738,6 +1747,9 @@ def _where(f: Filters, S: str = "") -> tuple[str, dict, list]:
         params["statuts"] = statuts
         binds.append(bindparam("statuts", expanding=True))
     return (" WHERE " + " AND ".join(clauses)) if clauses else "", params, binds
+
+
+HORAIRES = {"bureau": "Horaire de bureau (sans planning)", "postes": "Horaires postés (planning)"}
 
 
 def multi(values: list[str]) -> list[str]:
