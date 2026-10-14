@@ -305,7 +305,7 @@ def test_rh_role_sees_everyone_without_sync(configured, client):
     admin = client.get("/admin").text
     assert "Horaires postés" in admin and "Source des pointages" not in admin and "Traitements planifiés" not in admin
     for path in ("/admin/parametres", "/admin/planning", "/admin/terrain", "/admin/arrets", "/admin/resumes",
-                 "/admin/rappels", "/rapports", "/arrets"):
+                 "/admin/rappels", "/admin/maternite", "/rapports", "/arrets"):
         assert client.get(path, follow_redirects=False).status_code == 200, path
     for path in ("/", "/jobs", "/runs", "/logs", "/data", "/connections", "/connections/new", "/admin/pointage",
                  "/admin/mails", "/admin/users", "/admin/audit"):
@@ -2035,3 +2035,80 @@ def test_shift_workers_filter(configured, pg, logged_client):
         with pg.begin() as c:
             c.execute(text(f"DELETE FROM {SCHEMA}.pointage_planning WHERE code = 'PF'"))
             c.execute(text(f"DELETE FROM {SCHEMA}.pointage_postes WHERE code = 'PF'"))
+
+
+def test_maternity_leave_and_breastfeeding(configured, pg, logged_client):
+    """Congé de maternité (statut dédié, durée attribuée, même si l'employée badge) et allaitement : les heures
+    d'allaitement (1 h, 2 h ou 3 h ; paramètre par défaut 1 h) complètent la durée travaillée jusqu'à l'objectif (8h)."""
+    from datetime import timedelta as td
+
+    def day_rows(day=MON):
+        with pg.connect() as c:
+            return {r.matricule: r for r in c.execute(text(
+                f"SELECT matricule, statut, duree_validee, duree_effective, allaitement "
+                f"FROM {SCHEMA}.f_pointage_journalier(:d, :d)"), {"d": day})}
+
+    before = day_rows()
+    assert before["E001"].duree_validee == td(hours=7, minutes=30) and before["E005"].statut == "ABSENT"
+    try:
+        assert "Maternité et allaitement" in logged_client.get("/admin/maternite").text
+        # Congé de maternité : Ba Khady (absente lundi) et Ndiaye Moussa (a badgé lundi) ; saisie via la liste « matricule — nom ».
+        for mat in ("E005 — Ba Khady", "E002"):
+            r = logged_client.post("/admin/maternite", data={"matricule": mat, "type": "maternite", "du": MON.isoformat(),
+                                                             "au": TUE.isoformat(), "commentaire": "certificat"},
+                                   follow_redirects=True)
+            assert "enregistré(e) du 21/09/2026 au 22/09/2026" in r.text, r.text[:2000]
+        # Allaitement : Diallo Awa 1 h (par défaut), Sow Fatou 2 h.
+        for mat, hours in (("E001", ""), ("E003", "02:00")):
+            r = logged_client.post("/admin/maternite", data={"matricule": mat, "type": "allaitement", "du": MON.isoformat(),
+                                                             "au": MON.isoformat(), "heures": hours}, follow_redirects=True)
+            assert "Période d&#39;allaitement" in r.text and "enregistré(e)" in r.text
+        # Contrôles de saisie.
+        for data, message in (
+                ({"matricule": "E005", "type": "maternite", "du": TUE.isoformat(), "au": WED.isoformat()}, "déjà enregistré"),
+                ({"matricule": "E007", "type": "maternite", "du": TUE.isoformat(), "au": MON.isoformat()}, "doit suivre"),
+                ({"matricule": "X999", "type": "maternite", "du": MON.isoformat(), "au": MON.isoformat()}, "Aucun employé"),
+                ({"matricule": "E007", "type": "allaitement", "du": MON.isoformat(), "au": MON.isoformat(),
+                  "heures": "04:00"}, "1 h, 2 h ou 3 h")):
+            assert message in logged_client.post("/admin/maternite", data=data, follow_redirects=True).text.replace("&#39;", "'")
+        with pytest.raises(pointage.PointageError, match="01:00, 02:00 ou 03:00"):
+            pointage.validate_param("heures_allaitement", "04:00")
+
+        rows = day_rows()
+        assert rows["E005"].statut == "CONGE_MATERNITE" and rows["E005"].duree_validee == td(hours=8)
+        assert rows["E002"].statut == "CONGE_MATERNITE"  # même si elle a badgé
+        assert day_rows(WED)["E005"].statut == "NON_OUVRE"  # mercredi férié : pas un jour de congé
+        # 7h30 travaillées + 1 h → 8h (plafonné à l'objectif) ; 6h50 + 2 h → 8h ; durée effective inchangée.
+        assert (rows["E001"].duree_validee, rows["E001"].allaitement) == (td(hours=8), td(hours=1))
+        assert rows["E001"].duree_effective == before["E001"].duree_effective
+        assert (rows["E003"].duree_validee, rows["E003"].allaitement) == (td(hours=8), td(hours=2))
+        assert rows["E007"].allaitement is None and rows["E007"].duree_validee == before["E007"].duree_validee
+
+        # 1 h seulement pour Sow Fatou : 6h50 + 1 h = 7h50 (pas d'arrondi à 8h).
+        with pg.begin() as c:
+            c.execute(text(f"UPDATE {SCHEMA}.pointage_maternite SET heures = interval '1 hour' WHERE matricule = 'E003'"))
+        assert day_rows()["E003"].duree_validee == td(hours=7, minutes=50)
+
+        page = logged_client.get(f"/suivi?date={MON.isoformat()}").text
+        assert "Congé maternité" in page and "Maternité <b>2</b>" in page and "Allaitement 1h00" in page
+        # Rapports : le congé de maternité est un congé (ni absence ni journée disponible).
+        from app import rapports
+        with SessionLocal() as db:
+            m = pointage.Mapping.from_json(db.query(PointageConfig).one().data)
+        kpi = rapports.build(pg, m, pointage.Filters(du=MON, au=MON), "nom")["kpi"]
+        assert kpi["conges"] >= 2 and kpi["absences"] == before_absences(before) - 1
+
+        # Suppression : retour au calcul normal.
+        page = logged_client.get("/admin/maternite").text
+        with pg.connect() as c:
+            ids = [i for (i,) in c.execute(text(f"SELECT id FROM {SCHEMA}.pointage_maternite"))]
+        for i in ids:
+            logged_client.post(f"/admin/maternite/{i}/delete")
+        assert day_rows()["E005"].statut == "ABSENT" and day_rows()["E001"].duree_validee == td(hours=7, minutes=30)
+    finally:
+        with pg.begin() as c:
+            c.execute(text(f"DELETE FROM {SCHEMA}.pointage_maternite"))
+
+
+def before_absences(rows) -> int:
+    return sum(1 for r in rows.values() if r.statut == "ABSENT")

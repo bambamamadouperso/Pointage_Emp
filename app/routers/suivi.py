@@ -261,10 +261,10 @@ def export(request: Request, db: Session = Depends(get_db)):
     ws.title = "Suivi journalier"
     headers = ["Date", "Matricule", "Nom", "Prénom", "Service", "Statut du personnel", "1er pointage", "Dernier pointage", "Nb pointages",
                "Statut", "Durée validée", "Durée effective", "Durée validée (min)", "Durée effective (min)",
-               "Responsable", "Dans la liste des employés", "Poste planifié", "Direction", "Site"]
+               "Responsable", "Dans la liste des employés", "Poste planifié", "Direction", "Site", "Allaitement"]
     ws.append(headers)
     fills = {"A_L_HEURE": "DCFCE7", "RETARD": "FFEDD5", "ABSENT": "FEE2E2", "INCOMPLET": "E5E7EB", "NON_OUVRE": "E0F2FE",
-             "CONGE_ANNUEL": "E4F5D3", "CONGE_EXCEP": "E4F5D3",
+             "CONGE_ANNUEL": "E4F5D3", "CONGE_EXCEP": "E4F5D3", "CONGE_MATERNITE": "FCE7F3",
              "TELETRAVAIL": "CDEEE7", "TERRAIN": "DBEAFE",
              "ARRET_MALADIE": "E7E5E4", "REPOS": "E0F2FE", "FORMATION": "EDE9FE",
              "MISSION": "F3E8FF"}
@@ -277,12 +277,13 @@ def export(request: Request, db: Session = Depends(get_db)):
             float(r["duree_validee_min"]) if r["duree_validee_min"] is not None else None,
             float(r["duree_effective_min"]) if r["duree_effective_min"] is not None else None,
             r["responsable"], "Non" if r["hors_liste"] else "Oui", r.get("poste"), r.get("direction"), r.get("site"),
+            r.get("allaitement"),
         ])
         row = ws.max_row
         ws.cell(row, 1).number_format = "DD/MM/YYYY"
         for col in (7, 8):
             ws.cell(row, col).number_format = "HH:MM"
-        for col in (11, 12):
+        for col in (11, 12, 20):
             ws.cell(row, col).number_format = "[H]:MM"
         ws.cell(row, 10).fill = PatternFill("solid", fgColor=fills.get(r["statut"], "FFFFFF"))
         for col, key in ((11, "duree_validee_min"), (12, "duree_effective_min")):  # objectif : vert atteint, rouge sinon

@@ -41,7 +41,7 @@ _WEEKDAYS = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Diman
 
 # Journée « attendue » : jour ouvré ; « disponible » : attendue hors congé ; « présent » : au travail sous une forme ou une autre.
 _ATTENDU = "jour_ouvre AND statut <> 'NON_OUVRE'"
-_DISPO = f"{_ATTENDU} AND statut NOT IN ('CONGE_ANNUEL', 'CONGE_EXCEP', 'ARRET_MALADIE')"
+_DISPO = f"{_ATTENDU} AND statut NOT IN ('CONGE_ANNUEL', 'CONGE_EXCEP', 'CONGE_MATERNITE', 'ARRET_MALADIE')"
 _PRESENT = "statut IN ('A_L_HEURE', 'RETARD', 'INCOMPLET', 'TERRAIN', 'TELETRAVAIL', 'FORMATION', 'MISSION')"
 _BUREAU = "statut IN ('A_L_HEURE', 'RETARD')"
 # Les oublis de badge ne sont comptés que les jours terminés (aujourd'hui, le départ n'a pas encore eu lieu).
@@ -73,7 +73,7 @@ def _kpi_sql() -> str:
         count(*) FILTER (WHERE statut = 'RETARD') AS retards,
         count(*) FILTER (WHERE statut = 'ABSENT') AS absences,
         count(*) FILTER (WHERE statut = 'INCOMPLET' AND jour < current_date) AS incomplets,
-        count(*) FILTER (WHERE statut IN ('CONGE_ANNUEL', 'CONGE_EXCEP')) AS conges,
+        count(*) FILTER (WHERE statut IN ('CONGE_ANNUEL', 'CONGE_EXCEP', 'CONGE_MATERNITE')) AS conges,
         count(*) FILTER (WHERE statut = 'TELETRAVAIL') AS teletravail,
         count(*) FILTER (WHERE statut = 'TERRAIN') AS terrain,
         count(*) FILTER (WHERE statut = 'ARRET_MALADIE') AS maladies,
@@ -142,7 +142,7 @@ def build(engine: Engine, m: Mapping, f: Filters, sort: str = "absences", compar
                 count(*) FILTER (WHERE statut = 'TERRAIN') AS "TERRAIN",
                 count(*) FILTER (WHERE statut = 'TELETRAVAIL') AS "TELETRAVAIL",
                 count(*) FILTER (WHERE statut = 'MISSION') AS "MISSION",
-                count(*) FILTER (WHERE statut IN ('CONGE_ANNUEL', 'CONGE_EXCEP')) AS "CONGE",
+                count(*) FILTER (WHERE statut IN ('CONGE_ANNUEL', 'CONGE_EXCEP', 'CONGE_MATERNITE')) AS "CONGE",
                 count(*) FILTER (WHERE statut = 'ARRET_MALADIE') AS "ARRET_MALADIE",
                 count(*) FILTER (WHERE statut = 'ABSENT') AS "ABSENT",
                 bool_or(jour_ouvre) AS ouvre
@@ -186,7 +186,7 @@ def build(engine: Engine, m: Mapping, f: Filters, sort: str = "absences", compar
                 count(*) FILTER (WHERE statut = 'ABSENT') AS absences,
                 count(*) FILTER (WHERE statut = 'ABSENT' AND extract(isodow FROM jour) IN (1, 5)) AS absences_lun_ven,
                 count(*) FILTER (WHERE statut = 'INCOMPLET' AND jour < current_date) AS incomplets,
-                count(*) FILTER (WHERE statut IN ('CONGE_ANNUEL', 'CONGE_EXCEP')) AS conges,
+                count(*) FILTER (WHERE statut IN ('CONGE_ANNUEL', 'CONGE_EXCEP', 'CONGE_MATERNITE')) AS conges,
                 count(*) FILTER (WHERE statut = 'TELETRAVAIL') AS teletravail,
                 count(*) FILTER (WHERE statut = 'TERRAIN') AS terrain_jours,
                 count(*) FILTER (WHERE statut = 'ARRET_MALADIE') AS maladies,

@@ -113,6 +113,16 @@ formation → « Formation », absence possible un week-end planifié. Tables Po
 (codes modifiables) et `pointage_planning` ; colonne `poste` dans `v_pointage_journalier`. La grille affiche les heures
 planifiées de chaque agent ; au-delà de 48 h par semaine en moyenne, l'agent est signalé (à l'import et en rouge).
 
+**Maternité et allaitement** (*Administration → Maternité et allaitement*, rôles RH et admin) : périodes saisies
+par employée (matricule, du, au).
+- *Congé de maternité* : statut « Congé maternité » chaque jour attendu de la période, même si l'employée badge ;
+  durée attribuée par jour paramétrable (*Paramètres horaires*, 8h par défaut). Compté comme un congé dans les
+  rapports (ni absence, ni journée disponible).
+- *Période d'allaitement* : les heures d'allaitement (1 h, 2 h ou 3 h ; paramètre « Heures d'allaitement par jour »,
+  1 h par défaut, ou valeur choisie pour la période) complètent la durée travaillée jusqu'à l'objectif de durée :
+  7h travaillées + 1 h → 8h validées ; 6h + 1 h → 7h ; jamais au-delà de l'objectif ni moins que la durée travaillée.
+  La durée effective reste la durée réelle ; le suivi affiche la mention « Allaitement » (colonne dans l'export).
+
 **Filtre « Horaires »** (*Suivi journalier* et *Rapports*, exports compris) : *tous*, *horaires postés* (agents qui
 ont au moins un jour dans le planning sur la période affichée) ou *horaire de bureau* (les autres), pour inclure ou
 exclure les agents postés des indicateurs et des tableaux.

@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block title %}Maternité et allaitement{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Maternité et allaitement</h1>
+    <p class="muted">Congés de maternité et périodes d'allaitement des employées : statut « Congé maternité » pendant le congé,
+      heures d'allaitement prises en compte dans la durée validée pendant l'allaitement.</p></div>
+  <a href="/admin" class="muted">← {{ 'Administration' if can(role, 'admin') else 'Ressources humaines' }}</a>
+</div>
+{% if mapping is none %}
+  <div class="flash warn">Configurez d'abord la source des pointages.</div>
+{% else %}
+{% if error %}<div class="flash err">{{ error }}</div>{% endif %}
+{% set h_def = params.get('heures_allaitement', '01:00') %}{% set h_def_label = (h_def[:2] | int) ~ ' h' ~ (h_def[3:] if h_def[3:] != '00' else '') %}
+{% set objectif = params.get('objectif_duree', '08:00') %}
+
+<section class="card rules">
+  <h2>Règles appliquées</h2>
+  <ul class="rule-list">
+    <li><span class="badge st-mater">Congé maternité</span> chaque jour attendu de la période (jour ouvré ou poste planifié), même si
+      l'employée badge : ni absence ni retard. Durée validée : <strong>{{ params.get('duree_maternite', '08:00') | replace(':', 'h') }}</strong>
+      par jour (<a href="/admin/parametres">Paramètres horaires</a> → « Durée attribuée par jour de congé de maternité »).</li>
+    <li><span class="badge st-ok">Allaitement</span> pendant la période d'allaitement, les heures d'allaitement
+      (<strong>{{ h_def_label }}</strong> par défaut, ou celles choisies pour la période : 1 h, 2 h ou 3 h) complètent la
+      durée travaillée jusqu'à l'objectif de <strong>{{ objectif | replace(':', 'h') }}</strong> :
+      <ul>
+        <li>7h travaillées + 1h d'allaitement → <strong>8h validées</strong> ;</li>
+        <li>6h travaillées + 1h → 7h validées ; 6h + 2h → 8h ;</li>
+        <li>jamais au-delà de l'objectif, et jamais moins que la durée réellement travaillée (8h30 travaillées → 8h30).</li>
+      </ul>
+      La durée effective reste la durée réelle ; la ligne du suivi porte la mention « Allaitement ».</li>
+    <li>Une absence (aucun pointage) pendant l'allaitement reste une absence ; un congé, un arrêt maladie ou une mission gardent leur statut.</li>
+  </ul>
+</section>
+
+<section class="card">
+  <h2>Enregistrer une période</h2>
+  <form method="post" action="/admin/maternite" class="form maternity-form">
+    <div class="row">
+      <label class="grow">Employée (matricule)
+        <input name="matricule" list="employees" required placeholder="Matricule ou nom…" autocomplete="off"></label>
+      <datalist id="employees">{% for mat, nom in employees %}<option value="{{ mat }} — {{ nom }}"></option>{% endfor %}</datalist>
+      <label>Type
+        <select name="type" id="m_type">{% for k, label in kinds.items() %}<option value="{{ k }}">{{ label }}</option>{% endfor %}</select></label>
+      <label>Du <input type="date" name="du" required></label>
+      <label>Au <input type="date" name="au" required></label>
+      <label id="m_hours">Heures d'allaitement par jour
+        <select name="heures"><option value="">Par défaut ({{ h_def_label }})</option>
+          {% for h in hours %}<option value="{{ h }}">{{ h[:2] | int }} h</option>{% endfor %}</select></label>
+    </div>
+    <label>Commentaire <input name="commentaire" placeholder="facultatif (ex. certificat reçu le …)"></label>
+    <div class="form-actions"><button class="btn primary">Enregistrer</button></div>
+  </form>
+</section>
+
+<section class="card">
+  <h2>Périodes enregistrées</h2>
+  {% if not entries %}<p class="empty">Aucune période enregistrée.</p>{% else %}
+  <div class="table-wrap"><table>
+    <thead><tr><th>Employée</th><th>Type</th><th>Période</th><th>Heures / jour</th><th>Commentaire</th><th>Saisi par</th><th></th></tr></thead>
+    <tbody>{% for e in entries %}
+      <tr><td><span class="mono small">{{ e.matricule }}</span> {{ e.nom or '(introuvable dans la liste des employés)' }}
+          {% if e.service %}<br><span class="muted small">{{ e.service }}</span>{% endif %}</td>
+        <td><span class="badge {{ 'st-mater' if e.type == 'maternite' else 'st-ok' }}">{{ kinds[e.type] }}</span>
+          {% if e.en_cours %}<span class="badge warn">en cours</span>{% endif %}</td>
+        <td class="nowrap">du {{ e.du.strftime('%d/%m/%Y') }} au {{ e.au.strftime('%d/%m/%Y') }}
+          <span class="muted small">({{ (e.au - e.du).days + 1 }} j)</span></td>
+        <td>{% if e.type == 'allaitement' %}{% if e.heures %}{{ (e.heures.total_seconds() // 3600) | int }} h{% else %}{{ h_def_label }} <span class="muted small">(par défaut)</span>{% endif %}{% else %}—{% endif %}</td>
+        <td class="small">{{ e.commentaire or '—' }}</td>
+        <td class="small muted">{{ e.auteur or '—' }}<br>{{ e.modifie_le.strftime('%d/%m/%Y') }}</td>
+        <td><form method="post" action="/admin/maternite/{{ e.id }}/delete" data-confirm="Supprimer cette période ({{ kinds[e.type] }} de {{ e.nom or e.matricule }}) ?">
+          <button class="btn small danger">Supprimer</button></form></td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+  {% endif %}
+</section>
+{% endif %}
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  const type = document.getElementById('m_type'), hours = document.getElementById('m_hours');
+  if (!type) return;
+  const sync = () => { hours.hidden = type.value !== 'allaitement'; };
+  type.addEventListener('change', sync);
+  sync();
+})();
+</script>
+{% endblock %}

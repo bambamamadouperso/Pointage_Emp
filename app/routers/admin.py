@@ -9,7 +9,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import JSONResponse, Response
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -369,6 +369,73 @@ def holiday_delete(request: Request, jour: str = Form(...), db: Session = Depend
     auth.audit(request, "Jour férié supprimé", f"{day:%d/%m/%Y}")
     flash(request, f"Jour férié du {day:%d/%m/%Y} supprimé.", "ok")
     return redirect("/admin/parametres#feries")
+
+
+# --------------------------------------------------------------------------- maternité et allaitement
+
+
+@router.get("/maternite")
+def maternity_page(request: Request, db: Session = Depends(get_db)):
+    cfg, mapping = _mapping_ready(db)
+    context = dict(mapping=mapping, entries=[], error=None, kinds=pointage.MATERNITY_KINDS,
+                   hours=pointage.ALLAITEMENT_HOURS, params={}, employees=[])
+    if mapping is not None:
+        engine = make_engine(cfg.conn, **pointage.WEB_LIMITS)
+        try:
+            context["entries"] = pointage.maternity_entries(engine, mapping)
+            context["params"] = pointage.params_at(engine, mapping, date.today())
+            with engine.connect() as c:
+                context["employees"] = c.execute(text(
+                    f"SELECT matricule, concat_ws(' ', nom, prenom) FROM {pointage.qi(mapping.objs)}.v_pointage_employes "
+                    f"WHERE actif ORDER BY nom, prenom LIMIT 5000")).all()
+        except Exception as exc:
+            context["error"] = friendly(exc)
+        finally:
+            engine.dispose()
+    return render(request, "admin/maternite.html", **context)
+
+
+@router.post("/maternite")
+def maternity_add(request: Request, matricule: str = Form(""), type: str = Form("maternite"), du: str = Form(""),
+                  au: str = Form(""), heures: str = Form(""), commentaire: str = Form(""),
+                  db: Session = Depends(get_db)):
+    cfg, mapping = _mapping_ready(db)
+    if mapping is None:
+        return redirect("/admin/pointage")
+    ref = matricule.split(" — ")[0].strip()  # liste de suggestions : « matricule — nom »
+    engine = make_engine(cfg.conn, **pointage.WEB_LIMITS)
+    try:
+        mat, name = pointage.maternity_add(engine, mapping, ref=ref, kind=type, du=pointage.parse_day(du),
+                                           au=pointage.parse_day(au), heures=heures.strip() or None,
+                                           comment=commentaire, author=request.session.get("user", ""))
+    except pointage.PointageError as exc:
+        flash(request, str(exc), "err")
+        return redirect("/admin/maternite")
+    finally:
+        engine.dispose()
+    label = pointage.MATERNITY_KINDS.get(type, type)
+    detail = f"du {pointage.parse_day(du):%d/%m/%Y} au {pointage.parse_day(au):%d/%m/%Y}" \
+        + (f", {heures or 'heures par défaut'} par jour" if type == "allaitement" else "")
+    auth.audit(request, f"{label} enregistré(e)", f"{mat} {name}", detail)
+    flash(request, f"{label} de {name} enregistré(e) {detail}.", "ok")
+    return redirect("/admin/maternite")
+
+
+@router.post("/maternite/{entry_id}/delete")
+def maternity_delete(request: Request, entry_id: int, db: Session = Depends(get_db)):
+    cfg, mapping = _mapping_ready(db)
+    if mapping is None:
+        return redirect("/admin/pointage")
+    engine = make_engine(cfg.conn, **pointage.WEB_LIMITS)
+    try:
+        row = pointage.maternity_delete(engine, mapping, entry_id)
+    finally:
+        engine.dispose()
+    if row:
+        auth.audit(request, f"{pointage.MATERNITY_KINDS[row['type']]} supprimé(e)", row["matricule"],
+                   f"du {row['du']:%d/%m/%Y} au {row['au']:%d/%m/%Y}")
+        flash(request, "Période supprimée.", "ok")
+    return redirect("/admin/maternite")
 
 
 # --------------------------------------------------------------------------- agents terrain

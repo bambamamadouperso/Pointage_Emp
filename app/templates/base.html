@@ -71,6 +71,7 @@
     {% if is_admin %}{{ nav('/admin/pointage', 'link', 'Source des pointages', path.startswith('/admin/pointage')) }}{% endif %}
     {{ nav('/admin/terrain', 'pin', 'Agents terrain', path.startswith('/admin/terrain')) }}
     {{ nav('/admin/planning', 'cal', 'Horaires postés', path.startswith('/admin/planning')) }}
+    {{ nav('/admin/maternite', 'user', 'Maternité et allaitement', path.startswith('/admin/maternite')) }}
     {% if is_admin %}{{ nav('/admin/mails', 'mail', 'Mails de badge', path.startswith('/admin/mails')) }}{% endif %}
     {{ nav('/admin/resumes', 'chart', 'Résumés par mail', path.startswith('/admin/resumes')) }}
     {{ nav('/admin/rappels', 'bell', 'Rappels de pointage', path.startswith('/admin/rappels')) }}

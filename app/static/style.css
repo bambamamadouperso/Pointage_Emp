@@ -906,3 +906,14 @@ h3.moment { margin: 1.1rem 0 .2rem; font-size: .8rem; letter-spacing: .06em; tex
 .filters-collapsible.collapsed .filters-btn .when-open { display: none; }
 .filters-collapsible.collapsed .filters-btn .when-closed { display: inline; }
 .suivi-filters .row > label.horaires { flex: 0 1 260px; }
+
+/* Congé de maternité (rose) et mention « Allaitement » dans le suivi */
+:root { --mater: #be185d; --mater-bg: #fce7f3; --mater-solid: #ec4899; }
+@media (prefers-color-scheme: dark) { :root { --mater: #f9a8d4; --mater-bg: #4a1630; } }
+.badge.st-mater { background: var(--mater-bg); color: var(--mater); border-color: transparent; }
+.chip-check.st-mater { background: var(--mater-bg); color: var(--mater); }
+.dot.st-mater { background: var(--mater-solid); }
+table.suivi tr.st-mater td:first-child { border-left-color: var(--mater-solid); }
+table.suivi tr.st-mater td { background: color-mix(in srgb, var(--mater-bg) 35%, transparent); }
+.allait-tag { display: inline-block; margin-top: .2rem; padding: .05rem .45rem; border-radius: 999px; font-size: .72rem;
+  font-weight: 600; background: var(--mater-bg); color: var(--mater); }

@@ -32,7 +32,7 @@ _PILLS = {
     "st-ok": ("#d1fae5", "#047857"), "st-late": ("#ffedd5", "#c2410c"), "st-abs": ("#ffe4e6", "#be123c"),
     "st-inc": ("#e2e8f0", "#475569"), "st-off": ("#e0f2fe", "#0369a1"), "st-leave": ("#e4f5d3", "#3f6212"),
     "st-remote": ("#cdeee7", "#0f6b5f"), "st-field": ("#dbeafe", "#1d4ed8"), "st-sick": ("#ece8e5", "#57534e"),
-    "st-train": ("#ede9fe", "#6d28d9"), "st-mission": ("#f3e8ff", "#7e22ce"),
+    "st-train": ("#ede9fe", "#6d28d9"), "st-mission": ("#f3e8ff", "#7e22ce"), "st-mater": ("#fce7f3", "#be185d"),
 }
 _TONES = {"bad": "#e11d48", "warn": "#f97316", "ok": "#10b981", "info": "#3b82f6"}
 _ORDER = {"ABSENT": 0, "RETARD": 1, "INCOMPLET": 2}
