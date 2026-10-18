@@ -610,13 +610,13 @@ def test_pdf_exports(configured, logged_client):
     assert f'suivi_{MON:%Y%m%d}.pdf' in r.headers["content-disposition"]
     body = _pdf_text(r.content)
     assert "Suivi journalier des pointages" in body and "Moyenne" in body and "En retard" in body
-    assert "Statuts : En retard, Absent" in body and "(Durée validée) Tj" in body and "Ba Khady" in body
+    assert "(En retard, Absent) Tj" in body and "(VALIDÉE) Tj" in body and "Ba Khady" in body
     assert "E001" not in body  # à l'heure : exclu par le filtre des statuts
     assert "Export PDF" in logged_client.get(f"/suivi?date={MON.isoformat()}").text
     try:
         assert logged_client.get("/suivi/affichage?validee=0", follow_redirects=False).status_code in (302, 303)
         hidden = _pdf_text(logged_client.get(f"/suivi/export.pdf?date={MON.isoformat()}").content)
-        assert "(Durée validée) Tj" not in hidden and "(Durée effective) Tj" in hidden
+        assert "(VALIDÉE) Tj" not in hidden and "(EFFECTIVE) Tj" in hidden
     finally:
         logged_client.get("/suivi/affichage?validee=1", follow_redirects=False)
 
@@ -625,7 +625,7 @@ def test_pdf_exports(configured, logged_client):
     r = logged_client.get("/rapports/export.pdf?" + q)
     assert r.status_code == 200 and r.headers["content-type"] == "application/pdf"
     body = _pdf_text(r.content)
-    for part in ("Rapport de présence", "Taux de présence", "Par service", "Par employé", "Employés à suivre",
+    for part in ("Rapport de présence", "TAUX DE PRÉSENCE", "Par service", "Par employé", "Employés à suivre",
                  "Absences répétées", "Ba Khady"):
         assert part in body, part
 

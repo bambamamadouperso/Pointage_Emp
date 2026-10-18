@@ -439,11 +439,24 @@ def export_pdf(request: Request, db: Session = Depends(get_db)):
                  if k not in ("Du", "Au", "Lignes", "Exporté par") and v not in ("—", "Tous", "Toutes", "toutes")])
     headers = ["Date", "Matricule", "Nom", "Service", "Statut du personnel", "1er pointage", "Dernier", "Nb", "Statut",
                *(["Durée validée"] if with_validee else []), "Durée effective", "Responsable"]
-    widths = [17, 18, 42, 34, 24, 15, 15, 8, 26, *([17] if with_validee else []), 17, 36]
+    widths = [17, 16, 40, 30, 22, 16, 15, 8, 31, *([17] if with_validee else []), 17, 34]
     align = ["C", "L", "L", "L", "L", "C", "C", "C", "L", *(["C"] if with_validee else []), "C", "L"]
     status_col = 8
-    body, fills, colors = [], {}, {}
+    count = lambda *codes: sum(1 for r in rows if r["statut"] in codes)  # noqa: E731
+    moy = _averages(rows)
+    doc.kpis([
+        ("À l'heure", count("A_L_HEURE"), "journées", pdf.GREEN),
+        ("En retard", count("RETARD"), "journées", pdf.ORANGE),
+        ("Absents", count("ABSENT"), "sans justificatif", pdf.RED),
+        ("Pointages incomplets", count("INCOMPLET"), "un seul pointage", pdf.GREY),
+        ("Autres situations", len(rows) - count("A_L_HEURE", "RETARD", "ABSENT", "INCOMPLET"),
+         "congés, télétravail, terrain, missions...", pdf.BLUE),
+        ("Durée effective moyenne", hhmm(moy["effective"]) if moy["effective"] else "—",
+         f"objectif {objectif // 60}h{objectif % 60:02d} · présents au bureau", pdf.TEAL),
+    ])
+    body, pills, colors = [], {}, {}
     for i, r in enumerate(rows[:PDF_MAX_ROWS]):
+        colors[(i, 1)] = colors[(i, len(headers) - 1)] = pdf.MUTED
         body.append([r["jour"].strftime("%d/%m/%Y"), r["matricule"], " ".join(filter(None, [r["nom"], r["prenom"]])),
                      r["service"], r["categorie"],
                      hhmm(r["premier_pointage"]) if r["premier_pointage"] else "",
@@ -451,17 +464,16 @@ def export_pdf(request: Request, db: Session = Depends(get_db)):
                      r["statut_libelle"] + (" (allaitement)" if r.get("allaitement") else ""),
                      *([hhmm(r["duree_validee"]) if r["duree_validee"] is not None else ""] if with_validee else []),
                      hhmm(r["duree_effective"]) if r["duree_effective"] is not None else "", r["responsable"]])
-        fills[(i, status_col)] = pdf.COLORS.get(r["statut"], (255, 255, 255))
+        pills[(i, status_col)] = pdf.STATUS_PILLS.get(r["statut"], pdf.STATUS_PILLS["INCOMPLET"])
         for col, key in ((status_col + 1, "duree_validee_min") if with_validee else (None, None),
                          (status_col + 1 + with_validee, "duree_effective_min")):
             if col is not None and r[key] is not None:  # objectif : vert atteint, rouge sinon
-                colors[(i, col)] = pdf.OK if float(r[key]) >= objectif else pdf.KO
-    moy = _averages(rows)
+                pills[(i, col)] = pdf.GOOD if float(r[key]) >= objectif else pdf.BAD
     body.append(["Moyenne", "", "présents au bureau", "", "", hhmm(moy["premier"]) if moy["premier"] else "",
                  hhmm(moy["dernier"]) if moy["dernier"] else "", "", "",
                  *([hhmm(moy["validee"]) if moy["validee"] else ""] if with_validee else []),
                  hhmm(moy["effective"]) if moy["effective"] else "", ""])
-    doc.table(headers, body, widths, align, fills, colors, bold_last=True)
+    doc.table(headers, body, widths, align, pills, colors, bold_last=True)
     if len(rows) > PDF_MAX_ROWS:
         doc.section("Export tronqué", f"{len(rows) - PDF_MAX_ROWS} ligne(s) au-delà des {PDF_MAX_ROWS} premières ne figurent pas "
                                       "dans le PDF : affinez les filtres ou utilisez l'export Excel.")

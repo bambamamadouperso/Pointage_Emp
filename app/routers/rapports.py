@@ -214,17 +214,24 @@ def export_pdf(request: Request, db: Session = Depends(get_db)):
         return Response(doc.output_bytes(), media_type="application/pdf",
                         headers={"Content-Disposition": f'attachment; filename="rapport_{f.du:%Y%m%d}_{f.au:%Y%m%d}.pdf"'})
     doc.kpis([
-        ("Taux de présence", pct(k["taux_presence"]), f"{num(k['presents'])} journées sur {num(k['disponibles'])} (hors congés)"),
-        ("Taux d'absentéisme", pct(k["taux_absence"]), f"{num(k['absences'])} journée(s) d'absence"),
-        ("Taux de ponctualité", pct(k["taux_ponctualite"]), "à l'heure / (à l'heure + retards)"),
-        ("Retards", num(k["retards"]), f"{pointage.hhmm(timedelta(minutes=float(k['retard_min_total'] or 0)))} cumulées"),
+        ("Taux de présence", pct(k["taux_presence"]), f"{num(k['presents'])} journées sur {num(k['disponibles'])} (hors congés)", pdf.GREEN),
+        ("Taux d'absentéisme", pct(k["taux_absence"]), f"{num(k['absences'])} journée(s) d'absence", pdf.RED),
+        ("Taux de ponctualité", pct(k["taux_ponctualite"]), "à l'heure / (à l'heure + retards)", pdf.BLUE),
+        ("Retards", num(k["retards"]), f"{pointage.hhmm(timedelta(minutes=float(k['retard_min_total'] or 0)))} cumulées", pdf.ORANGE),
         ("Heures validées", f"{num(round(float(k['heures_validees'] or 0)))} h",
-         f"{hours(k['heures_moy_bureau'])} par jour au bureau" if k.get("heures_moy_bureau") else ""),
-        ("Oublis de badge", num(k["incomplets"]), "journées avec un seul pointage"),
+         f"{hours(k['heures_moy_bureau'])} par jour au bureau" if k.get("heures_moy_bureau") else "", pdf.TEAL),
+        ("Oublis de badge", num(k["incomplets"]), "journées avec un seul pointage", pdf.GREY),
     ])
     doc.filters([("Employés", num(k["employes"])), ("Journées attendues", num(k["attendus"])), ("En congé", num(k["conges"])),
                  ("Arrêt maladie", num(k["maladies"])), ("Télétravail", num(k["teletravail"])),
                  ("Sur le terrain", num(k["terrain"])), *([("En mission", num(k["missions"]))] if k.get("missions") else [])])
+
+    def rates(row, i, cols, pills):
+        """Pastilles des taux : présence et ponctualité (plus haut = mieux), absentéisme (plus bas = mieux)."""
+        for col, key, good, warn, up in cols:
+            pill = pdf.rate_pill(row[key], good, warn, up)
+            if pill:
+                pills[(i, col)] = pill
 
     group_headers = ["Employés", "Présence", "Absentéisme", "Ponctualité", "Retards", "Min. de retard", "Absences",
                      "Oublis de badge", "Heures validées", "Moy. / jour au bureau"]
@@ -234,27 +241,42 @@ def export_pdf(request: Request, db: Session = Depends(get_db)):
         groups = data.get(key) or []
         if not groups:
             continue
-        doc.section(title)
+        doc.section(title, f"{len(groups)} groupe(s), du plus fort au plus faible absentéisme")
+        pills, colors = {}, {}
+        for i, g in enumerate(groups):
+            rates(g, i, ((2, "taux_presence", 95, 85, True), (3, "taux_absence", 95, 90, False),
+                         (4, "taux_ponctualite", 95, 85, True)), pills)
+            if g["absences"]:
+                colors[(i, 7)] = pdf.RED
         doc.table([title[4:].capitalize()] + group_headers,
                   [[g[field], num(g["employes"]), pct(g["taux_presence"]), pct(g["taux_absence"]), pct(g["taux_ponctualite"]),
                     num(g["retards"]), num(g["retard_min_total"]), num(g["absences"]), num(g["incomplets"]),
                     hours(g["heures_validees"]), hours(g["heures_moy_bureau"])] for g in groups],
-                  [50] + group_widths, ["L"] + ["R"] * len(group_headers))
+                  [50] + group_widths, ["L"] + ["R"] * len(group_headers), pills, colors)
 
     if data["alertes"]:
         doc.section("Employés à suivre", f"{len(data['alertes'])} alerte(s)")
+        pills = {(i, 0): pdf.BAD if a["gravite"] >= 3 else pdf.WARN if a["gravite"] == 2 else pdf.STATUS_PILLS["INCOMPLET"] for i, a in enumerate(data["alertes"])}
         doc.table(["Motif", "Matricule", "Nom", "Service", "Responsable", "Détail"],
                   [[a["motif"], a["matricule"], a["nom"], a["service"], a["responsable"], a["detail"]] for a in data["alertes"]],
-                  [34, 20, 44, 40, 40, 90])
+                  [50, 18, 44, 36, 40, 80], pills=pills, colors={(i, 1): pdf.MUTED for i in range(len(data["alertes"]))})
 
     doc.section("Par employé", f"{len(data['employes'])} employé(s), tri : "
                                f"{SORTS.get(request.query_params.get('tri', 'absences'), SORTS['absences']).lower()}")
+    pills, colors = {}, {}
+    for i, e in enumerate(data["employes"]):
+        rates(e, i, ((6, "taux_presence", 95, 85, True), (9, "taux_ponctualite", 95, 85, True)), pills)
+        colors[(i, 0)] = pdf.MUTED
+        if e["absences"]:
+            colors[(i, 10)] = pdf.RED
+        if e["retards"]:
+            colors[(i, 7)] = pdf.ORANGE
     doc.table(["Matricule", "Nom", "Service", "Statut du personnel", "Attendus", "Présences", "Présence", "Retards",
                "Min. de retard", "Ponctualité", "Absences", "Oublis", "Congés", "Heures validées"],
               [[e["matricule"], " ".join(filter(None, [e["nom"], e["prenom"]])), e["service"], e["categorie"], num(e["attendus"]),
                 num(e["presents"]), pct(e["taux_presence"]), num(e["retards"]), num(e["retard_min_total"]),
                 pct(e["taux_ponctualite"]), num(e["absences"]), num(e["incomplets"]), num(e["conges"]),
                 hours(e["heures_validees"])] for e in data["employes"]],
-              [20, 46, 38, 26, 15, 16, 17, 14, 18, 18, 15, 13, 14, 20], ["L"] * 4 + ["R"] * 10)
+              [18, 42, 34, 24, 17, 18, 18, 16, 18, 20, 17, 15, 15, 20], ["L"] * 4 + ["R"] * 10, pills, colors)
     return Response(doc.output_bytes(), media_type="application/pdf",
                     headers={"Content-Disposition": f'attachment; filename="rapport_{f.du:%Y%m%d}_{f.au:%Y%m%d}.pdf"'})
