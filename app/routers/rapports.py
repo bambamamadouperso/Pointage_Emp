@@ -1,4 +1,4 @@
-"""Rapports d'analyse : indicateurs, tendances, habitudes d'arrivée, services, employés à suivre, export Excel."""
+"""Rapports d'analyse : indicateurs, tendances, habitudes d'arrivée, services, employés à suivre, exports Excel et PDF."""
 import io
 from datetime import date, timedelta
 from typing import Optional
@@ -74,12 +74,8 @@ def page(request: Request, db: Session = Depends(get_db)):
     return render(request, "rapports.html", **context)
 
 
-@router.get("/export.xlsx")
-def export(request: Request, db: Session = Depends(get_db)):
-    from openpyxl import Workbook
-    from openpyxl.styles import Font
-    from openpyxl.utils import get_column_letter
-
+def _export_data(request: Request, db: Session):
+    """Données communes aux exports Excel et PDF (ou une réponse d'erreur)."""
     cfg, mapping = load_config(db)
     if mapping is None:
         return Response("Module de pointage non configuré.", status_code=400)
@@ -94,6 +90,28 @@ def export(request: Request, db: Session = Depends(get_db)):
         return Response(f"Export impossible : {friendly(exc)}", status_code=400, media_type="text/plain; charset=utf-8")
     finally:
         engine.dispose()
+    return f, data
+
+
+def _filter_items(request: Request, f: pointage.Filters) -> list:
+    return [("Du", f.du.strftime("%d/%m/%Y")), ("Au", f.au.strftime("%d/%m/%Y")), ("Service", ", ".join(f.service) or "Tous"),
+            ("Statut du personnel", ", ".join(f.categorie) or "Tous"),
+            ("Direction", ", ".join(f.direction) or "Toutes"), ("Site", ", ".join(f.site) or "Tous"),
+            ("Équipe", (f.team + (" (directs)" if f.directs else "")) if f.team else "Toutes"),
+            ("Horaires", pointage.HORAIRES.get(f.horaires, "Tous (bureau et postés)")),
+            ("Exporté par", request.session.get("user", ""))]
+
+
+@router.get("/export.xlsx")
+def export(request: Request, db: Session = Depends(get_db)):
+    from openpyxl import Workbook
+    from openpyxl.styles import Font
+    from openpyxl.utils import get_column_letter
+
+    result = _export_data(request, db)
+    if isinstance(result, Response):
+        return result
+    f, data = result
 
     def pct(v):
         return round(v / 100, 4) if v is not None else None
@@ -159,14 +177,84 @@ def export(request: Request, db: Session = Depends(get_db)):
         ws.freeze_panes = "A2"
         ws.auto_filter.ref = ws.dimensions
     info = wb.create_sheet("Filtres")
-    for row in [("Du", f.du.strftime("%d/%m/%Y")), ("Au", f.au.strftime("%d/%m/%Y")), ("Service", ", ".join(f.service) or "Tous"), ("Statut du personnel", ", ".join(f.categorie) or "Tous"),
-                ("Direction", ", ".join(f.direction) or "Toutes"), ("Site", ", ".join(f.site) or "Tous"),
-                ("Équipe", (f.team + (" (directs)" if f.directs else "")) if f.team else "Toutes"),
-                ("Horaires", pointage.HORAIRES.get(f.horaires, "Tous (bureau et postés)")),
-                ("Exporté par", request.session.get("user", ""))]:
+    for row in _filter_items(request, f):
         info.append(row)
     buf = io.BytesIO()
     wb.save(buf)
     name = f"rapport_{f.du:%Y%m%d}_{f.au:%Y%m%d}.xlsx"
     return Response(buf.getvalue(), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
+@router.get("/export.pdf")
+def export_pdf(request: Request, db: Session = Depends(get_db)):
+    from .. import pdf
+
+    result = _export_data(request, db)
+    if isinstance(result, Response):
+        return result
+    f, data = result
+    k = data["kpi"]
+
+    def pct(v):
+        return f"{float(v):.1f} %".replace(".", ",") if v is not None else "—"
+
+    def hours(v):
+        return pointage.hhmm(timedelta(hours=float(v))) if v is not None else "—"
+
+    def num(v):
+        return f"{int(v or 0):,}".replace(",", " ")
+
+    doc = pdf.Document("Rapport de présence", f"du {f.du:%d/%m/%Y} au {f.au:%d/%m/%Y} · employés de la liste",
+                       request.session.get("user", ""))
+    doc.filters([(label, value) for label, value in _filter_items(request, f)
+                 if label not in ("Du", "Au", "Exporté par") and value not in ("Tous", "Toutes")])
+    if not k.get("attendus"):
+        doc.section("Aucune journée à analyser sur cette période avec ces filtres.")
+        return Response(doc.output_bytes(), media_type="application/pdf",
+                        headers={"Content-Disposition": f'attachment; filename="rapport_{f.du:%Y%m%d}_{f.au:%Y%m%d}.pdf"'})
+    doc.kpis([
+        ("Taux de présence", pct(k["taux_presence"]), f"{num(k['presents'])} journées sur {num(k['disponibles'])} (hors congés)"),
+        ("Taux d'absentéisme", pct(k["taux_absence"]), f"{num(k['absences'])} journée(s) d'absence"),
+        ("Taux de ponctualité", pct(k["taux_ponctualite"]), "à l'heure / (à l'heure + retards)"),
+        ("Retards", num(k["retards"]), f"{pointage.hhmm(timedelta(minutes=float(k['retard_min_total'] or 0)))} cumulées"),
+        ("Heures validées", f"{num(round(float(k['heures_validees'] or 0)))} h",
+         f"{hours(k['heures_moy_bureau'])} par jour au bureau" if k.get("heures_moy_bureau") else ""),
+        ("Oublis de badge", num(k["incomplets"]), "journées avec un seul pointage"),
+    ])
+    doc.filters([("Employés", num(k["employes"])), ("Journées attendues", num(k["attendus"])), ("En congé", num(k["conges"])),
+                 ("Arrêt maladie", num(k["maladies"])), ("Télétravail", num(k["teletravail"])),
+                 ("Sur le terrain", num(k["terrain"])), *([("En mission", num(k["missions"]))] if k.get("missions") else [])])
+
+    group_headers = ["Employés", "Présence", "Absentéisme", "Ponctualité", "Retards", "Min. de retard", "Absences",
+                     "Oublis de badge", "Heures validées", "Moy. / jour au bureau"]
+    group_widths = [16, 18, 20, 20, 15, 20, 16, 20, 20, 26]
+    for title, key, field in (("Par service", "services", "service"), ("Par statut du personnel", "categories", "groupe"),
+                              ("Par direction", "directions", "groupe"), ("Par site", "sites", "groupe")):
+        groups = data.get(key) or []
+        if not groups:
+            continue
+        doc.section(title)
+        doc.table([title[4:].capitalize()] + group_headers,
+                  [[g[field], num(g["employes"]), pct(g["taux_presence"]), pct(g["taux_absence"]), pct(g["taux_ponctualite"]),
+                    num(g["retards"]), num(g["retard_min_total"]), num(g["absences"]), num(g["incomplets"]),
+                    hours(g["heures_validees"]), hours(g["heures_moy_bureau"])] for g in groups],
+                  [50] + group_widths, ["L"] + ["R"] * len(group_headers))
+
+    if data["alertes"]:
+        doc.section("Employés à suivre", f"{len(data['alertes'])} alerte(s)")
+        doc.table(["Motif", "Matricule", "Nom", "Service", "Responsable", "Détail"],
+                  [[a["motif"], a["matricule"], a["nom"], a["service"], a["responsable"], a["detail"]] for a in data["alertes"]],
+                  [34, 20, 44, 40, 40, 90])
+
+    doc.section("Par employé", f"{len(data['employes'])} employé(s), tri : "
+                               f"{SORTS.get(request.query_params.get('tri', 'absences'), SORTS['absences']).lower()}")
+    doc.table(["Matricule", "Nom", "Service", "Statut du personnel", "Attendus", "Présences", "Présence", "Retards",
+               "Min. de retard", "Ponctualité", "Absences", "Oublis", "Congés", "Heures validées"],
+              [[e["matricule"], " ".join(filter(None, [e["nom"], e["prenom"]])), e["service"], e["categorie"], num(e["attendus"]),
+                num(e["presents"]), pct(e["taux_presence"]), num(e["retards"]), num(e["retard_min_total"]),
+                pct(e["taux_ponctualite"]), num(e["absences"]), num(e["incomplets"]), num(e["conges"]),
+                hours(e["heures_validees"])] for e in data["employes"]],
+              [20, 46, 38, 26, 15, 16, 17, 14, 18, 18, 15, 13, 14, 20], ["L"] * 4 + ["R"] * 10)
+    return Response(doc.output_bytes(), media_type="application/pdf",
+                    headers={"Content-Disposition": f'attachment; filename="rapport_{f.du:%Y%m%d}_{f.au:%Y%m%d}.pdf"'})

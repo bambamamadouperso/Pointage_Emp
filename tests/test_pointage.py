@@ -588,6 +588,48 @@ def test_reports_page_and_export(configured, logged_client):
     assert any(row[0] == "Absences répétées" for row in wb["Alertes"].iter_rows(min_row=2, values_only=True))
 
 
+def _pdf_text(content: bytes) -> str:
+    """Texte brut des flux (compressés) d'un PDF généré par fpdf2."""
+    import re
+    import zlib
+
+    assert content.startswith(b"%PDF")
+    out = []
+    for stream in re.findall(rb"stream\r?\n(.*?)\r?\nendstream", content, re.S):
+        try:
+            out.append(zlib.decompress(stream).decode("latin-1"))
+        except zlib.error:
+            out.append(stream.decode("latin-1"))
+    return "\n".join(out)
+
+
+def test_pdf_exports(configured, logged_client):
+    """Exports PDF du suivi et des rapports : mêmes filtres que l'écran, durée validée masquable."""
+    r = logged_client.get(f"/suivi/export.pdf?date={MON.isoformat()}&statut=RETARD&statut=ABSENT")
+    assert r.status_code == 200 and r.headers["content-type"] == "application/pdf"
+    assert f'suivi_{MON:%Y%m%d}.pdf' in r.headers["content-disposition"]
+    body = _pdf_text(r.content)
+    assert "Suivi journalier des pointages" in body and "Moyenne" in body and "En retard" in body
+    assert "Statuts : En retard, Absent" in body and "(Durée validée) Tj" in body and "Ba Khady" in body
+    assert "E001" not in body  # à l'heure : exclu par le filtre des statuts
+    assert "Export PDF" in logged_client.get(f"/suivi?date={MON.isoformat()}").text
+    try:
+        assert logged_client.get("/suivi/affichage?validee=0", follow_redirects=False).status_code in (302, 303)
+        hidden = _pdf_text(logged_client.get(f"/suivi/export.pdf?date={MON.isoformat()}").content)
+        assert "(Durée validée) Tj" not in hidden and "(Durée effective) Tj" in hidden
+    finally:
+        logged_client.get("/suivi/affichage?validee=1", follow_redirects=False)
+
+    q = f"p=perso&du={MON.isoformat()}&au={(MON + timedelta(days=4)).isoformat()}"
+    assert "Export PDF" in logged_client.get("/rapports?" + q).text
+    r = logged_client.get("/rapports/export.pdf?" + q)
+    assert r.status_code == 200 and r.headers["content-type"] == "application/pdf"
+    body = _pdf_text(r.content)
+    for part in ("Rapport de présence", "Taux de présence", "Par service", "Par employé", "Employés à suivre",
+                 "Absences répétées", "Ba Khady"):
+        assert part in body, part
+
+
 def test_category_filter(configured, pg, logged_client):
     """Catégorie du personnel (via une table de libellés) : colonne, filtre du suivi et des rapports, exports."""
     import io

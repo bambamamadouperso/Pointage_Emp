@@ -102,7 +102,7 @@ les jours antérieurs restent calculés avec les anciennes valeurs (une date d'e
 orange retard, rouge absent, gris incomplet), clic sur une ligne = tous les pointages bruts de la journée.
 Filtres (jour ou période, employé, service, **équipe d'un responsable** — toute sa hiérarchie ou ses directs —,
 statuts), colonne « Responsable », tri par colonne, filtres conservés dans l'URL (lien partageable),
-**export Excel** de la vue filtrée.
+**export Excel** et **export PDF** (A4 paysage, filtres en en-tête, statuts colorés, objectif en vert/rouge, ligne « Moyenne ») de la vue filtrée.
 
 **Horaires postés** (*Administration → Horaires postés*) : pour les agents en équipes (3×8, 2×12…), le planning
 Excel (ex. « PLANNING ATF » : légende des codes, ligne `MATRICULE`, une ligne par jour) est importé tel quel.
@@ -198,7 +198,7 @@ envoi via le serveur SMTP des mails de badge et soumis à son mode test / produc
 
 | Rôle | Accès |
 |---|---|
-| Lecteur | Suivi journalier et export Excel |
+| Lecteur | Suivi journalier, exports Excel et PDF |
 | RH | Suivi, rapports et exports de **tout le personnel** (même rattaché à un employé), paramètres horaires et jours fériés, horaires postés, agents terrain, circuit et traitement des arrêts maladie, résumés par mail, rappels de pointage — **sans** synchronisation (tableau de bord, jobs, exécutions, logs, données) ni sources de données (connexions, source des pointages), ni utilisateurs, mails de badge ou audit |
 | Manager | + tableau de bord, jobs (consultation, lancement, arrêt), exécutions, logs, données |
 | Administrateur | Tout : connexions, modification des jobs, paramètres, source des pointages, utilisateurs, audit |

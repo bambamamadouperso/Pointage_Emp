@@ -1,4 +1,4 @@
-"""Écran principal : suivi journalier des pointages (filtres dans l'URL, détail, export Excel)."""
+"""Écran principal : suivi journalier des pointages (filtres dans l'URL, détail, exports Excel et PDF)."""
 import io
 import threading
 import time
@@ -270,12 +270,8 @@ def detail(request: Request, key: str, jour: str, db: Session = Depends(get_db))
     return render(request, "_suivi_detail.html", columns=columns, rows=rows, error=error, day=day, key=key)
 
 
-@router.get("/export.xlsx")
-def export(request: Request, db: Session = Depends(get_db)):
-    from openpyxl import Workbook
-    from openpyxl.styles import Alignment, Font, PatternFill
-    from openpyxl.utils import get_column_letter
-
+def _export_data(request: Request, db: Session):
+    """Lignes et contexte communs aux exports Excel et PDF (ou une réponse d'erreur)."""
     cfg, mapping = load_config(db)
     if mapping is None:
         return Response("Module de pointage non configuré.", status_code=400)
@@ -292,6 +288,60 @@ def export(request: Request, db: Session = Depends(get_db)):
         return Response(f"Export impossible : {friendly(exc)}", status_code=400, media_type="text/plain; charset=utf-8")
     finally:
         engine.dispose()
+    return f, rows, objectif, with_validee
+
+
+def _averages(rows) -> dict:
+    """Ligne « Moyenne » (présents au bureau), comme à l'écran."""
+    def avg(values):
+        values = [v for v in values if v is not None]
+        return sum(values, timedelta()) / len(values) if values else None
+
+    def clock(td):
+        return (datetime.min + td).time().replace(microsecond=0) if td is not None else None
+
+    bureau = [r for r in rows if r["statut"] in ("A_L_HEURE", "RETARD", "INCOMPLET")]
+    complete = [r for r in bureau if r["statut"] != "INCOMPLET"]
+    bureau = [r for r in bureau if not r.get("poste")]  # heures moyennes : horaire de bureau seulement
+    first = avg([timedelta(hours=r["premier_pointage"].hour, minutes=r["premier_pointage"].minute,
+                           seconds=r["premier_pointage"].second) for r in bureau if r["premier_pointage"]])
+    last = avg([timedelta(hours=r["dernier_pointage"].hour, minutes=r["dernier_pointage"].minute,
+                          seconds=r["dernier_pointage"].second)
+                for r in bureau if r["dernier_pointage"] and r["nb_pointages"] >= 2 and r["statut"] != "INCOMPLET"])
+    return {"premier": clock(first), "dernier": clock(last), "validee": avg([r["duree_validee"] for r in complete]),
+            "effective": avg([r["duree_effective"] for r in complete])}
+
+
+def _filter_items(request: Request, f: pointage.Filters, objectif: int, with_validee: bool, count: int) -> list:
+    return [
+        ("Du", f.du.strftime("%d/%m/%Y")), ("Au", f.au.strftime("%d/%m/%Y")), ("Recherche", f.q or "—"),
+        ("Objectif de durée validée", f"{objectif // 60}h{objectif % 60:02d} (vert si atteint, rouge sinon)"),
+        ("Service", ", ".join(f.service) or "Tous"), ("Statut du personnel", ", ".join(f.categorie) or "Tous"),
+        ("Direction", ", ".join(f.direction) or "Toutes"), ("Site", ", ".join(f.site) or "Tous"),
+        ("Personnes", {"liste": "employés de la liste", "hors": "hors liste"}.get(f.population, "toutes")),
+        ("Équipe", (f.team + (" (directs)" if f.directs else "")) if f.team else "Toutes"),
+        ("Périmètre", "équipe du compte" if f.scope_root is not None else "tout le personnel"),
+        ("Statuts", ", ".join(pointage.STATUTS[s][0] for s in f.statuts) or "Tous"),
+        ("Horaires", pointage.HORAIRES.get(f.horaires, "Tous (bureau et postés)")),
+        ("Durée validée", "affichée" if with_validee else "masquée"),
+        ("Lignes", count), ("Exporté par", request.session.get("user", "")),
+    ]
+
+
+def _export_name(f: pointage.Filters, ext: str) -> str:
+    return f"suivi_{f.du:%Y%m%d}" + ("" if f.du == f.au else f"_{f.au:%Y%m%d}") + f".{ext}"
+
+
+@router.get("/export.xlsx")
+def export(request: Request, db: Session = Depends(get_db)):
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    data = _export_data(request, db)
+    if isinstance(data, Response):
+        return data
+    f, rows, objectif, with_validee = data
 
     wb = Workbook()
     ws = wb.active
@@ -338,25 +388,10 @@ def export(request: Request, db: Session = Depends(get_db)):
     ws.freeze_panes = "A2"
     ws.auto_filter.ref = ws.dimensions
 
-    # Ligne « Moyenne » (présents au bureau), comme à l'écran.
-    def avg(values):
-        values = [v for v in values if v is not None]
-        return sum(values, timedelta()) / len(values) if values else None
-
-    def clock(td):
-        return (datetime.min + td).time().replace(microsecond=0) if td is not None else None
-
-    bureau = [r for r in rows if r["statut"] in ("A_L_HEURE", "RETARD", "INCOMPLET")]
-    complete = [r for r in bureau if r["statut"] != "INCOMPLET"]
-    bureau = [r for r in bureau if not r.get("poste")]  # heures moyennes : horaire de bureau seulement
-    first = avg([timedelta(hours=r["premier_pointage"].hour, minutes=r["premier_pointage"].minute,
-                           seconds=r["premier_pointage"].second) for r in bureau if r["premier_pointage"]])
-    last = avg([timedelta(hours=r["dernier_pointage"].hour, minutes=r["dernier_pointage"].minute,
-                          seconds=r["dernier_pointage"].second)
-                for r in bureau if r["dernier_pointage"] and r["nb_pointages"] >= 2 and r["statut"] != "INCOMPLET"])
+    moy = _averages(rows)
     ws.append([])
-    ws.append(["Moyenne", "", "présents au bureau", "", "", "", clock(first), clock(last), "", "",
-               avg([r["duree_validee"] for r in complete]), avg([r["duree_effective"] for r in complete])])
+    ws.append(["Moyenne", "", "présents au bureau", "", "", "", moy["premier"], moy["dernier"], "", "",
+               moy["validee"], moy["effective"]])
     row = ws.max_row
     for col in range(1, 13):
         ws.cell(row, col).font = Font(bold=True)
@@ -375,25 +410,60 @@ def export(request: Request, db: Session = Depends(get_db)):
         ws.column_dimensions["M"].width = 26
         ws.auto_filter.ref = f"A1:{get_column_letter(ws.max_column)}{len(rows) + 1}"
     info = wb.create_sheet("Filtres")
-    for label, value in [
-        ("Du", f.du.strftime("%d/%m/%Y")), ("Au", f.au.strftime("%d/%m/%Y")), ("Recherche", f.q or "—"),
-        ("Objectif de durée validée", f"{objectif // 60}h{objectif % 60:02d} (vert si atteint, rouge sinon)"),
-        ("Service", ", ".join(f.service) or "Tous"), ("Statut du personnel", ", ".join(f.categorie) or "Tous"),
-        ("Direction", ", ".join(f.direction) or "Toutes"), ("Site", ", ".join(f.site) or "Tous"),
-        ("Personnes", {"liste": "employés de la liste", "hors": "hors liste"}.get(f.population, "toutes")),
-        ("Équipe", (f.team + (" (directs)" if f.directs else "")) if f.team else "Toutes"),
-        ("Périmètre", "équipe du compte" if f.scope_root is not None else "tout le personnel"),
-        ("Statuts", ", ".join(pointage.STATUTS[s][0] for s in f.statuts) or "Tous"),
-        ("Horaires", pointage.HORAIRES.get(f.horaires, "Tous (bureau et postés)")),
-        ("Durée validée", "affichée" if with_validee else "masquée"),
-        ("Lignes", len(rows)), ("Exporté par", request.session.get("user", "")),
-    ]:
+    for label, value in _filter_items(request, f, objectif, with_validee, len(rows)):
         info.append([label, value])
     info.column_dimensions["A"].width = 14
     info.column_dimensions["B"].width = 40
 
     buf = io.BytesIO()
     wb.save(buf)
-    name = f"suivi_{f.du:%Y%m%d}" + ("" if f.du == f.au else f"_{f.au:%Y%m%d}") + ".xlsx"
     return Response(buf.getvalue(), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    headers={"Content-Disposition": f'attachment; filename="{name}"'})
+                    headers={"Content-Disposition": f'attachment; filename="{_export_name(f, "xlsx")}"'})
+
+
+PDF_MAX_ROWS = 5000
+
+
+@router.get("/export.pdf")
+def export_pdf(request: Request, db: Session = Depends(get_db)):
+    from .. import pdf
+
+    data = _export_data(request, db)
+    if isinstance(data, Response):
+        return data
+    f, rows, objectif, with_validee = data
+    hhmm = pointage.hhmm
+    period = f"du {f.du:%d/%m/%Y}" + ("" if f.du == f.au else f" au {f.au:%d/%m/%Y}")
+    doc = pdf.Document("Suivi journalier des pointages", f"{period} · {len(rows)} ligne(s)", request.session.get("user", ""))
+    doc.filters([(k, v) for k, v in _filter_items(request, f, objectif, with_validee, len(rows))
+                 if k not in ("Du", "Au", "Lignes", "Exporté par") and v not in ("—", "Tous", "Toutes", "toutes")])
+    headers = ["Date", "Matricule", "Nom", "Service", "Statut du personnel", "1er pointage", "Dernier", "Nb", "Statut",
+               *(["Durée validée"] if with_validee else []), "Durée effective", "Responsable"]
+    widths = [17, 18, 42, 34, 24, 15, 15, 8, 26, *([17] if with_validee else []), 17, 36]
+    align = ["C", "L", "L", "L", "L", "C", "C", "C", "L", *(["C"] if with_validee else []), "C", "L"]
+    status_col = 8
+    body, fills, colors = [], {}, {}
+    for i, r in enumerate(rows[:PDF_MAX_ROWS]):
+        body.append([r["jour"].strftime("%d/%m/%Y"), r["matricule"], " ".join(filter(None, [r["nom"], r["prenom"]])),
+                     r["service"], r["categorie"],
+                     hhmm(r["premier_pointage"]) if r["premier_pointage"] else "",
+                     hhmm(r["dernier_pointage"]) if r["dernier_pointage"] else "", r["nb_pointages"] or "",
+                     r["statut_libelle"] + (" (allaitement)" if r.get("allaitement") else ""),
+                     *([hhmm(r["duree_validee"]) if r["duree_validee"] is not None else ""] if with_validee else []),
+                     hhmm(r["duree_effective"]) if r["duree_effective"] is not None else "", r["responsable"]])
+        fills[(i, status_col)] = pdf.COLORS.get(r["statut"], (255, 255, 255))
+        for col, key in ((status_col + 1, "duree_validee_min") if with_validee else (None, None),
+                         (status_col + 1 + with_validee, "duree_effective_min")):
+            if col is not None and r[key] is not None:  # objectif : vert atteint, rouge sinon
+                colors[(i, col)] = pdf.OK if float(r[key]) >= objectif else pdf.KO
+    moy = _averages(rows)
+    body.append(["Moyenne", "", "présents au bureau", "", "", hhmm(moy["premier"]) if moy["premier"] else "",
+                 hhmm(moy["dernier"]) if moy["dernier"] else "", "", "",
+                 *([hhmm(moy["validee"]) if moy["validee"] else ""] if with_validee else []),
+                 hhmm(moy["effective"]) if moy["effective"] else "", ""])
+    doc.table(headers, body, widths, align, fills, colors, bold_last=True)
+    if len(rows) > PDF_MAX_ROWS:
+        doc.section("Export tronqué", f"{len(rows) - PDF_MAX_ROWS} ligne(s) au-delà des {PDF_MAX_ROWS} premières ne figurent pas "
+                                      "dans le PDF : affinez les filtres ou utilisez l'export Excel.")
+    return Response(doc.output_bytes(), media_type="application/pdf",
+                    headers={"Content-Disposition": f'attachment; filename="{_export_name(f, "pdf")}"'})

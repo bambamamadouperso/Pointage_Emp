@@ -11,4 +11,5 @@ cryptography>=42
 python-dotenv>=1.0
 tzdata>=2024.1
 openpyxl>=3.1
+fpdf2>=2.7
 pyodbc>=5.0

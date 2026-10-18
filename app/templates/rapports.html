@@ -34,7 +34,8 @@
     <p class="muted">Du {{ f.du | jour_fr }} au {{ f.au | jour_fr }} · employés de la liste
       {%- if scope_label %} · équipe de {{ scope_label }}{% endif %}</p>
   </div>
-  {% if data %}<div class="actions"><a class="btn" href="/rapports/export.xlsx?{{ request.query_params }}">⬇ Export Excel</a></div>{% endif %}
+  {% if data %}<div class="actions"><a class="btn" href="/rapports/export.xlsx?{{ request.query_params }}">⬇ Export Excel</a>
+    <a class="btn" href="/rapports/export.pdf?{{ request.query_params }}">⬇ Export PDF</a></div>{% endif %}
 </div>
 
 {% if not configured %}
