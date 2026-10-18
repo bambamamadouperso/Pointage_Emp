@@ -153,6 +153,20 @@ def apply_scope(request: Request, db: Session, engine, mapping: pointage.Mapping
     return found[1]
 
 
+def _pending_requests(db: Session, engine, mapping, f, rows) -> dict:
+    """Absences couvertes par une demande non validée (congé, télétravail, mission) : {(employé, jour): libellé}."""
+    from .. import validations
+
+    keys = sorted({r["emp_key"] for r in rows if r["statut"] == "ABSENT"})
+    if not keys:
+        return {}
+    try:
+        return validations.pending_map(engine, mapping, validations.get_settings(db), f.du, f.au, keys)
+    except Exception as exc:  # noqa: BLE001 - indication facultative : ne doit pas empêcher l'affichage
+        write_log("WARNING", f"Demandes en attente de validation non lues : {friendly(exc)}")
+        return {}
+
+
 @router.get("/affichage")
 def display_toggle(request: Request, validee: str = "1"):
     """Masque ou réaffiche la durée validée pour l'utilisateur connecté (mémorisé pour sa session)."""
@@ -178,13 +192,14 @@ def suivi(request: Request, db: Session = Depends(get_db)):
                    hhmm=pointage.hhmm, configured=mapping is not None, data=None, error=None, services=[],
                    managers=[], categories=[], directions=[], dims=dimension_filters(mapping), objectif_min=480, scope_label=None, population=None, last_punch=None, stale=False, has_hierarchy=bool(mapping and mapping.hier_table),
                    single_day=f.du == f.au, mode="jour" if f.du == f.au else "periode",
-                   validee_ok=validee_ok, show_validee=validee_shown, horaires=pointage.HORAIRES)
+                   validee_ok=validee_ok, show_validee=validee_shown, horaires=pointage.HORAIRES, pending={})
     if mapping is None:
         return render(request, "suivi.html", **context)
     engine = make_engine(cfg.conn, **pointage.WEB_LIMITS)
     try:
         context["scope_label"] = apply_scope(request, db, engine, mapping, f)
         context["data"] = pointage.daily(engine, mapping, f, page, size)
+        context["pending"] = _pending_requests(db, engine, mapping, f, context["data"]["rows"])
         context["services"] = pointage.services(engine, mapping, f.scope_root)
         context["managers"] = pointage.managers(engine, mapping, f.scope_root)
         context["categories"] = pointage.categories(engine, mapping, f.scope_root)

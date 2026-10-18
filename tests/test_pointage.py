@@ -305,7 +305,7 @@ def test_rh_role_sees_everyone_without_sync(configured, client):
     admin = client.get("/admin").text
     assert "Horaires postés" in admin and "Source des pointages" not in admin and "Traitements planifiés" not in admin
     for path in ("/admin/parametres", "/admin/planning", "/admin/terrain", "/admin/arrets", "/admin/resumes",
-                 "/admin/rappels", "/admin/maternite", "/rapports", "/arrets"):
+                 "/admin/rappels", "/admin/maternite", "/admin/validations", "/rapports", "/arrets"):
         assert client.get(path, follow_redirects=False).status_code == 200, path
     for path in ("/", "/jobs", "/runs", "/logs", "/data", "/connections", "/connections/new", "/admin/pointage",
                  "/admin/mails", "/admin/users", "/admin/audit"):
@@ -2119,3 +2119,120 @@ def test_maternity_leave_and_breastfeeding(configured, pg, logged_client):
 
 def before_absences(rows) -> int:
     return sum(1 for r in rows.values() if r.statut == "ABSENT")
+
+
+def test_pending_leave_reminders(configured, pg, logged_client, monkeypatch):
+    """Relances des demandes de congé en attente (table HR Smart) : prochain validateur par son matricule, un mail par
+    validateur regroupant ses demandes, jours déjà comptés absents, copie RH, espacement, délai de grâce, suivi."""
+    from app import mails, validations
+    from app.models import ApprovalReminderItem, ApprovalReminderLog, MailSettings
+
+    with pg.begin() as c:
+        c.execute(text(f'ALTER TABLE {SCHEMA}."Personnel" ADD COLUMN IF NOT EXISTS "Email" text'))
+        c.execute(text(f'UPDATE {SCHEMA}."Personnel" SET "Email" = lower("Prenom" || \'.\' || "Nom") || \'@exemple.com\''))
+        c.execute(text(f'DROP TABLE IF EXISTS {SCHEMA}."DemandeConge"'))
+        c.execute(text(f"""CREATE TABLE {SCHEMA}."DemandeConge" ("Matricule" text, "DateDebut" timestamp, "DateFin" timestamp,
+            "Etat" text, "Document" text, "ProchainvalidateurMatricule" text, "EtapeValidation" text, "DateDemande" date)"""))
+        c.execute(text(f"""INSERT INTO {SCHEMA}."DemandeConge" VALUES
+            ('E005', '2026-09-21', '2026-09-22', 'En Validation', 'CONGE', 'E001', 'N+1', '2026-09-18'),
+            ('E003', '2026-09-22', '2026-09-22', 'Validé Par N1', 'CONGE', 'E001', 'RH', '2026-09-18'),
+            ('E001', '2026-09-21', '2026-09-21', ' en validation ', 'CONGE', 'E003', 'N+1', '2026-09-18'),
+            ('E004', '2026-09-25', '2026-09-25', 'En Validation', 'CONGE', 'X999', 'N+1', '2026-09-18'),
+            ('E007', '2026-09-22', '2026-09-22', 'Approuvée', 'CONGE', NULL, NULL, '2026-09-18'),
+            ('E002', '2026-09-22', '2026-09-22', 'Refusée', 'CONGE', 'E001', NULL, '2026-09-18')"""))
+    with SessionLocal() as db:
+        cfg = db.query(PointageConfig).one()
+        original, conn_id = cfg.data, cfg.conn_id
+    data = {**pointage.Mapping.from_json(original).__dict__, "email_col": "Email", "email_in": "person", "conn_id": conn_id,
+            "leave_table": "DemandeConge", "leave_emp_col": "Matricule", "leave_ref": "matricule",
+            "leave_start_col": "DateDebut", "leave_end_col": "DateFin", "leave_state_col": "Etat",
+            "leave_state_values": "Approuvée", "leave_type_col": "Document"}
+    delivered = []
+
+    class FakeSMTP:
+        def __init__(self, host, port, timeout=None): pass
+        def ehlo(self): pass
+        def starttls(self, context=None): pass
+        def login(self, user, pwd): pass
+        def send_message(self, msg): delivered.append(msg)
+        def quit(self): pass
+
+    monkeypatch.setattr(mails.smtplib, "SMTP", FakeSMTP)
+    settings = {"enabled": "true", "send_time": "08h30", "weekdays": ["1", "2", "3", "4", "5"], "app_name": "HR Smart",
+                "app_url": "https://ico-hrsmart.ea.holcim.net/HRSmartV3", "leave_enabled": "true",
+                "leave_pending": "En Validation, Validé Par N1", "leave_validator_col": "ProchainvalidateurMatricule",
+                "leave_step_col": "EtapeValidation", "leave_created_col": "DateDemande", "repeat_days": "2",
+                "horizon_days": "14", "past_days": "31", "cc_addresses": "rh@exemple.com", "cc_after_absent": "2",
+                "show_in_suivi": "true"}
+    TUE9 = datetime(2026, 9, 22, 9, 0)
+    try:
+        assert "installées" in logged_client.post("/admin/pointage", data=data, follow_redirects=True).text
+        with SessionLocal() as db:
+            ms = mails.get_settings(db)
+            ms.smtp_host, ms.from_email, ms.mode, ms.test_recipients = "smtp.test", "pointage@exemple.com", "production", ""
+            db.commit()
+        r = logged_client.post("/admin/validations/parametres", data={**settings, "leave_pending": ""}, follow_redirects=True)
+        assert "indiquez au moins un statut" in r.text
+        r = logged_client.post("/admin/validations/parametres", data=settings, follow_redirects=True)
+        assert "Paramètres des relances enregistrés" in r.text
+
+        # Demandes en attente : statuts paramétrés (casse et espaces ignorés), validateur retrouvé par son matricule.
+        with SessionLocal() as db:
+            s, m = validations.get_settings(db), pointage.Mapping.from_json(db.query(PointageConfig).one().data)
+        reqs = {r["matricule"]: r for r in validations.pending_requests(pg, m, s, MON - timedelta(days=31),
+                                                                        MON + timedelta(days=14), today=TUE)}
+        assert set(reqs) == {"E005", "E003", "E001", "E004"}  # approuvée et refusée ignorées
+        assert (reqs["E005"]["validator"]["email"], reqs["E005"]["absents"], reqs["E005"]["jours"]) == (
+            "awa.diallo@exemple.com", 2, 2)
+        assert reqs["E001"]["absents"] == 0 and reqs["E001"]["validator"]["nom"] == "Sow Fatou"
+        assert reqs["E004"]["validator"]["found"] is False and reqs["E005"]["etape"] == "N+1"
+        assert reqs["E005"]["attente"] == 4
+
+        # Envoi : avant l'heure, rien ; à 9h, un mail par validateur.
+        assert validations.run_due(datetime(2026, 9, 22, 8, 0)) == {"status": "idle"}
+        assert validations.run_due(TUE9) == {"status": "done", "sent": 3, "skipped": 0, "failed": 0}
+        by_to = {msg["To"]: msg for msg in delivered}
+        awa = by_to["awa.diallo@exemple.com"]
+        assert awa["Subject"] == "2 demandes de congé en attente de votre validation"
+        assert awa["Cc"] == "rh@exemple.com"  # 2 jours déjà comptés absents ≥ seuil de copie
+        body = awa.get_body(("html",)).get_content()
+        assert "Ba Khady" in body and "Sow Fatou" in body and "Valider dans HR Smart" in body
+        assert "https://ico-hrsmart.ea.holcim.net/HRSmartV3" in body and "3 jour(s) déjà comptés absents" in body
+        assert "N+1" in body and "en attente depuis 4 j" in body and "Bonjour Awa,</h1>" in body
+        assert by_to["fatou.sow@exemple.com"]["Cc"] is None  # demande sans jour compté absent : pas de copie
+        assert "Fall Ibou" in by_to["rh@exemple.com"].get_body(("html",)).get_content()  # validateur inconnu → RH
+
+        # Un seul envoi par jour ; mercredi : espacement de 2 jours non atteint ; jeudi : nouvelle relance.
+        assert validations.run_due(datetime(2026, 9, 22, 11, 0)) == {"status": "idle"}
+        assert validations.run_due(datetime(2026, 9, 23, 9, 0)) == {"status": "idle"}
+        assert validations.run_due(datetime(2026, 9, 24, 9, 0))["sent"] == 3
+        with SessionLocal() as db:
+            assert {i.count for i in db.query(ApprovalReminderItem)} == {2}
+            db.query(ApprovalReminderItem).delete()
+            db.query(ApprovalReminderLog).delete()
+            s = validations.get_settings(db)
+            s.grace_days = 10  # demandes faites le 18/09 : pas avant le 28/09
+            db.commit()
+        assert validations.run_due(TUE9) == {"status": "idle"}
+        with SessionLocal() as db:
+            validations.get_settings(db).grace_days = 0
+            db.commit()
+
+        # Administration : situation par validateur, aperçu ; suivi : absence signalée « en attente de validation ».
+        page = logged_client.get("/admin/validations").text
+        assert "Demandes en attente" in page and "matricule introuvable" in page and "ProchainvalidateurMatricule" in page
+        assert "Demandes à valider" in logged_client.get("/admin/validations/apercu?validateur=E001").text
+        page = logged_client.get(f"/suivi?date={TUE.isoformat()}").text
+        assert "Congé (CONGE) en attente de validation (En Validation)" in page
+        assert "Congé (CONGE) en attente de validation (Validé Par N1)" in page
+    finally:
+        with SessionLocal() as db:
+            db.query(ApprovalReminderItem).delete()
+            db.query(ApprovalReminderLog).delete()
+            validations.get_settings(db).enabled = False
+            ms = db.query(MailSettings).first()
+            ms.smtp_host, ms.from_email, ms.mode, ms.test_recipients = "", "", "test", ""
+            db.commit()
+        logged_client.post("/admin/pointage", data={**pointage.Mapping.from_json(original).__dict__, "conn_id": conn_id})
+        with pg.begin() as c:
+            c.execute(text(f'DROP TABLE IF EXISTS {SCHEMA}."DemandeConge"'))

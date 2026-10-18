@@ -1,0 +1,173 @@
+{% extends "base.html" %}
+{% block title %}Relances des validations{% endblock %}
+{% macro col_select(name, value, cols, empty_label) %}
+<select name="{{ name }}"><option value="">{{ empty_label }}</option>
+  {% for c in cols %}<option value="{{ c }}" {{ 'selected' if c == value }}>{{ c }}</option>{% endfor %}
+  {% if value and value not in cols %}<option value="{{ value }}" selected>{{ value }} (introuvable)</option>{% endif %}
+</select>
+{% endmacro %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Relances des demandes en attente</h1>
+    <p class="muted">Une demande de congé (ou de télétravail, de mission) non validée n'est pas prise en compte dans le pointage :
+      l'employé apparaît « Absent ». Chaque jour choisi, le <strong>prochain validateur</strong> de chaque demande en attente reçoit un
+      e-mail qui regroupe ses demandes, avec un bouton vers {{ s.app_name or "l'outil RH" }}.</p></div>
+  <a href="/admin" class="muted">← {{ 'Administration' if can(role, 'admin') else 'Ressources humaines' }}</a>
+</div>
+{% if error %}<div class="flash warn">{{ error }}</div>{% endif %}
+
+<section class="card rules">
+  <h2>Envoi</h2>
+  <ul class="rule-list">
+    <li>Serveur SMTP des {% if can(role, 'admin') %}<a href="/admin/mails">Mails de badge</a>{% else %}Mails de badge{% endif %} :
+      {% if mail.smtp_host and mail.from_email %}<strong>{{ mail.smtp_host }}</strong>, expéditeur {{ mail.from_email }}
+      {% else %}<span class="warn-text">non configuré — aucune relance ne partira</span>{% endif %}.</li>
+    <li>Mode : {% if mail.mode == 'production' %}<span class="badge ok">Production</span> — chaque relance part vers le validateur.
+      {% else %}<span class="badge warn">Test</span> — tout part vers les adresses de test ({{ mail.test_recipients or 'aucune' }}),
+      avec un bandeau « MODE TEST » indiquant le destinataire prévu.{% endif %}</li>
+    <li>Un seul e-mail par validateur et par jour ; chaque demande est relancée au plus tous les {{ s.repeat_days or 1 }} jour(s)
+      {%- if s.max_reminders %}, {{ s.max_reminders }} fois au maximum{% endif %}.
+      {% if s.last_run_at %}Dernier passage : {{ s.last_run_at | dt }} — {{ s.last_run_summary }}.{% endif %}</li>
+    {% if state and state.stale %}<li><span class="warn-text">{{ state.stale }} — relances suspendues.</span></li>{% endif %}
+  </ul>
+</section>
+
+<form method="post" action="/admin/validations/parametres" class="card form">
+  <h2>Paramètres</h2>
+  <div class="digest-plan">
+    <label class="check"><input type="checkbox" name="enabled" value="true" {{ 'checked' if s.enabled }}>
+      <span><strong>Relances activées</strong></span></label>
+    <div class="inline">
+      <label>Heure d'envoi <input name="send_time" value="{{ s.send_time or '08:30' }}" size="5" placeholder="08:30"></label>
+      <span class="weekday-checks">{% for n, label in weekdays.items() %}<label class="check small"><input type="checkbox" name="weekdays" value="{{ n }}" {{ 'checked' if n in days }}> {{ label }}</label>{% endfor %}</span>
+    </div>
+  </div>
+  <div class="row">
+    <label>Nom de l'outil RH <input name="app_name" value="{{ s.app_name or 'HR Smart' }}"></label>
+    <label class="grow">Adresse de l'outil RH (bouton « Valider ») <input name="app_url" value="{{ s.app_url or '' }}" placeholder="https://…"></label>
+  </div>
+
+  <h3>Demandes concernées</h3>
+  <p class="muted small">Pour chaque table de demandes (configurée dans Source des pointages), les statuts qui signifient « en attente »
+    (séparés par des virgules, sans tenir compte des majuscules ni des accents) et la colonne qui contient le <strong>matricule du prochain validateur</strong>.</p>
+  <div class="table-wrap"><table class="approval-sources">
+    <thead><tr><th>Source</th><th>Statuts « en attente »</th><th>Matricule du prochain validateur</th><th>Étape (facultatif)</th><th>Date de la demande (facultatif)</th></tr></thead>
+    <tbody>{% for key, label in labels.items() %}{% set c = cfg[key] %}{% set table = state.tables[key] if state else '' %}{% set cols = columns.get(key, []) %}
+      <tr><td><label class="check"><input type="checkbox" name="{{ key }}_enabled" value="true" {{ 'checked' if c.enabled }} {{ 'disabled' if not table and state }}>
+          <span><strong>{{ label }}</strong>{% if table %}<br><span class="mono small">{{ table }}</span>{% elif state %}<br><span class="muted small">table non configurée</span>{% endif %}</span></label></td>
+        <td><input name="{{ key }}_pending" value="{{ c.pending }}" placeholder="En Validation, Validé Par N1"></td>
+        <td>{{ col_select(key ~ '_validator_col', c.validator_col, cols, '— choisir —') }}</td>
+        <td>{{ col_select(key ~ '_step_col', c.step_col, cols, '— aucune —') }}</td>
+        <td>{{ col_select(key ~ '_created_col', c.created_col, cols, '— aucune —') }}</td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+
+  <h3>Rythme et destinataires</h3>
+  <div class="row">
+    <label>Première relance après <input name="grace_days" value="{{ s.grace_days or 0 }}" size="3" inputmode="numeric"> jour(s) d'attente
+      <span class="muted small">(si la date de la demande est connue)</span></label>
+    <label>Puis tous les <input name="repeat_days" value="{{ s.repeat_days or 1 }}" size="3" inputmode="numeric"> jour(s)</label>
+    <label>Au plus <input name="max_reminders" value="{{ s.max_reminders or 0 }}" size="3" inputmode="numeric"> relance(s) par demande
+      <span class="muted small">(0 = sans limite)</span></label>
+  </div>
+  <div class="row">
+    <label>Demandes qui commencent dans les <input name="horizon_days" value="{{ s.horizon_days if s.horizon_days is not none else 14 }}" size="3" inputmode="numeric"> prochains jours</label>
+    <label>ou terminées depuis moins de <input name="past_days" value="{{ s.past_days if s.past_days is not none else 31 }}" size="3" inputmode="numeric"> jours</label>
+  </div>
+  <div class="row">
+    <label class="grow">Adresses RH en copie <span class="muted small">(facultatif ; reçoivent aussi les demandes sans validateur joignable)</span>
+      <input name="cc_addresses" value="{{ s.cc_addresses or '' }}" placeholder="rh@exemple.com"></label>
+    <label>Copie RH à partir de <input name="cc_after_absent" value="{{ s.cc_after_absent or 0 }}" size="3" inputmode="numeric"> jour(s) comptés absents
+      <span class="muted small">(0 = toujours)</span></label>
+  </div>
+  <div class="row">
+    <label class="grow">Objet <span class="muted small">(vide = « N demande(s) de congé en attente de votre validation » ; {n} = nombre)</span>
+      <input name="subject" value="{{ s.subject or '' }}"></label>
+  </div>
+  <label>Message ajouté au mail <span class="muted small">(facultatif)</span>
+    <textarea name="message" rows="2" placeholder="Merci de valider ces demandes dès que possible.">{{ s.message or '' }}</textarea></label>
+  <div class="inline">
+    <label>Garde-fou : ne rien envoyer si la table des demandes n'a pas été synchronisée depuis
+      <input name="max_lag_minutes" value="{{ s.max_lag_minutes or 0 }}" size="4" inputmode="numeric"> min</label>
+    <span class="muted small">(0 = sans contrôle)</span>
+  </div>
+  <label class="check"><input type="checkbox" name="show_in_suivi" value="true" {{ 'checked' if s.show_in_suivi }}>
+    <span>Dans le suivi journalier, signaler « en attente de validation » sur les absences couvertes par une demande non validée</span></label>
+  <div class="form-actions"><button class="btn primary">Enregistrer</button></div>
+</form>
+
+{% if state %}
+<section class="card" id="situation">
+  <div class="card-head"><div><h2>Demandes en attente</h2>
+    <p class="muted small">{{ state.requests | length }} demande(s) en attente dans la fenêtre choisie, {{ state.groups | length }} validateur(s).
+      {% if not state.active %}<span class="warn-text">Aucune source activée.</span>{% endif %}</p></div></div>
+  {% if not state.requests %}<p class="empty">Aucune demande en attente.</p>{% else %}
+  <div class="table-wrap"><table>
+    <thead><tr><th>Validateur</th><th>Employé</th><th>Demande</th><th>Période</th><th class="right">Comptés absents</th><th>Relances</th><th>Prochaine relance</th></tr></thead>
+    <tbody>{% for key, items in state.groups.items() %}{% for r in items %}
+      <tr>{% if loop.first %}<td rowspan="{{ items | length }}">{% if key == unknown %}<span class="badge err">aucun validateur</span>
+            {% else %}<span class="mono small">{{ key }}</span> {{ r.validator.nom or '' }}
+            {% if not r.validator.found %}<br><span class="badge err">matricule introuvable</span>
+            {% elif not r.validator.email %}<br><span class="badge warn">sans adresse e-mail</span>
+            {% else %}<br><span class="muted small">{{ r.validator.email }}</span>{% endif %}{% endif %}</td>{% endif %}
+        <td><span class="mono small">{{ r.matricule }}</span> {{ r.nom }} {{ r.prenom or '' }}</td>
+        <td>{{ r.label }}<br><span class="muted small">{{ r.etat }}{% if r.etape %} · {{ r.etape }}{% endif %}</span></td>
+        <td class="nowrap small">{{ r.du.strftime('%d/%m/%Y') }} → {{ r.au.strftime('%d/%m/%Y') }}<br><span class="muted">{{ r.jours }} j{% if r.attente is not none %} · en attente depuis {{ r.attente }} j{% endif %}</span></td>
+        <td class="right">{% if r.absents %}<span class="badge err">{{ r.absents }} j</span>{% else %}0{% endif %}</td>
+        <td class="small">{{ r.sent or 0 }}</td>
+        <td class="small nowrap">{% if r.due %}<span class="badge warn">aujourd'hui</span>{% elif r.next %}{{ r.next.strftime('%d/%m/%Y') }}{% else %}<span class="muted">maximum atteint</span>{% endif %}</td></tr>
+    {% endfor %}{% endfor %}</tbody>
+  </table></div>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>Aperçu et essai</h2>
+  <form method="get" action="/admin/validations/apercu" target="apercu" class="inline" id="preview_form">
+    <label>Validateur <select name="validateur">
+      {% for key, items in state.groups.items() %}<option value="{{ key }}">{{ items[0].validator.nom or key }} ({{ items | length }})</option>{% endfor %}
+      {% if not state.groups %}<option value="">Exemple</option>{% endif %}</select></label>
+    <button class="btn">Afficher l'aperçu</button>
+  </form>
+  <iframe name="apercu" title="Aperçu de la relance" style="width:100%;height:620px;border:1px solid var(--border);border-radius:10px;margin-top:.8rem;background:#f2f5f9"></iframe>
+  <form method="post" action="/admin/validations/essai" class="inline" style="margin-top:.8rem">
+    <input type="hidden" name="validateur" id="essai_validateur">
+    <label>Envoyer cet aperçu à <input type="email" name="to" required placeholder="moi@exemple.com"></label>
+    <button class="btn">Envoyer un essai</button>
+  </form>
+</section>
+{% endif %}
+
+<section class="card" id="journal">
+  <div class="card-head"><div><h2>Journal des relances</h2></div>
+    <form method="post" action="/admin/validations/envoyer" data-confirm="Envoyer maintenant les relances du jour (heure d'envoi passée, pas encore envoyées) ?">
+      <button class="btn small">Envoyer les relances du jour maintenant</button></form></div>
+  {% if not logs %}<p class="empty">Aucune relance envoyée pour l'instant.</p>{% else %}
+  <div class="table-wrap"><table>
+    <thead><tr><th>Date</th><th>Validateur</th><th class="right">Demandes</th><th>Destinataire</th><th>Mode</th><th>État</th></tr></thead>
+    <tbody>{% for l in logs %}
+      <tr><td class="small nowrap">{{ l.created_at | dt }}</td>
+        <td><span class="mono small">{{ l.validator }}</span> {{ l.name }}</td>
+        <td class="right" title="{{ l.details }}">{{ l.requests }}</td>
+        <td class="small">{{ l.recipient or l.intended or '—' }}</td>
+        <td class="small">{{ 'Production' if l.mode == 'production' else 'Test' }}</td>
+        <td><span class="badge {{ {'sent': 'ok', 'failed': 'err', 'skipped': ''}[l.status] }}">{{ {'sent': 'Envoyée', 'failed': 'Échec', 'skipped': 'Ignorée'}[l.status] }}</span>
+          {% if l.error %}<span class="muted small">{{ l.error }}</span>{% endif %}</td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+  {% endif %}
+</section>
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  const pf = document.getElementById('preview_form');
+  if (!pf) return;
+  const sync = () => { document.getElementById('essai_validateur').value = pf.validateur.value; };
+  pf.addEventListener('change', () => { sync(); pf.requestSubmit ? pf.requestSubmit() : pf.submit(); });
+  pf.addEventListener('submit', sync);
+  sync();
+  pf.requestSubmit ? pf.requestSubmit() : pf.submit();
+})();
+</script>
+{% endblock %}

@@ -113,6 +113,20 @@ formation → « Formation », absence possible un week-end planifié. Tables Po
 (codes modifiables) et `pointage_planning` ; colonne `poste` dans `v_pointage_journalier`. La grille affiche les heures
 planifiées de chaque agent ; au-delà de 48 h par semaine en moyenne, l'agent est signalé (à l'import et en rouge).
 
+**Relances des validations** (*Administration → Relances des validations*, rôles RH et admin) : une demande de
+congé (ou de télétravail, de mission) non validée n'est pas prise en compte dans le pointage, l'employé apparaît
+« Absent ». Chaque jour choisi, à l'heure choisie, le **prochain validateur** de chaque demande en attente reçoit un
+seul e-mail qui regroupe ses demandes (employé, période, état, étape, jours déjà comptés absents) avec un bouton
+« Valider dans HR Smart » (adresse paramétrable).
+- Par table de demandes : statuts « en attente » (ex. « En Validation, Validé Par N1 »), colonne du matricule du
+  prochain validateur (ex. `ProchainvalidateurMatricule`), colonnes facultatives de l'étape et de la date de demande.
+- Rythme : première relance après N jours d'attente, puis tous les N jours, nombre maximal par demande ; seules les
+  demandes déjà commencées ou qui commencent bientôt (fenêtre paramétrable) sont relancées.
+- Adresses RH en copie (à partir de N jours comptés absents) ; elles reçoivent aussi les demandes dont le validateur
+  est introuvable ou sans adresse. Même SMTP et même mode test/production que les mails de badge ; journal des envois.
+- Dans le suivi journalier, les absences couvertes par une demande non validée portent la mention
+  « ⏳ Congé … en attente de validation (état) ».
+
 **Maternité et allaitement** (*Administration → Maternité et allaitement*, rôles RH et admin) : périodes saisies
 par employée (matricule, du, au).
 - *Congé de maternité* : statut « Congé maternité » chaque jour attendu de la période, même si l'employée badge ;

@@ -75,6 +75,7 @@
     {% if is_admin %}{{ nav('/admin/mails', 'mail', 'Mails de badge', path.startswith('/admin/mails')) }}{% endif %}
     {{ nav('/admin/resumes', 'chart', 'Résumés par mail', path.startswith('/admin/resumes')) }}
     {{ nav('/admin/rappels', 'bell', 'Rappels de pointage', path.startswith('/admin/rappels')) }}
+    {{ nav('/admin/validations', 'mail', 'Relances des validations', path.startswith('/admin/validations')) }}
     {{ nav('/admin/arrets', 'sick', 'Circuit arrêts maladie', path.startswith('/admin/arrets')) }}
     {{ nav('/admin/verifier', 'user', 'Vérifier un employé', path.startswith('/admin/verifier')) }}
     {% if is_admin %}

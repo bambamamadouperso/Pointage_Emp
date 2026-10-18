@@ -917,3 +917,9 @@ table.suivi tr.st-mater td:first-child { border-left-color: var(--mater-solid); 
 table.suivi tr.st-mater td { background: color-mix(in srgb, var(--mater-bg) 35%, transparent); }
 .allait-tag { display: inline-block; margin-top: .2rem; padding: .05rem .45rem; border-radius: 999px; font-size: .72rem;
   font-weight: 600; background: var(--mater-bg); color: var(--mater); }
+.weekday-checks { display: inline-flex; flex-wrap: wrap; gap: .2rem .7rem; align-items: center; }
+.digest-plan .weekday-checks label.check { display: inline-flex; flex: 0 0 auto; width: auto; margin: 0; }
+table.approval-sources input:not([type=checkbox]), table.approval-sources select { width: 100%; min-width: 150px; }
+.pending-tag { display: inline-block; margin-top: .2rem; padding: .05rem .45rem; border-radius: 999px; font-size: .72rem;
+  font-weight: 600; background: #fff4e0; color: #b45309; }
+@media (prefers-color-scheme: dark) { .pending-tag { background: #3a2a10; color: #fbbf24; } }

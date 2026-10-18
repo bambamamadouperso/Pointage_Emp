@@ -142,6 +142,10 @@ def start() -> None:
 
     scheduler.add_job(digests.run_due, IntervalTrigger(minutes=10), id="digests", replace_existing=True,
                       next_run_time=datetime.now() + timedelta(minutes=1))
+    from . import validations  # relances des demandes de congé en attente de validation
+
+    scheduler.add_job(validations.run_due, IntervalTrigger(minutes=10), id="validations", replace_existing=True,
+                      next_run_time=datetime.now() + timedelta(minutes=3))
     from . import rappels  # rappels de pointage aux employés (arrivée, départ, oubli de la veille)
 
     scheduler.add_job(rappels.run_due, IntervalTrigger(minutes=5), id="rappels", replace_existing=True,

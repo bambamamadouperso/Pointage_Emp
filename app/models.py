@@ -617,3 +617,74 @@ class SuiviSettings(Base):
     validee_display: Mapped[Optional[str]] = mapped_column(String(20), nullable=True, default="tous")
     updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     updated_by: Mapped[str] = mapped_column(String(100), default="")
+
+
+APPROVAL_SOURCES = {"leave": "Congés", "tw": "Télétravail", "mission": "Missions"}
+
+
+class ApprovalSettings(Base):
+    """Relances des demandes en attente de validation (congés, télétravail, missions) : une seule ligne."""
+
+    __tablename__ = "approval_settings"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    enabled: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True, default=False)
+    send_time: Mapped[Optional[str]] = mapped_column(String(5), nullable=True, default="08:30")
+    weekdays: Mapped[Optional[str]] = mapped_column(String(20), nullable=True, default="1,2,3,4,5")
+    app_url: Mapped[Optional[str]] = mapped_column(String(255), nullable=True,
+                                                   default="https://ico-hrsmart.ea.holcim.net/HRSmartV3")
+    app_name: Mapped[Optional[str]] = mapped_column(String(60), nullable=True, default="HR Smart")
+    # Par source : {"leave": {"enabled": true, "pending": "En Validation, Validé Par N1",
+    #  "validator_col": "ProchainvalidateurMatricule", "step_col": "", "created_col": ""}, "tw": {…}, "mission": {…}}
+    sources: Mapped[Optional[str]] = mapped_column(Text, nullable=True, default="{}")
+    grace_days: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=0)    # avant la 1re relance
+    repeat_days: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=1)   # puis tous les N jours
+    max_reminders: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=0)  # 0 = sans limite
+    horizon_days: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=14)  # début dans N jours
+    past_days: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=31)     # fin il y a N jours
+    cc_addresses: Mapped[Optional[str]] = mapped_column(Text, nullable=True, default="")     # RH en copie
+    cc_after_absent: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=0)  # copie dès N j absents
+    subject: Mapped[Optional[str]] = mapped_column(String(300), nullable=True, default="")
+    message: Mapped[Optional[str]] = mapped_column(Text, nullable=True, default="")
+    max_lag_minutes: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=0)
+    show_in_suivi: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True, default=True)
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    updated_by: Mapped[str] = mapped_column(String(100), default="")
+    last_run_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    last_run_summary: Mapped[str] = mapped_column(Text, default="")
+
+
+class ApprovalReminderLog(Base):
+    """Une relance envoyée à un validateur (un seul mail par validateur et par jour, regroupant ses demandes)."""
+
+    __tablename__ = "approval_reminder_log"
+    __table_args__ = (UniqueConstraint("day", "validator", name="uq_approval_day_validator"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+    day: Mapped[datetime] = mapped_column(DateTime)
+    validator: Mapped[str] = mapped_column(String(100))          # matricule du validateur (ou « (inconnu) »)
+    name: Mapped[str] = mapped_column(String(255), default="")
+    mode: Mapped[str] = mapped_column(String(20), default="test")
+    recipient: Mapped[str] = mapped_column(Text, default="")
+    intended: Mapped[str] = mapped_column(String(255), default="")
+    requests: Mapped[int] = mapped_column(Integer, default=0)
+    details: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String(20), default="sent")  # sent, failed, skipped
+    error: Mapped[str] = mapped_column(Text, default="")
+    attempts: Mapped[int] = mapped_column(Integer, default=1)
+
+
+class ApprovalReminderItem(Base):
+    """Relances déjà faites pour une demande (espacement entre deux relances, nombre maximal)."""
+
+    __tablename__ = "approval_reminder_item"
+    __table_args__ = (UniqueConstraint("req_key", name="uq_approval_item"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    req_key: Mapped[str] = mapped_column(String(64))
+    source: Mapped[str] = mapped_column(String(20), default="leave")
+    label: Mapped[str] = mapped_column(String(300), default="")
+    count: Mapped[int] = mapped_column(Integer, default=0)
+    first_sent: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    last_sent: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
