@@ -31,7 +31,7 @@
 {% if f.direction %}{% set _ = active_filters.append(('Direction : ' ~ f.direction | join(', '), request.query_params | with_param('direction', ''))) %}{% endif %}
 {% if f.site %}{% set _ = active_filters.append(('Site : ' ~ f.site | join(', '), request.query_params | with_param('site', ''))) %}{% endif %}
 {% if f.horaires %}{% set _ = active_filters.append(('Horaires : ' ~ horaires[f.horaires], request.query_params | with_param('horaires', ''))) %}{% endif %}
-{% if f.categorie %}{% set _ = active_filters.append(('Statut du personnel : ' ~ f.categorie | join(', '), request.query_params | with_param('categorie', ''))) %}{% endif %}
+{% if f.categorie %}{% set _ = active_filters.append(('Statut du personnel : ' ~ f.categorie | join(', '), (request.query_params | with_param('categorie', '')) ~ '&categorie_set=1')) %}{% endif %}
 {% if f.team %}{% set _ = active_filters.append(('Équipe de ' ~ (team_label or f.team) ~ (' · directs (N-1)' if f.directs else ''), (request.query_params | with_param('equipe', '')) )) %}{% endif %}
 {% if f.population %}{% set _ = active_filters.append(('Personnes : ' ~ ('employés de la liste' if f.population == 'liste' else 'hors liste'), request.query_params | with_param('pop', ''))) %}{% endif %}
 {% if f.statuts %}{% set labels = [] %}{% for code in f.statuts %}{% set _ = labels.append(statuts[code][0]) %}{% endfor %}{% set _ = active_filters.append(('Statut : ' ~ labels | join(', '), request.query_params | set_statuts([]))) %}{% endif %}
@@ -118,7 +118,7 @@
 <div class="active-filters">
   <span class="muted small">Filtres appliqués :</span>
   {% for label, url in active_filters %}<a class="chip" href="?{{ url }}" title="Retirer ce filtre">{{ label }} <span aria-hidden="true">×</span></a>{% endfor %}
-  {% if active_filters | length > 1 %}<a class="small" href="/suivi?{{ ('date=' ~ f.du.isoformat()) if single_day else ('du=' ~ f.du.isoformat() ~ '&au=' ~ f.au.isoformat()) }}">Tout retirer</a>{% endif %}
+  {% if active_filters | length > 1 %}<a class="small" href="/suivi?{{ ('date=' ~ f.du.isoformat()) if single_day else ('du=' ~ f.du.isoformat() ~ '&au=' ~ f.au.isoformat()) }}&categorie_set=1">Tout retirer</a>{% endif %}
 </div>
 {% endif %}
 

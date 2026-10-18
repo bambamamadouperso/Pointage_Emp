@@ -615,6 +615,8 @@ class SuiviSettings(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     validee_display: Mapped[Optional[str]] = mapped_column(String(20), nullable=True, default="tous")
+    # Statuts du personnel cochés par défaut dans le suivi et les rapports (séparés par des virgules ; vide = tous).
+    default_categories: Mapped[Optional[str]] = mapped_column(Text, nullable=True, default="Cadre, Non Cadre")
     updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     updated_by: Mapped[str] = mapped_column(String(100), default="")
 

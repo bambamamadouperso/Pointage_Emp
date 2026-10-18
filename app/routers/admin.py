@@ -267,24 +267,43 @@ def params_page(request: Request, db: Session = Depends(get_db)):
             engine.dispose()
     from .suivi import suivi_settings
 
-    context.update(validee_modes=VALIDEE_DISPLAY, validee_display=suivi_settings(db).validee_display or "tous")
+    from .suivi import default_categories
+
+    context.update(validee_modes=VALIDEE_DISPLAY, validee_display=suivi_settings(db).validee_display or "tous",
+                   default_cats=default_categories(db, mapping), categories=[])
+    if mapping is not None and mapping.cat_col:
+        engine = make_engine(cfg.conn, **pointage.WEB_LIMITS)
+        try:
+            context["categories"] = pointage.categories(engine, mapping)
+            context["default_cats"] = pointage.match_values(context["default_cats"], context["categories"])
+        except Exception:  # noqa: BLE001 - la liste reste vide, le réglage garde sa valeur
+            pass
+        finally:
+            engine.dispose()
     return render(request, "admin/parametres.html", **context)
 
 
 @router.post("/parametres/affichage")
-def display_save(request: Request, validee_display: str = Form("tous"), db: Session = Depends(get_db)):
-    """Visibilité de la durée validée dans le suivi journalier (écran et export)."""
+async def display_save(request: Request, db: Session = Depends(get_db)):
+    """Visibilité de la durée validée et statuts du personnel cochés par défaut (suivi, rapports, exports)."""
     from .suivi import suivi_settings
 
+    form = await request.form()
+    validee_display = str(form.get("validee_display", "tous") or "tous")
     if validee_display not in VALIDEE_DISPLAY:
         validee_display = "tous"
+    cats = pointage.multi([str(v) for v in form.getlist("default_categories")])
     s = suivi_settings(db)
     before = s.validee_display or "tous"
     s.validee_display, s.updated_at, s.updated_by = validee_display, utcnow(), request.session.get("user", "")
+    if "categories_form" in form:  # liste des statuts affichée (colonne configurée) : on enregistre le choix
+        s.default_categories = ", ".join(cats)
     db.commit()
-    auth.audit(request, "Affichage du suivi : durée validée", "",
-               f"{VALIDEE_DISPLAY[before]} → {VALIDEE_DISPLAY[validee_display]}")
-    flash(request, f"Durée validée dans le suivi : {VALIDEE_DISPLAY[validee_display].lower()}.", "ok")
+    auth.audit(request, "Affichage du suivi", "",
+               f"durée validée : {VALIDEE_DISPLAY[before]} → {VALIDEE_DISPLAY[validee_display]} ; statuts par défaut : "
+               f"{s.default_categories or 'tous'}")
+    flash(request, f"Affichage enregistré : durée validée {VALIDEE_DISPLAY[validee_display].lower()} ; statuts du "
+                   f"personnel par défaut : {s.default_categories or 'tous'}.", "ok")
     return redirect("/admin/parametres#affichage")
 
 

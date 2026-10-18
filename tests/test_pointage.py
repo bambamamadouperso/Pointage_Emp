@@ -2252,3 +2252,44 @@ def test_hors_liste_list(configured, pg, logged_client):
     page = logged_client.get(f"/suivi?date={MON.isoformat()}&pop=hors").text
     assert 'id="hors-liste" open' in page
     assert "badge(s) hors liste" not in logged_client.get(f"/suivi?date={TUE.isoformat()}").text  # personne mardi
+
+
+def test_default_staff_categories(configured, pg, logged_client):
+    """Statuts du personnel cochés par défaut (Cadre et Non Cadre) dans le suivi, les rapports et l'export ; tout
+    décocher = tout le personnel ; réglage dans Paramètres horaires ; sans effet sur les badges hors liste."""
+    from openpyxl import load_workbook
+
+    with pg.begin() as c:
+        c.execute(text(f"INSERT INTO {SCHEMA}.statuts VALUES (3, 'Stagiaire') ON CONFLICT DO NOTHING"))
+        c.execute(text(f'UPDATE {SCHEMA}."Personnel" SET "IDStatut" = 3 WHERE "IDPersonnel" = 107'))  # Diop Aminata
+    url = f"/suivi?date={MON.isoformat()}"
+    try:
+        page = logged_client.get(url).text
+        assert "E001</td>" in page and "E007</td>" not in page  # stagiaire masquée par défaut
+        assert 'name="categorie_set" value="1"' in page and "Statut du personnel : Cadre, Non cadre" in page
+        page = logged_client.get(url + "&categorie_set=1").text  # tout décoché : tout le personnel
+        assert "E007</td>" in page and "Statut du personnel :" not in page
+        assert "E007</td>" in logged_client.get(url + "&categorie=Stagiaire").text
+        assert "99</td>" in logged_client.get(url + "&pop=hors").text  # hors liste : pas de statut, pas de filtre
+        ws = load_workbook(io.BytesIO(logged_client.get(f"/suivi/export.xlsx?date={MON.isoformat()}").content))["Suivi journalier"]
+        assert "E007" not in {ws.cell(r, 2).value for r in range(2, ws.max_row + 1)}
+        rap = logged_client.get(f"/rapports/export.xlsx?p=perso&du={MON.isoformat()}&au={MON.isoformat()}")
+        assert "E007" not in {c.value for c in load_workbook(io.BytesIO(rap.content))["Employés"]["A"]}
+
+        # Réglage : plus aucun statut par défaut → tout le personnel.
+        page = logged_client.get("/admin/parametres").text
+        assert "Statuts du personnel cochés par défaut" in page and 'value="Stagiaire" >' in page.replace("  ", " ")
+        r = logged_client.post("/admin/parametres/affichage", data={"validee_display": "tous", "categories_form": "1"},
+                               follow_redirects=True)
+        assert "statuts du personnel par défaut : tous" in r.text
+        assert "E007</td>" in logged_client.get(url).text
+        logged_client.post("/admin/parametres/affichage", data={"validee_display": "tous", "categories_form": "1",
+                                                                 "default_categories": ["Stagiaire"]})
+        page = logged_client.get(url).text
+        assert "E007</td>" in page and "E001</td>" not in page
+    finally:
+        logged_client.post("/admin/parametres/affichage", data={"validee_display": "tous", "categories_form": "1",
+                                                                 "default_categories": ["Cadre", "Non cadre"]})
+        with pg.begin() as c:
+            c.execute(text(f'UPDATE {SCHEMA}."Personnel" SET "IDStatut" = 2 WHERE "IDPersonnel" = 107'))
+            c.execute(text(f"DELETE FROM {SCHEMA}.statuts WHERE id = 3"))

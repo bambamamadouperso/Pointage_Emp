@@ -65,6 +65,14 @@
     <select name="validee_display">{% for k, label in validee_modes.items() %}<option value="{{ k }}" {{ 'selected' if validee_display == k }}>{{ label }}</option>{% endfor %}</select></label>
   <p class="muted small">S'applique à l'écran du suivi journalier et à son export Excel (colonne, moyenne et indicateur).
     Quand elle est visible, chacun peut aussi la masquer pour lui-même depuis le suivi (« Masquer la durée validée »).</p>
+  {% if categories %}
+  <input type="hidden" name="categories_form" value="1">
+  <div class="field"><span class="field-label">Statuts du personnel cochés par défaut</span>
+    <div class="days">{% for c in categories %}<label class="check"><input type="checkbox" name="default_categories" value="{{ c }}" {{ 'checked' if c in default_cats }}> {{ c }}</label>{% endfor %}</div>
+  </div>
+  <p class="muted small">À l'ouverture du suivi journalier et des rapports (et dans leurs exports), seuls ces statuts sont pris en compte ;
+    chacun peut ensuite cocher d'autres statuts, ou tout décocher pour voir tout le personnel. Aucun statut coché ici = tout le personnel.</p>
+  {% endif %}
   <div class="form-actions"><button class="btn primary">Enregistrer</button></div>
 </form>
 

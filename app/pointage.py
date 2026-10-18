@@ -1797,9 +1797,9 @@ def _where(f: Filters, S: str = "") -> tuple[str, dict, list]:
             clauses.append(f"{name} IN :{name}_values")
             params[f"{name}_values"] = list(values)
             binds.append(bindparam(f"{name}_values", expanding=True))
-    if f.categorie:
-        clauses.append("categorie IN :categories")
-        params["categories"] = list(f.categorie)
+    if f.categorie:  # sans tenir compte des majuscules ni des espaces (« Non Cadre » = « NON CADRE »)
+        clauses.append("lower(btrim(categorie)) IN :categories")
+        params["categories"] = [c.strip().lower() for c in f.categorie]
         binds.append(bindparam("categories", expanding=True))
     statuts = [s for s in f.statuts if s in STATUTS]
     if statuts:
@@ -1810,6 +1810,12 @@ def _where(f: Filters, S: str = "") -> tuple[str, dict, list]:
 
 
 HORAIRES = {"bureau": "Horaire de bureau (sans planning)", "postes": "Horaires postés (planning)"}
+
+
+def match_values(chosen: list[str], available: list[str]) -> list[str]:
+    """Valeurs choisies écrites comme dans la liste proposée (« cadre » → « Cadre ») ; les autres restent telles quelles."""
+    by_key = {a.strip().lower(): a for a in available}
+    return multi([by_key.get(c.strip().lower(), c) for c in chosen])
 
 
 def multi(values: list[str]) -> list[str]:

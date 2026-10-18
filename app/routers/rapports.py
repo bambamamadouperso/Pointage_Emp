@@ -1,6 +1,7 @@
 """Rapports d'analyse : indicateurs, tendances, habitudes d'arrivée, services, employés à suivre, export Excel."""
 import io
 from datetime import date, timedelta
+from typing import Optional
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import Response
@@ -11,7 +12,7 @@ from ..database import get_db
 from ..errors import friendly
 from ..sync import make_engine
 from ..web import render, require_login
-from .suivi import ScopeError, apply_scope, dimension_filters, load_config
+from .suivi import ScopeError, apply_scope, chosen_categories, default_categories, dimension_filters, load_config
 
 router = APIRouter(prefix="/rapports", dependencies=[Depends(require_login)])
 
@@ -19,7 +20,7 @@ SORTS = {"absences": "Absences", "retards": "Retards", "retard_min": "Minutes de
          "presence": "Taux de présence (croissant)", "heures": "Heures validées", "nom": "Nom"}
 
 
-def _filters(request: Request) -> tuple[pointage.Filters, str]:
+def _filters(request: Request, defaults: Optional[list[str]] = None) -> tuple[pointage.Filters, str]:
     p = request.query_params
     presets = p.getlist("p")
     preset = "perso" if "perso" in presets else (presets[0] if presets else "30j")
@@ -31,7 +32,7 @@ def _filters(request: Request) -> tuple[pointage.Filters, str]:
         preset = preset if preset in dict(rapports.PRESETS) else "30j"
         du, au = rapports.period(preset)
     team = p.get("equipe", "")
-    return pointage.Filters(du=du, au=au, service=pointage.multi(p.getlist("service")), team=team, categorie=pointage.multi(p.getlist("categorie")),
+    return pointage.Filters(du=du, au=au, service=pointage.multi(p.getlist("service")), team=team, categorie=chosen_categories(p, defaults or []),
                             direction=pointage.multi(p.getlist("direction")), site=pointage.multi(p.getlist("site")),
                             directs=p.get("directs") == "1" and bool(team),
                             horaires=p.get("horaires", "") if p.get("horaires") in pointage.HORAIRES else ""), preset
@@ -40,7 +41,7 @@ def _filters(request: Request) -> tuple[pointage.Filters, str]:
 @router.get("")
 def page(request: Request, db: Session = Depends(get_db)):
     cfg, mapping = load_config(db)
-    f, preset = _filters(request)
+    f, preset = _filters(request, default_categories(db, mapping))
     sort = request.query_params.get("tri", "absences")
     sort = sort if sort in SORTS else "absences"
     context = dict(f=f, preset=preset, presets=rapports.PRESETS, sorts=SORTS, sort=sort, configured=mapping is not None,
@@ -61,6 +62,7 @@ def page(request: Request, db: Session = Depends(get_db)):
         context["services"] = pointage.services(engine, mapping, f.scope_root)
         context["managers"] = pointage.managers(engine, mapping, f.scope_root)
         context["categories"] = pointage.categories(engine, mapping, f.scope_root)
+        f.categorie = pointage.match_values(f.categorie, context["categories"])
         context["directions"] = pointage.directions(engine, mapping, f.scope_root)
         context["dims"] = dimension_filters(mapping, engine, f.scope_root)
     except ScopeError as exc:
@@ -81,7 +83,7 @@ def export(request: Request, db: Session = Depends(get_db)):
     cfg, mapping = load_config(db)
     if mapping is None:
         return Response("Module de pointage non configuré.", status_code=400)
-    f, _ = _filters(request)
+    f, _ = _filters(request, default_categories(db, mapping))
     engine = make_engine(cfg.conn, **pointage.WEB_LIMITS)
     try:
         apply_scope(request, db, engine, mapping, f)

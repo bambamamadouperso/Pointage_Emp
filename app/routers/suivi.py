@@ -63,7 +63,22 @@ def _upgrade_allowed() -> bool:
     return _upgrade_state["lock"].acquire(blocking=False)
 
 
-def _filters(request: Request) -> tuple[pointage.Filters, Optional[str]]:
+def default_categories(db: Session, mapping=None) -> list[str]:
+    """Statuts du personnel cochés par défaut (Paramètres horaires → Affichage du suivi), ex. Cadre et Non Cadre ;
+    aucun si la colonne du statut du personnel n'est pas configurée (sinon personne ne serait affiché)."""
+    if mapping is None or not mapping.cat_col:
+        return []
+    raw = suivi_settings(db).default_categories
+    return pointage.multi((raw if raw is not None else "Cadre, Non Cadre").split(","))
+
+
+def chosen_categories(params, defaults: list[str]) -> list[str]:
+    """Statuts choisis dans l'URL ; sans aucun choix encore fait (pas de « categorie_set »), ceux par défaut."""
+    chosen = pointage.multi(params.getlist("categorie"))
+    return chosen if chosen or "categorie_set" in params else list(defaults)
+
+
+def _filters(request: Request, defaults: Optional[list[str]] = None) -> tuple[pointage.Filters, Optional[str]]:
     p = request.query_params
     today = date.today()
     day = pointage.parse_day(p.get("date"))
@@ -83,7 +98,9 @@ def _filters(request: Request) -> tuple[pointage.Filters, Optional[str]]:
         statuts=[s for s in p.getlist("statut") if s in pointage.STATUTS],
         sort=p.get("sort", "nom") if p.get("sort", "nom") in pointage.SORTABLE else "nom",
         desc=p.get("dir") == "desc", team=p.get("equipe", ""), directs=p.get("directs") == "1" and bool(p.get("equipe")),
-        population=p.get("pop", "") if p.get("pop") in ("liste", "hors") else "", categorie=pointage.multi(p.getlist("categorie")),
+        population=p.get("pop", "") if p.get("pop") in ("liste", "hors") else "",
+        # Badges hors liste : sans statut du personnel, le filtre par défaut les masquerait tous.
+        categorie=chosen_categories(p, [] if p.get("pop") == "hors" else (defaults or [])),
         direction=pointage.multi(p.getlist("direction")), site=pointage.multi(p.getlist("site")),
         horaires=p.get("horaires", "") if p.get("horaires") in pointage.HORAIRES else "",
     ), warning
@@ -177,7 +194,7 @@ def display_toggle(request: Request, validee: str = "1"):
 @router.get("")
 def suivi(request: Request, db: Session = Depends(get_db)):
     cfg, mapping = load_config(db)
-    f, warning = _filters(request)
+    f, warning = _filters(request, default_categories(db, mapping))
     validee_ok, validee_shown = show_validee(request, db)
     try:
         page = max(int(request.query_params.get("page", 1)), 1)
@@ -207,6 +224,7 @@ def suivi(request: Request, db: Session = Depends(get_db)):
         context["services"] = pointage.services(engine, mapping, f.scope_root)
         context["managers"] = pointage.managers(engine, mapping, f.scope_root)
         context["categories"] = pointage.categories(engine, mapping, f.scope_root)
+        f.categorie = pointage.match_values(f.categorie, context["categories"])
         context["directions"] = pointage.directions(engine, mapping, f.scope_root)
         context["dims"] = dimension_filters(mapping, engine, f.scope_root)
         context["objectif_min"] = objectif_minutes(engine, mapping, f.au)
@@ -261,7 +279,7 @@ def export(request: Request, db: Session = Depends(get_db)):
     cfg, mapping = load_config(db)
     if mapping is None:
         return Response("Module de pointage non configuré.", status_code=400)
-    f, _ = _filters(request)
+    f, _ = _filters(request, default_categories(db, mapping))
     _, with_validee = show_validee(request, db)
     engine = make_engine(cfg.conn, **pointage.WEB_LIMITS)
     try:

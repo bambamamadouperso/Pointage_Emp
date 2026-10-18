@@ -11,6 +11,8 @@
   {% endif %}
 {% endfor %}
 {% if categories %}
+  {# Marqueur : le formulaire a été envoyé, « aucun statut coché » veut alors dire « tous » (et non les statuts par défaut). #}
+  <input type="hidden" name="categorie_set" value="1">
   {{ multiselect('categorie', 'Statut du personnel', categories, f.categorie) }}
 {% else %}
 <label class="statut-perso"><span>Statut du personnel
