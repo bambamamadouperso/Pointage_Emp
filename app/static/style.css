@@ -936,3 +936,11 @@ table.approval-sources input:not([type=checkbox]), table.approval-sources select
 .side-nav a { padding: .3rem .75rem; font-size: .86rem; }
 .brand { padding-bottom: .5rem; }
 .sidebar { padding-top: .9rem; }
+
+/* Suivi : liste des badges hors liste */
+details.hors-liste { margin-bottom: .9rem; }
+details.hors-liste > summary { cursor: pointer; list-style: none; display: flex; flex-wrap: wrap; gap: .4rem; align-items: baseline; }
+details.hors-liste > summary::-webkit-details-marker { display: none; }
+details.hors-liste > summary::before { content: "▸"; color: var(--muted); transition: transform .15s; }
+details.hors-liste[open] > summary::before { transform: rotate(90deg); }
+details.hors-liste .table-wrap { margin-top: .7rem; }

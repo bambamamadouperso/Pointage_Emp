@@ -276,6 +276,7 @@ def test_account_limited_to_team(configured, client):
     client.post("/login", data={"username": "chef", "password": "motdepasse4"})
     page = client.get(f"/suivi?date={MON.isoformat()}").text
     assert "équipe de <strong>Sow Fatou</strong>" in page
+    assert "badge(s) hors liste" not in page  # badges sans fiche : hors de toute équipe
     assert "E004</td>" in page and "E005</td>" in page and "E001</td>" not in page and "E002</td>" not in page
     assert "E002</td>" not in client.get(f"/suivi?date={MON.isoformat()}&equipe=1").text  # hors périmètre : ignoré
     assert "ne fait pas partie de votre équipe" in client.get(f"/suivi/detail?key=2&jour={MON.isoformat()}").text
@@ -2236,3 +2237,18 @@ def test_pending_leave_reminders(configured, pg, logged_client, monkeypatch):
         logged_client.post("/admin/pointage", data={**pointage.Mapping.from_json(original).__dict__, "conn_id": conn_id})
         with pg.begin() as c:
             c.execute(text(f'DROP TABLE IF EXISTS {SCHEMA}."DemandeConge"'))
+
+
+def test_hors_liste_list(configured, pg, logged_client):
+    """Liste des badges hors liste dans le suivi : badge, jours, pointages, premier et dernier pointage, fiche proche."""
+    with SessionLocal() as db:
+        m = pointage.Mapping.from_json(db.query(PointageConfig).one().data)
+    rows = pointage.hors_liste(pg, m, MON, TUE)
+    assert [(r["emp_key"], r["jours"], r["pointages"], r["suggestion_matricule"]) for r in rows] == [("99", 1, 2, None)]
+    assert rows[0]["premier"] == at(MON, "09:00") and rows[0]["dernier"] == at(MON, "17:00")
+    page = logged_client.get(f"/suivi?date={MON.isoformat()}").text
+    assert "1 badge(s) hors liste" in page and '<td class="mono">99</td>' in page and "aucune fiche proche" in page
+    assert 'id="hors-liste" open' not in page
+    page = logged_client.get(f"/suivi?date={MON.isoformat()}&pop=hors").text
+    assert 'id="hors-liste" open' in page
+    assert "badge(s) hors liste" not in logged_client.get(f"/suivi?date={TUE.isoformat()}").text  # personne mardi

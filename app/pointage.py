@@ -1942,6 +1942,29 @@ def resolve_employee(engine: Engine, m: Mapping, ref: str) -> Optional[tuple[str
     return (row[0], row[1]) if row else None
 
 
+def hors_liste(engine: Engine, m: Mapping, du: date, au: date, limit: int = 500) -> list[dict]:
+    """Badges qui ont pointé sur la période sans figurer dans la liste des employés : jours, pointages, premier et
+    dernier pointage, et l'employé auquel le badge correspond peut-être (même numéro au zéro de tête près)."""
+    S = qi(m.objs)
+    with engine.connect() as c:
+        return [dict(r) for r in c.execute(text(f"""
+            WITH h AS (
+                SELECT emp_key, count(*) AS jours, sum(nb_pointages) AS pointages,
+                       min(premier_pointage) AS premier, max(dernier_pointage) AS dernier
+                FROM {S}.f_pointage_journalier(:du, :au) WHERE hors_liste GROUP BY 1
+            )
+            SELECT h.*, s.matricule AS suggestion_matricule, s.nom AS suggestion_nom, s.actif AS suggestion_actif
+            FROM h
+            LEFT JOIN LATERAL (
+                SELECT v.matricule, concat_ws(' ', v.nom, v.prenom) AS nom, v.actif FROM {S}.v_pointage_employes v
+                WHERE v.matricule = h.emp_key
+                   OR nullif(ltrim(v.matricule, '0'), '') = nullif(ltrim(h.emp_key, '0'), '')
+                   OR nullif(ltrim(v.emp_key, '0'), '') = nullif(ltrim(h.emp_key, '0'), '')
+                ORDER BY (v.matricule = h.emp_key) DESC, v.actif DESC LIMIT 1
+            ) s ON true
+            ORDER BY h.pointages DESC, h.emp_key LIMIT :lim"""), {"du": du, "au": au, "lim": limit}).mappings()]
+
+
 def maternity_entries(engine: Engine, m: Mapping) -> list[dict]:
     """Congés de maternité et périodes d'allaitement, des plus récents aux plus anciens, avec le nom de l'employée."""
     S = qi(m.objs)

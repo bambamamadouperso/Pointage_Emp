@@ -159,7 +159,7 @@
       {% if k.formations %}<a class="{{ 'selected' if only == 'FORMATION' }}" href="?{{ request.query_params | set_statuts(['FORMATION']) }}" title="Afficher les formations (planning)"><span class="dot st-train"></span>Formation <b>{{ k.formations | num }}</b></a>{% endif %}
       {% if k.repos %}<a class="{{ 'selected' if only == 'REPOS' }}" href="?{{ request.query_params | set_statuts(['REPOS']) }}" title="Afficher les repos du planning des horaires postés"><span class="dot st-off"></span>Repos <b>{{ k.repos | num }}</b></a>{% endif %}
     </span></div>
-  <a class="kpi c-pink {{ 'selected' if f.population == 'hors' }}" href="?{{ request.query_params | with_param('pop', '' if f.population == 'hors' else 'hors') }}"
+  <a class="kpi c-pink {{ 'selected' if f.population == 'hors' }}" href="?{{ request.query_params | with_param('pop', '' if f.population == 'hors' else 'hors') }}{{ '' if f.population == 'hors' else '#hors-liste' }}"
      title="Personnes qui ont pointé mais ne figurent pas dans la liste des employés">
     <span class="kpi-label">Hors liste</span><span class="kpi-value">{{ k.hors_liste | num }}</span><span class="kpi-sub">badge sans fiche</span></a>
   <div class="kpi c-violet" title="à l'heure / (à l'heure + retards)"><span class="kpi-label">Ponctualité</span>
@@ -174,6 +174,28 @@
     <span class="kpi-value">{{ hhmm(k.moy_effective) }}</span><span class="kpi-sub">présents au bureau</span></div>
   {% endif %}
 </section>
+
+{% if hors_liste %}
+<details class="card hors-liste" id="hors-liste" {{ 'open' if f.population == 'hors' }}>
+  <summary><strong>{{ hors_liste | length }} badge(s) hors liste</strong>
+    <span class="muted small">— ont pointé {% if single_day %}ce jour{% else %}sur la période{% endif %} sans figurer dans la liste des employés
+      (badge inconnu, fiche manquante ou mauvaise colonne de rattachement)</span></summary>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Badge</th><th class="right">Jours</th><th class="right">Pointages</th><th>Premier pointage</th><th>Dernier pointage</th><th>Correspond peut-être à</th></tr></thead>
+    <tbody>{% for h in hors_liste %}
+      <tr><td class="mono">{{ h.emp_key }}</td><td class="right">{{ h.jours }}</td><td class="right">{{ h.pointages }}</td>
+        <td class="small nowrap">{{ h.premier.strftime('%d/%m/%Y %H:%M') if h.premier else '—' }}</td>
+        <td class="small nowrap">{{ h.dernier.strftime('%d/%m/%Y %H:%M') if h.dernier else '—' }}</td>
+        <td class="small">{% if h.suggestion_matricule %}<span class="mono">{{ h.suggestion_matricule }}</span> {{ h.suggestion_nom }}
+          {% if not h.suggestion_actif %}<span class="badge">inactif</span>{% endif %}{% else %}<span class="muted">aucune fiche proche</span>{% endif %}</td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+  <p class="muted small">{% if f.population != 'hors' %}<a href="?{{ request.query_params | with_param('pop', 'hors') }}">Afficher leurs journées dans le tableau</a> · {% endif %}
+    <a href="/suivi/export.xlsx?{{ request.query_params | with_param('pop', 'hors') }}">Exporter leurs journées (Excel)</a>
+    {% if can(role, 'admin') %}· Pour les rattacher : ajoutez la fiche dans la table des employés, ou vérifiez la colonne « employé » des pointages dans
+    <a href="/admin/pointage">Source des pointages</a>.{% endif %}</p>
+</details>
+{% endif %}
 
 <section class="card table-card">
   <p class="muted small kpi-note">{{ k.employes | num }} personne(s) · chaque employé de la liste apparaît chaque jour, qu'il ait pointé ou non{% if not single_day %} ; sur une période, les compteurs portent sur des journées-employé{% endif %}. Cliquez sur une ligne pour le détail des pointages.

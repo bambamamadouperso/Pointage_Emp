@@ -192,7 +192,7 @@ def suivi(request: Request, db: Session = Depends(get_db)):
                    hhmm=pointage.hhmm, configured=mapping is not None, data=None, error=None, services=[],
                    managers=[], categories=[], directions=[], dims=dimension_filters(mapping), objectif_min=480, scope_label=None, population=None, last_punch=None, stale=False, has_hierarchy=bool(mapping and mapping.hier_table),
                    single_day=f.du == f.au, mode="jour" if f.du == f.au else "periode",
-                   validee_ok=validee_ok, show_validee=validee_shown, horaires=pointage.HORAIRES, pending={})
+                   validee_ok=validee_ok, show_validee=validee_shown, horaires=pointage.HORAIRES, pending={}, hors_liste=[])
     if mapping is None:
         return render(request, "suivi.html", **context)
     engine = make_engine(cfg.conn, **pointage.WEB_LIMITS)
@@ -200,6 +200,10 @@ def suivi(request: Request, db: Session = Depends(get_db)):
         context["scope_label"] = apply_scope(request, db, engine, mapping, f)
         context["data"] = pointage.daily(engine, mapping, f, page, size)
         context["pending"] = _pending_requests(db, engine, mapping, f, context["data"]["rows"])
+        # Badges sans fiche : pas pour un compte limité à son équipe, ni quand on cherche un employé ou les seuls
+        # employés de la liste.
+        if context["scope_label"] is None and not f.q and f.population != "liste":
+            context["hors_liste"] = pointage.hors_liste(engine, mapping, f.du, f.au)
         context["services"] = pointage.services(engine, mapping, f.scope_root)
         context["managers"] = pointage.managers(engine, mapping, f.scope_root)
         context["categories"] = pointage.categories(engine, mapping, f.scope_root)
