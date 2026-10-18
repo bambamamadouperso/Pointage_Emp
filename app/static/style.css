@@ -923,3 +923,16 @@ table.approval-sources input:not([type=checkbox]), table.approval-sources select
 .pending-tag { display: inline-block; margin-top: .2rem; padding: .05rem .45rem; border-radius: 999px; font-size: .72rem;
   font-weight: 600; background: #fff4e0; color: #b45309; }
 @media (prefers-color-scheme: dark) { .pending-tag { background: #3a2a10; color: #fbbf24; } }
+
+/* Menu latéral : groupes repliables, espacement resserré (tout le menu tient sur un écran portable) */
+.nav-sec { display: flex; flex-direction: column; gap: 1px; }
+.nav-sec > summary.nav-group { display: flex; align-items: center; justify-content: space-between; cursor: pointer;
+  list-style: none; margin: .55rem .75rem .2rem; user-select: none; }
+.nav-sec > summary.nav-group::-webkit-details-marker { display: none; }
+.nav-sec > summary.nav-group:hover { color: rgba(220, 230, 240, .85); }
+.nav-caret { font-size: .7rem; transition: transform .15s; }
+.nav-sec:not([open]) .nav-caret { transform: rotate(-90deg); }
+.nav-sec:first-child > summary.nav-group { margin-top: .2rem; }
+.side-nav a { padding: .3rem .75rem; font-size: .86rem; }
+.brand { padding-bottom: .5rem; }
+.sidebar { padding-top: .9rem; }

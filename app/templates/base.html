@@ -48,39 +48,49 @@
     <span class="brand-text"><strong>Pointage</strong><small>Présences &amp; synchro</small></span>
   </a>
   <nav class="side-nav" aria-label="Navigation principale">
-    <p class="nav-group">Suivi</p>
+    {# Groupes repliables (état mémorisé dans le navigateur) ; celui de la page affichée est toujours ouvert. #}
+    {% macro group(key, label, active) %}<details class="nav-sec" data-nav-key="{{ key }}" open {% if active %}data-active{% endif %}>
+      <summary class="nav-group">{{ label }}<span class="nav-caret" aria-hidden="true">▾</span></summary>{{ caller() }}</details>{% endmacro %}
+    {% call group('suivi', 'Suivi', path.startswith(('/suivi', '/rapports', '/arrets'))) %}
     {{ nav('/suivi', 'clock', 'Suivi journalier', path.startswith('/suivi')) }}
     {{ nav('/rapports', 'chart', 'Rapports', path.startswith('/rapports')) }}
     {% set sick_n = sick_pending_count(user, role) %}
     <a href="/arrets" class="{{ 'active' if path.startswith('/arrets') }}" {% if path.startswith('/arrets') %}aria-current="page"{% endif %}>
       <svg class="ico"><use href="#i-sick"/></svg><span>Arrêts maladie</span>{% if sick_n %}<span class="nav-badge" title="{{ sick_n }} arrêt(s) à valider">{{ sick_n }}</span>{% endif %}</a>
+    {% endcall %}
     {% if can(role, 'manager') %}
-    <p class="nav-group">Synchronisation</p>
+    {% call group('sync', 'Synchronisation', path == '/' or path.startswith(('/jobs', '/runs', '/logs', '/data', '/connections'))) %}
     {{ nav('/', 'home', 'Tableau de bord', path == '/') }}
     {{ nav('/jobs', 'flow', 'Jobs', path.startswith('/jobs')) }}
     {{ nav('/runs', 'play', 'Exécutions', path.startswith('/runs')) }}
     {{ nav('/logs', 'list', 'Logs', path.startswith('/logs')) }}
     {{ nav('/data', 'db', 'Données', path.startswith('/data')) }}
     {% if can(role, 'admin') %}{{ nav('/connections', 'plug', 'Connexions', path.startswith('/connections')) }}{% endif %}
+    {% endcall %}
     {% endif %}
     {% if can(role, 'rh') %}
     {% set is_admin = can(role, 'admin') %}
-    <p class="nav-group">{{ 'Administration' if is_admin else 'Ressources humaines' }}</p>
+    {% call group('rh', 'Ressources humaines', path == '/admin' or path.startswith(('/admin/parametres', '/admin/terrain', '/admin/planning', '/admin/maternite', '/admin/arrets', '/admin/verifier'))) %}
     {{ nav('/admin', 'grid', "Vue d'ensemble", path == '/admin') }}
     {{ nav('/admin/parametres', 'sliders', 'Paramètres horaires', path.startswith('/admin/parametres')) }}
-    {% if is_admin %}{{ nav('/admin/pointage', 'link', 'Source des pointages', path.startswith('/admin/pointage')) }}{% endif %}
     {{ nav('/admin/terrain', 'pin', 'Agents terrain', path.startswith('/admin/terrain')) }}
     {{ nav('/admin/planning', 'cal', 'Horaires postés', path.startswith('/admin/planning')) }}
     {{ nav('/admin/maternite', 'user', 'Maternité et allaitement', path.startswith('/admin/maternite')) }}
-    {% if is_admin %}{{ nav('/admin/mails', 'mail', 'Mails de badge', path.startswith('/admin/mails')) }}{% endif %}
-    {{ nav('/admin/resumes', 'chart', 'Résumés par mail', path.startswith('/admin/resumes')) }}
-    {{ nav('/admin/rappels', 'bell', 'Rappels de pointage', path.startswith('/admin/rappels')) }}
-    {{ nav('/admin/validations', 'mail', 'Relances des validations', path.startswith('/admin/validations')) }}
     {{ nav('/admin/arrets', 'sick', 'Circuit arrêts maladie', path.startswith('/admin/arrets')) }}
     {{ nav('/admin/verifier', 'user', 'Vérifier un employé', path.startswith('/admin/verifier')) }}
+    {% endcall %}
+    {% call group('mails', 'Mails et relances', path.startswith(('/admin/mails', '/admin/resumes', '/admin/rappels', '/admin/validations'))) %}
+    {{ nav('/admin/validations', 'mail', 'Relances des validations', path.startswith('/admin/validations')) }}
+    {{ nav('/admin/rappels', 'bell', 'Rappels de pointage', path.startswith('/admin/rappels')) }}
+    {{ nav('/admin/resumes', 'chart', 'Résumés par mail', path.startswith('/admin/resumes')) }}
+    {% if is_admin %}{{ nav('/admin/mails', 'mail', 'Mails de badge', path.startswith('/admin/mails')) }}{% endif %}
+    {% endcall %}
     {% if is_admin %}
+    {% call group('systeme', 'Administration', path.startswith(('/admin/pointage', '/admin/users', '/admin/audit'))) %}
+    {{ nav('/admin/pointage', 'link', 'Source des pointages', path.startswith('/admin/pointage')) }}
     {{ nav('/admin/users', 'users', 'Utilisateurs', path.startswith('/admin/users')) }}
     {{ nav('/admin/audit', 'shield', "Journal d'audit", path.startswith('/admin/audit')) }}
+    {% endcall %}
     {% endif %}
     {% endif %}
   </nav>
@@ -135,6 +145,12 @@
   document.addEventListener('keydown', e => { if (e.key === 'Escape') toggle(false); });
 
   // Listes à choix multiples : recherche, tout / aucun ; à la fermeture, la page se met à jour si le choix a changé.
+  // Menu : groupes repliés mémorisés ; celui de la page affichée reste ouvert.
+  document.querySelectorAll('.nav-sec[data-nav-key]').forEach(sec => {
+    const key = 'menu.replie.' + sec.dataset.navKey;
+    try { if (!sec.hasAttribute('data-active') && localStorage.getItem(key) === '1') sec.open = false; } catch (e) { /* déplié */ }
+    sec.addEventListener('toggle', () => { try { localStorage.setItem(key, sec.open ? '0' : '1'); } catch (e) { /* ignoré */ } });
+  });
   // Blocs de filtres repliables : état (replié ou non) mémorisé par page dans le navigateur.
   document.querySelectorAll('.filters-collapsible[data-collapse-key]').forEach(box => {
     const key = 'filtres.replies.' + box.dataset.collapseKey;
