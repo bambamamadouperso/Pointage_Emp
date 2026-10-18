@@ -234,7 +234,7 @@ def _trend(now, before, good_up: bool = True) -> str:
             f'{"▲" if d > 0 else "▼"} {_fr(abs(d))} pt</span> vs précédente')
 
 
-def _week_row(e: dict, td: str) -> str:
+def _week_row(e: dict, td: str, objectif: int) -> str:
     late = ""
     if e["retards"]:
         late = f' <span style="color:#9aa6b2;">({pointage.hhmm(timedelta(minutes=float(e["retard_min_total"])))})</span>'
@@ -242,7 +242,8 @@ def _week_row(e: dict, td: str) -> str:
     hours = pointage.hhmm(timedelta(hours=float(e["heures_validees"] or 0)))
     return (f"<tr><td {td}><strong>{html.escape(_name(e))}</strong></td><td {td}>{_pct(e['taux_presence'])}</td>"
             f"<td {td}>{e['retards'] or '·'}{late}</td><td {td}>{absences}</td><td {td}>{e['incomplets'] or '·'}</td>"
-            f"<td {td}>{hours}</td></tr>")
+            f"<td {td}>{hours}</td><td {td}>{_dur(e.get('validee_moy_min'), objectif)}</td>"
+            f"<td {td}>{_dur(e.get('effective_moy_min'), objectif)}</td></tr>")
 
 
 def render(data: dict, manager_name: str, company: str = "", app_url: str = "") -> tuple[str, str, str]:
@@ -276,9 +277,15 @@ def render(data: dict, manager_name: str, company: str = "", app_url: str = "") 
             f"<td {td}>{_dur(r['duree_validee_min'], data['objectif_min'])}</td></tr>" for r in data["rows"])
     else:
         head = (f"<tr><th {th}>Collaborateur</th><th {th}>Présence</th><th {th}>Retards</th><th {th}>Absences</th>"
-                f"<th {th}>Oublis</th><th {th}>Heures validées</th></tr>")
-        body = "".join(_week_row(e, td) for e in sorted(data["employes"], key=lambda e: _name(e).lower()))
+                f"<th {th}>Oublis</th><th {th}>Heures validées</th><th {th}>Moy. validée / jour</th>"
+                f"<th {th}>Moy. effective / jour</th></tr>")
+        body = "".join(_week_row(e, td, data["objectif_min"])
+                       for e in sorted(data["employes"], key=lambda e: _name(e).lower()))
     count = len(data["rows"]) if daily else len(data["employes"])
+    obj = data["objectif_min"]
+    legend = "" if daily else (
+        f'<p style="margin:8px 0 0;font-size:12px;color:#7a8898;">Moyennes par jour de présence au bureau (à l\'heure ou en retard) ; '
+        f'en vert si l\'objectif de {obj // 60}h{obj % 60:02d} est atteint, en rouge sinon.</p>')
     link = ""
     if app_url:
         url = f"{app_url.rstrip('/')}/{'suivi' if daily else 'rapports'}?du={data['du'].isoformat()}&au={data['au'].isoformat()}"
@@ -305,12 +312,19 @@ def render(data: dict, manager_name: str, company: str = "", app_url: str = "") 
   <div style="padding:10px 28px 26px;">
     <h2 style="margin:14px 0 8px;font-size:15px;color:#0b1a2b;">{'Détail de la journée' if daily else 'Détail par collaborateur'}</h2>
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">{head}{body}</table>
+    {legend}
     {link}
   </div>
 </td></tr>
 <tr><td style="padding:16px 8px 0;text-align:center;font-size:12px;color:#a3afbc;">Message automatique envoyé aux responsables abonnés — merci de ne pas y répondre.{(' © ' + html.escape(company)) if company else ''}</td></tr>
 </table></td></tr></table></body></html>"""
     lines = [title, label, "", *[f"- {s}" for _, s in insights(data)]]
+    if not daily and data["employes"]:
+        def avg(v):
+            return pointage.hhmm(timedelta(minutes=float(v))) if v is not None else "—"
+        lines += ["", "Moyennes par jour de présence au bureau (validée / effective) :",
+                  *[f"- {_name(e)} : {avg(e.get('validee_moy_min'))} / {avg(e.get('effective_moy_min'))}"
+                    for e in sorted(data["employes"], key=lambda e: _name(e).lower())]]
     return subject, body_html, "\n".join(lines)
 
 

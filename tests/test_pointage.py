@@ -1325,9 +1325,20 @@ def test_manager_digests(configured, pg, logged_client, monkeypatch):
     assert "Point du jour — équipe de Diallo Awa" in body and "http://pointage:8000/suivi?du=2026-09-21" in body
     assert "<strong>Diallo Awa</strong>" not in body and "<strong>Ndiaye Moussa</strong>" in body
     week = digests.collect(pg, m, "1", "hebdomadaire", MON, date(2026, 9, 27))
-    subject, body, _ = digests.render(week, "Diallo Awa")
+    subject, body, text_version = digests.render(week, "Diallo Awa")
     assert subject.startswith("Bilan hebdomadaire des pointages de votre équipe — semaine du 21 septembre au 27")
     assert "Détail par collaborateur" in body
+    # Moyennes par jour de présence au bureau : durée validée et durée effective de chacun.
+    assert "Moy. validée / jour" in body and "Moy. effective / jour" in body
+    ndiaye = next(e for e in week["employes"] if e["matricule"] == "E002")
+    days = [r for r in rows(pg, MON, date(2026, 9, 27)).values()
+            if r.matricule == "E002" and r.statut in ("A_L_HEURE", "RETARD")]
+    assert days and abs(float(ndiaye["validee_moy_min"]) - sum(float(r.duree_validee_min) for r in days) / len(days)) < 0.01
+    assert abs(float(ndiaye["effective_moy_min"]) - sum(float(r.duree_effective_min) for r in days) / len(days)) < 0.01
+    expected = (f"- Ndiaye Moussa : {pointage.hhmm(timedelta(minutes=float(ndiaye['validee_moy_min'])))} / "
+                f"{pointage.hhmm(timedelta(minutes=float(ndiaye['effective_moy_min'])))}")
+    assert expected in text_version
+    assert pointage.hhmm(timedelta(minutes=float(ndiaye["effective_moy_min"]))) in body
     engine.dispose()
 
     # Administration : responsables proposés, abonnements, aperçu.

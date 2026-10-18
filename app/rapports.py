@@ -192,6 +192,8 @@ def build(engine: Engine, m: Mapping, f: Filters, sort: str = "absences", compar
                 count(*) FILTER (WHERE statut = 'ARRET_MALADIE') AS maladies,
                 count(*) FILTER (WHERE statut = 'MISSION') AS missions,
                 sum(duree_validee_min) / 60.0 AS heures_validees,
+                avg(duree_validee_min) FILTER (WHERE {_BUREAU}) AS validee_moy_min,
+                avg(duree_effective_min) FILTER (WHERE {_BUREAU}) AS effective_moy_min,
                 avg(extract(epoch FROM premier_pointage::time) / 60) FILTER (WHERE {_BUREAU} AND poste IS NULL) AS arrivee_moy_min
             FROM r GROUP BY emp_key""")).mappings()]
 
