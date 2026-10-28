@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
-from .. import pointage, rapports
+from .. import auth, pointage, rapports
 from ..database import get_db
 from ..errors import friendly
 from ..sync import make_engine
@@ -181,9 +181,10 @@ def export(request: Request, db: Session = Depends(get_db)):
         ("Par jour" if data["granularite"] == "jour" else "Par semaine",
          ["Date"] + [label for _, label, _ in rapports.SERIES],
          [[j["jour"]] + [j[k] for k, _, _ in rapports.SERIES] for j in data["jours"]], set()),
-        ("Alertes", ["Motif", "Matricule", "Nom", "Service", "Responsable", "Détail"],
-         [[a["motif"], a["matricule"], a["nom"], a["service"], a["responsable"], a["detail"]] for a in data["alertes"]],
-         set()),
+        # Employés à suivre : réservé aux administrateurs.
+        *([("Alertes", ["Motif", "Matricule", "Nom", "Service", "Responsable", "Détail"],
+            [[a["motif"], a["matricule"], a["nom"], a["service"], a["responsable"], a["detail"]] for a in data["alertes"]],
+            set())] if auth.has_role(request.session.get("role"), "admin") else []),
     ]
     if not validee_allowed(db, request.session.get("role")):
         sheets = [_without_std(*sheet) for sheet in sheets]
@@ -287,7 +288,7 @@ def export_pdf(request: Request, db: Session = Depends(get_db)):
                     hours(g["heures_validees"]), hours(g["heures_moy_bureau"])][:None if std else -2] for g in groups],
                   [50] + group_widths, ["L"] + ["R"] * len(group_headers), pills, colors)
 
-    if data["alertes"]:
+    if data["alertes"] and auth.has_role(request.session.get("role"), "admin"):  # réservé aux administrateurs
         doc.section("Employés à suivre", f"{len(data['alertes'])} alerte(s)")
         pills = {(i, 0): pdf.BAD if a["gravite"] >= 3 else pdf.WARN if a["gravite"] == 2 else pdf.STATUS_PILLS["INCOMPLET"] for i, a in enumerate(data["alertes"])}
         doc.table(["Motif", "Matricule", "Nom", "Service", "Responsable", "Détail"],

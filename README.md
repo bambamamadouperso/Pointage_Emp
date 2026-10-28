@@ -223,6 +223,10 @@ sites, notifications) ; mail d'essai et état de chaque envoi.
 retard, durées, suivi, rapports, alertes, couleurs, filtres) avec sa méthode et sa formule de calcul, illustrées par
 les paramètres horaires en vigueur.
 
+**Rapports — analyses réservées à l'administrateur** : le graphique « Heures d'arrivée au bureau » et le tableau
+« À suivre » (employés à suivre) ne sont affichés qu'aux administrateurs, dans une partie dédiée en bas de la page ;
+la feuille « Alertes » de l'export Excel et la section « Employés à suivre » du PDF leur sont aussi réservées.
+
 **Durée standard** (anciennement « durée validée ») : réservée aux **RH et aux administrateurs** — suivi, rapports
 (heures standard, moyenne par jour au bureau) et exports Excel/PDF ; les managers et lecteurs ne la voient pas.
 *Administration → Paramètres horaires → Affichage du suivi journalier* permet aussi de la masquer pour tous ; quand

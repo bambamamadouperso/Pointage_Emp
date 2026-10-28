@@ -127,71 +127,31 @@
   </details>
 </section>
 
-<div class="report-grid">
-  <section class="card">
-    <h2>Selon le jour de la semaine</h2>
-    <p class="muted small">Un creux de présence (ou un pic d'absences) le lundi ou le vendredi signale souvent des absences de confort.</p>
-    <ul class="legend"><li><span class="swatch" style="background:#10b981"></span>Taux de présence</li>
-      <li><span class="swatch" style="background:#e11d48"></span>Taux d'absentéisme</li>
-      <li><span class="swatch" style="background:#f97316"></span>Taux de retard</li></ul>
-    {% set wmax = [data.semaine | map(attribute='taux_presence') | select('number') | max | default(0),
-                   data.semaine | map(attribute='taux_absence') | select('number') | max | default(0),
-                   data.semaine | map(attribute='taux_retard') | select('number') | max | default(0), 1] | max %}
-    <div class="hbars">
-      {% for w in data.semaine %}
-      <div class="hbar-row"><span class="hbar-label">{{ w.jour }}</span>
-        <div class="hbar-track">
-          <div class="hbar" tabindex="0" data-tip="{{ w.jour }}|{{ pct(w.taux_presence) }} de présence ({{ w.presents }} journée(s) présente(s) sur {{ w.disponibles }})"><span style="width:{{ ((w.taux_presence or 0) / wmax * 100) | round(1) }}%; background:#10b981"></span><em>{{ pct(w.taux_presence) }}</em></div>
-          <div class="hbar" tabindex="0" data-tip="{{ w.jour }}|{{ pct(w.taux_absence) }} d'absentéisme ({{ w.absences }} absence(s))"><span style="width:{{ ((w.taux_absence or 0) / wmax * 100) | round(1) }}%; background:#e11d48"></span><em>{{ pct(w.taux_absence) }}</em></div>
-          <div class="hbar" tabindex="0" data-tip="{{ w.jour }}|{{ pct(w.taux_retard) }} de retards ({{ w.retards }} retard(s))"><span style="width:{{ ((w.taux_retard or 0) / wmax * 100) | round(1) }}%; background:#f97316"></span><em>{{ pct(w.taux_retard) }}</em></div>
-        </div></div>
-      {% endfor %}
-    </div>
-  </section>
-
-  {% set a = data.arrival %}
-  <section class="card">
-    <h2>Heures d'arrivée au bureau</h2>
-    <p class="muted small">{{ a.total | num }} arrivées, par quart d'heure. Seuil de retard : {{ a.seuil | replace(':', 'h') }}.</p>
-    <ul class="legend"><li><span class="swatch" style="background:#10b981"></span>Avant le seuil</li>
-      <li><span class="swatch" style="background:#f97316"></span>À partir du seuil (retard)</li></ul>
-    <svg class="chart" viewBox="0 0 {{ a.w }} {{ a.h }}" role="img" aria-label="Histogramme des heures d'arrivée">
-      {% for tk in a.ticks %}<line class="grid" x1="{{ a.left }}" x2="{{ a.right }}" y1="{{ tk.y }}" y2="{{ tk.y }}"/>
-        <text class="axis" x="{{ a.left - 6 }}" y="{{ tk.y + 4 }}" text-anchor="end">{{ tk.v | num }}</text>{% endfor %}
-      {% for b in a.bars %}<g class="col" tabindex="0" data-tip="{{ b.label }}|{{ b.v }} arrivée(s){{ ' en retard' if b.late and b.v }}">
-        <rect class="hit" x="{{ b.slot_x }}" y="{{ a.top }}" width="{{ b.slot_w }}" height="{{ a.base - a.top }}"/>
-        {% if b.h > 4 %}<path fill="{{ b.color }}" d="M{{ b.x }},{{ a.base }} V{{ b.y + 4 }} Q{{ b.x }},{{ b.y }} {{ b.x + 4 }},{{ b.y }} H{{ b.x + b.w - 4 }} Q{{ b.x + b.w }},{{ b.y }} {{ b.x + b.w }},{{ b.y + 4 }} V{{ a.base }} Z"/>
-        {% elif b.h > 0 %}<rect fill="{{ b.color }}" x="{{ b.x }}" y="{{ b.y }}" width="{{ b.w }}" height="{{ b.h }}"/>{% endif %}</g>{% endfor %}
-      <line class="marker" x1="{{ a.seuil_x }}" x2="{{ a.seuil_x }}" y1="{{ a.top - 6 }}" y2="{{ a.base }}"/>
-      <text class="axis strong" x="{{ a.seuil_x + 4 }}" y="{{ a.top + 2 }}">seuil {{ a.seuil | replace(':', 'h') }}</text>
-      <line class="baseline" x1="{{ a.left }}" x2="{{ a.right }}" y1="{{ a.base }}" y2="{{ a.base }}"/>
-      {% for h in a.hours %}<text class="axis" x="{{ h.x }}" y="{{ a.base + 18 }}" text-anchor="middle">{{ h.label }}</text>{% endfor %}
-    </svg>
-  </section>
-</div>
+<section class="card">
+  <h2>Selon le jour de la semaine</h2>
+  <p class="muted small">Un creux de présence (ou un pic d'absences) le lundi ou le vendredi signale souvent des absences de confort.</p>
+  <ul class="legend"><li><span class="swatch" style="background:#10b981"></span>Taux de présence</li>
+    <li><span class="swatch" style="background:#e11d48"></span>Taux d'absentéisme</li>
+    <li><span class="swatch" style="background:#f97316"></span>Taux de retard</li></ul>
+  {% set wmax = [data.semaine | map(attribute='taux_presence') | select('number') | max | default(0),
+                 data.semaine | map(attribute='taux_absence') | select('number') | max | default(0),
+                 data.semaine | map(attribute='taux_retard') | select('number') | max | default(0), 1] | max %}
+  <div class="hbars">
+    {% for w in data.semaine %}
+    <div class="hbar-row"><span class="hbar-label">{{ w.jour }}</span>
+      <div class="hbar-track">
+        <div class="hbar" tabindex="0" data-tip="{{ w.jour }}|{{ pct(w.taux_presence) }} de présence ({{ w.presents }} journée(s) présente(s) sur {{ w.disponibles }})"><span style="width:{{ ((w.taux_presence or 0) / wmax * 100) | round(1) }}%; background:#10b981"></span><em>{{ pct(w.taux_presence) }}</em></div>
+        <div class="hbar" tabindex="0" data-tip="{{ w.jour }}|{{ pct(w.taux_absence) }} d'absentéisme ({{ w.absences }} absence(s))"><span style="width:{{ ((w.taux_absence or 0) / wmax * 100) | round(1) }}%; background:#e11d48"></span><em>{{ pct(w.taux_absence) }}</em></div>
+        <div class="hbar" tabindex="0" data-tip="{{ w.jour }}|{{ pct(w.taux_retard) }} de retards ({{ w.retards }} retard(s))"><span style="width:{{ ((w.taux_retard or 0) / wmax * 100) | round(1) }}%; background:#f97316"></span><em>{{ pct(w.taux_retard) }}</em></div>
+      </div></div>
+    {% endfor %}
+  </div>
+</section>
 
 {% if data.sites %}{{ group_table('Par site', data.sites, 'site', 'Site') }}{% endif %}
 {% if data.directions %}{{ group_table('Par direction', data.directions, 'direction', 'Direction') }}{% endif %}
 {% if data.categories %}{{ group_table('Par statut du personnel', data.categories, 'categorie', 'Statut du personnel') }}{% endif %}
 {{ group_table('Par service', data.services, 'service', 'Service') }}
-
-<section class="card">
-  <div class="card-head"><div><h2>À suivre</h2>
-    <p class="muted small">Situations à examiner avec le responsable : {{ 3 }}+ absences, absences surtout le lundi ou le vendredi,
-      {{ 3 }}+ retards ou 2h de retard cumulé, {{ 3 }}+ oublis de badge.</p></div></div>
-  {% if not data.alertes %}<p class="empty">Rien à signaler sur cette période.</p>{% else %}
-  <div class="table-wrap"><table>
-    <thead><tr><th>Motif</th><th>Employé</th><th>Service</th><th>Responsable</th><th>Détail</th><th></th></tr></thead>
-    <tbody>{% for al in data.alertes[:60] %}
-      <tr><td><span class="badge {{ 'st-abs' if al.gravite == 3 else ('st-late' if al.gravite == 2 else 'st-inc') }}">{{ al.motif }}</span></td>
-        <td><span class="mono small">{{ al.matricule }}</span> {{ al.nom }}</td><td>{{ al.service or '—' }}</td><td class="small">{{ al.responsable or '—' }}</td>
-        <td class="small">{{ al.detail }}</td>
-        <td class="nowrap"><a class="small" href="/suivi?du={{ f.du.isoformat() }}&au={{ f.au.isoformat() }}&q={{ al.matricule | urlencode }}">Voir les journées →</a></td></tr>
-    {% endfor %}</tbody>
-  </table></div>
-  {% if data.alertes | length > 60 %}<p class="muted small">{{ data.alertes | length - 60 }} autre(s) dans l'export Excel.</p>{% endif %}
-  {% endif %}
-</section>
 
 <section class="card">
   <div class="card-head"><div><h2>Par employé</h2><p class="muted small">{{ data.employes | length | num }} employé(s) ; les 100 premiers selon le tri choisi (tous dans l'export).</p></div>
@@ -212,6 +172,48 @@
     {% endfor %}</tbody>
   </table></div>
 </section>
+
+{% if can(role, 'admin') %}
+<h2 class="section-title" id="admin-analyses">Analyses réservées à l'administrateur</h2>
+<p class="muted small">Heures d'arrivée au bureau et employés à suivre : visibles seulement des administrateurs (écran et exports).</p>
+{% set a = data.arrival %}
+<section class="card">
+  <h2>Heures d'arrivée au bureau</h2>
+  <p class="muted small">{{ a.total | num }} arrivées, par quart d'heure. Seuil de retard : {{ a.seuil | replace(':', 'h') }}.</p>
+  <ul class="legend"><li><span class="swatch" style="background:#10b981"></span>Avant le seuil</li>
+    <li><span class="swatch" style="background:#f97316"></span>À partir du seuil (retard)</li></ul>
+  <svg class="chart" viewBox="0 0 {{ a.w }} {{ a.h }}" role="img" aria-label="Histogramme des heures d'arrivée">
+    {% for tk in a.ticks %}<line class="grid" x1="{{ a.left }}" x2="{{ a.right }}" y1="{{ tk.y }}" y2="{{ tk.y }}"/>
+      <text class="axis" x="{{ a.left - 6 }}" y="{{ tk.y + 4 }}" text-anchor="end">{{ tk.v | num }}</text>{% endfor %}
+    {% for b in a.bars %}<g class="col" tabindex="0" data-tip="{{ b.label }}|{{ b.v }} arrivée(s){{ ' en retard' if b.late and b.v }}">
+      <rect class="hit" x="{{ b.slot_x }}" y="{{ a.top }}" width="{{ b.slot_w }}" height="{{ a.base - a.top }}"/>
+      {% if b.h > 4 %}<path fill="{{ b.color }}" d="M{{ b.x }},{{ a.base }} V{{ b.y + 4 }} Q{{ b.x }},{{ b.y }} {{ b.x + 4 }},{{ b.y }} H{{ b.x + b.w - 4 }} Q{{ b.x + b.w }},{{ b.y }} {{ b.x + b.w }},{{ b.y + 4 }} V{{ a.base }} Z"/>
+      {% elif b.h > 0 %}<rect fill="{{ b.color }}" x="{{ b.x }}" y="{{ b.y }}" width="{{ b.w }}" height="{{ b.h }}"/>{% endif %}</g>{% endfor %}
+    <line class="marker" x1="{{ a.seuil_x }}" x2="{{ a.seuil_x }}" y1="{{ a.top - 6 }}" y2="{{ a.base }}"/>
+    <text class="axis strong" x="{{ a.seuil_x + 4 }}" y="{{ a.top + 2 }}">seuil {{ a.seuil | replace(':', 'h') }}</text>
+    <line class="baseline" x1="{{ a.left }}" x2="{{ a.right }}" y1="{{ a.base }}" y2="{{ a.base }}"/>
+    {% for h in a.hours %}<text class="axis" x="{{ h.x }}" y="{{ a.base + 18 }}" text-anchor="middle">{{ h.label }}</text>{% endfor %}
+  </svg>
+</section>
+
+<section class="card">
+  <div class="card-head"><div><h2>À suivre</h2>
+    <p class="muted small">Situations à examiner avec le responsable : {{ 3 }}+ absences, absences surtout le lundi ou le vendredi,
+      {{ 3 }}+ retards ou 2h de retard cumulé, {{ 3 }}+ oublis de badge.</p></div></div>
+  {% if not data.alertes %}<p class="empty">Rien à signaler sur cette période.</p>{% else %}
+  <div class="table-wrap"><table>
+    <thead><tr><th>Motif</th><th>Employé</th><th>Service</th><th>Responsable</th><th>Détail</th><th></th></tr></thead>
+    <tbody>{% for al in data.alertes[:60] %}
+      <tr><td><span class="badge {{ 'st-abs' if al.gravite == 3 else ('st-late' if al.gravite == 2 else 'st-inc') }}">{{ al.motif }}</span></td>
+        <td><span class="mono small">{{ al.matricule }}</span> {{ al.nom }}</td><td>{{ al.service or '—' }}</td><td class="small">{{ al.responsable or '—' }}</td>
+        <td class="small">{{ al.detail }}</td>
+        <td class="nowrap"><a class="small" href="/suivi?du={{ f.du.isoformat() }}&au={{ f.au.isoformat() }}&q={{ al.matricule | urlencode }}">Voir les journées →</a></td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+  {% if data.alertes | length > 60 %}<p class="muted small">{{ data.alertes | length - 60 }} autre(s) dans l'export Excel.</p>{% endif %}
+  {% endif %}
+</section>
+{% endif %}
 {% endif %}
 {% endif %}
 {% endif %}

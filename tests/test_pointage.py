@@ -622,6 +622,32 @@ def test_reports_page_and_export(configured, pg, logged_client):
     rows = {row[0]: row for row in wb["Employés"].iter_rows(min_row=2, values_only=True)}
     assert rows["E005"][14] == 4  # Ba Khady : 4 absences (mercredi férié)
     assert any(row[0] == "Absences répétées" for row in wb["Alertes"].iter_rows(min_row=2, values_only=True))
+    assert "Analyses réservées à l'administrateur" in html
+
+    # Heures d'arrivée et employés à suivre : réservés à l'administrateur (écran, Excel, PDF).
+    from fastapi.testclient import TestClient
+
+    from app import auth
+    from app.main import app
+    from app.models import User
+
+    with SessionLocal() as db:
+        db.query(User).filter_by(username="mgr_rap").delete()
+        db.add(User(username="mgr_rap", role="manager", password_hash=auth.hash_password("motdepasse7")))
+        db.commit()
+    try:
+        mgr = TestClient(app)
+        mgr.post("/login", data={"username": "mgr_rap", "password": "motdepasse7"})
+        page = mgr.get(url).text
+        assert "Selon le jour de la semaine" in page and "Par employé" in page
+        assert "Heures d'arrivée au bureau" not in page and "À suivre" not in page and "Absences répétées" not in page
+        wb = load_workbook(io.BytesIO(mgr.get("/rapports/export.xlsx?" + url.split("?", 1)[1]).content))
+        assert "Alertes" not in wb.sheetnames
+        assert "Employés à suivre" not in _pdf_text(mgr.get("/rapports/export.pdf?" + url.split("?", 1)[1]).content)
+    finally:
+        with SessionLocal() as db:
+            db.query(User).filter_by(username="mgr_rap").delete()
+            db.commit()
 
 
 def _pdf_text(content: bytes) -> str:
