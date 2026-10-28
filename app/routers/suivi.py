@@ -207,7 +207,7 @@ def suivi(request: Request, db: Session = Depends(get_db)):
     size = size if size in PAGE_SIZES else 100
     context = dict(f=f, warning=warning, today=date.today(), statuts=pointage.STATUTS, page=page, size=size, page_sizes=PAGE_SIZES,
                    hhmm=pointage.hhmm, configured=mapping is not None, data=None, error=None, services=[],
-                   managers=[], categories=[], directions=[], dims=dimension_filters(mapping), objectif_min=480, scope_label=None, population=None, last_punch=None, stale=False, has_hierarchy=bool(mapping and mapping.hier_table),
+                   managers=[], categories=[], directions=[], dims=dimension_filters(mapping), has_direction=bool(mapping and mapping.dir_col), objectif_min=480, scope_label=None, population=None, last_punch=None, stale=False, has_hierarchy=bool(mapping and mapping.hier_table),
                    single_day=f.du == f.au, mode="jour" if f.du == f.au else "periode",
                    validee_ok=validee_ok, show_validee=validee_shown, horaires=pointage.HORAIRES, pending={}, hors_liste=[])
     if mapping is None:
@@ -437,11 +437,15 @@ def export_pdf(request: Request, db: Session = Depends(get_db)):
     doc = pdf.Document("Suivi journalier des pointages", f"{period} · {len(rows)} ligne(s)", request.session.get("user", ""))
     doc.filters([(k, v) for k, v in _filter_items(request, f, objectif, with_validee, len(rows))
                  if k not in ("Du", "Au", "Lignes", "Exporté par") and v not in ("—", "Tous", "Toutes", "toutes")])
-    headers = ["Date", "Matricule", "Nom", "Service", "Statut du personnel", "1er pointage", "Statut", "Dernier", "Nb",
-               *(["Durée standard"] if with_validee else []), "Durée effective", "Responsable"]
-    widths = [17, 16, 40, 30, 22, 16, 31, 15, 8, *([17] if with_validee else []), 17, 34]
-    align = ["C", "L", "L", "L", "L", "C", "L", "C", "C", *(["C"] if with_validee else []), "C", "L"]
-    status_col, first_duration = 6, 9
+    _, mapping = load_config(db)
+    has_dir = bool(mapping and mapping.dir_col)  # colonne Direction quand elle est configurée
+    headers = ["Date", "Matricule", "Nom", "Service", *(["Direction"] if has_dir else []), "Statut du personnel",
+               "1er pointage", "Statut", "Dernier", "Nb", *(["Durée standard"] if with_validee else []), "Durée effective",
+               "Responsable"]
+    widths = [17, 16, 38, 28, *([28] if has_dir else []), 20, 15, 31, 15, 8, *([17] if with_validee else []), 17, 32]
+    align = ["C", "L", "L", "L", *(["L"] if has_dir else []), "L", "C", "L", "C", "C", *(["C"] if with_validee else []),
+             "C", "L"]
+    status_col, first_duration = 6 + has_dir, 9 + has_dir
     count = lambda *codes: sum(1 for r in rows if r["statut"] in codes)  # noqa: E731
     moy = _averages(rows)
     doc.kpis([
@@ -458,7 +462,7 @@ def export_pdf(request: Request, db: Session = Depends(get_db)):
     for i, r in enumerate(rows[:PDF_MAX_ROWS]):
         colors[(i, 1)] = colors[(i, len(headers) - 1)] = pdf.MUTED
         body.append([r["jour"].strftime("%d/%m/%Y"), r["matricule"], " ".join(filter(None, [r["nom"], r["prenom"]])),
-                     r["service"], r["categorie"],
+                     r["service"], *([r.get("direction")] if has_dir else []), r["categorie"],
                      hhmm(r["premier_pointage"]) if r["premier_pointage"] else "",
                      r["statut_libelle"] + (" (allaitement)" if r.get("allaitement") else ""),
                      hhmm(r["dernier_pointage"]) if r["dernier_pointage"] else "", r["nb_pointages"] or "",
@@ -469,7 +473,8 @@ def export_pdf(request: Request, db: Session = Depends(get_db)):
                          (first_duration + with_validee, "duree_effective_min")):
             if col is not None and r[key] is not None:  # objectif : vert atteint, rouge sinon
                 pills[(i, col)] = pdf.GOOD if float(r[key]) >= objectif else pdf.BAD
-    body.append(["Moyenne", "", "présents au bureau", "", "", hhmm(moy["premier"]) if moy["premier"] else "", "",
+    body.append(["Moyenne", "", "présents au bureau", "", *([""] if has_dir else []), "",
+                 hhmm(moy["premier"]) if moy["premier"] else "", "",
                  hhmm(moy["dernier"]) if moy["dernier"] else "", "",
                  *([hhmm(moy["validee"]) if moy["validee"] else ""] if with_validee else []),
                  hhmm(moy["effective"]) if moy["effective"] else "", ""])

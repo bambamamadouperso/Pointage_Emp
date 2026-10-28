@@ -73,7 +73,8 @@ MAX_IMPORT_MB = 50
 WEB_LIMITS = {"lock_timeout_s": 15, "statement_timeout_s": 120}
 
 SORTABLE = {
-    "jour": "jour", "matricule": "matricule", "nom": "nom", "service": "service", "responsable": "responsable",
+    "jour": "jour", "matricule": "matricule", "nom": "nom", "service": "service", "direction": "direction",
+    "responsable": "responsable",
     "premier": "premier_pointage", "dernier": "dernier_pointage", "statut": "statut",
     "validee": "duree_validee", "effective": "duree_effective",
 }

@@ -194,13 +194,13 @@
   <div class="card-head"><div><h2>Par employé</h2><p class="muted small">{{ data.employes | length | num }} employé(s) ; les 100 premiers selon le tri choisi (tous dans l'export).</p></div>
     <label class="check small">Trier par <select name="tri" form="rfilters">{% for code, label in sorts.items() %}<option value="{{ code }}" {{ 'selected' if sort == code }}>{{ label }}</option>{% endfor %}</select></label></div>
   <div class="table-wrap"><table class="report-table">
-    <thead><tr><th>Matricule</th><th>Nom</th><th>Service</th>{% if categories %}<th>Statut</th>{% endif %}<th class="right">Présence</th><th class="right">Absences</th>
+    <thead><tr><th>Matricule</th><th>Nom</th><th>Service</th>{% if has_direction %}<th>Direction</th>{% endif %}{% if categories %}<th>Statut</th>{% endif %}<th class="right">Présence</th><th class="right">Absences</th>
       <th class="right">Retards</th><th class="right">Retard cumulé</th><th class="right">Arrivée moy.</th><th class="right">Oublis</th>
       <th class="right">Congé</th><th class="right">Télétr.</th>{% if std %}<th class="right">Heures standard</th>{% endif %}</tr></thead>
     <tbody>{% for e in data.employes[:100] %}
       <tr><td class="mono small">{{ e.matricule }}</td>
         <td class="nowrap">{{ e.nom }} {{ e.prenom or '' }}{% if e.terrain %} <span class="badge st-field" title="Agent terrain">terrain</span>{% endif %}</td>
-        <td class="small">{{ e.service or '—' }}{% if e.direction or e.site %}<br><span class="muted">{{ [e.direction, e.site] | select | join(' · ') }}</span>{% endif %}</td>{% if categories %}<td class="small">{{ e.categorie or '—' }}</td>{% endif %}<td class="right">{{ pct(e.taux_presence) }}</td>
+        <td class="small">{{ e.service or '—' }}{% if e.site %}<br><span class="muted">{{ e.site }}</span>{% endif %}</td>{% if has_direction %}<td class="small">{{ e.direction or '—' }}</td>{% endif %}{% if categories %}<td class="small">{{ e.categorie or '—' }}</td>{% endif %}<td class="right">{{ pct(e.taux_presence) }}</td>
         <td class="right {{ 'hot' if e.absences >= 3 }}">{{ e.absences or '·' }}</td><td class="right {{ 'hot' if e.retards >= 3 }}">{{ e.retards or '·' }}</td>
         <td class="right">{{ hhmm(timedelta(minutes=e.retard_min_total | float)) if e.retard_min_total else '·' }}</td>
         <td class="right">{% if e.arrivee_moy_min %}{{ '%02d' | format((e.arrivee_moy_min // 60) | int) }}h{{ '%02d' | format((e.arrivee_moy_min % 60) | int) }}{% else %}—{% endif %}</td>

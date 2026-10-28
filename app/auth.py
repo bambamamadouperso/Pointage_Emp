@@ -133,6 +133,7 @@ RULES = [
     ("*", re.compile(r"^/(suivi|rapports)(/.*)?$"), "lecteur"),
     ("*", re.compile(r"^/(arrets|maternite)(/.*)?$"), "lecteur"),
     ("*", re.compile(r"^/(compte|logout)$"), "lecteur"),
+    ("GET", re.compile(r"^/aide$"), "lecteur"),
     # Réglages RH (pas la source des pointages, les mails de badge/SMTP, les utilisateurs ni l'audit).
     ("GET", re.compile(r"^/admin$"), "rh"),
     ("*", re.compile(r"^/admin/(parametres|feries|planning|terrain|arrets|resumes|rappels|maternite|validations|verifier)(/.*)?$"), "rh"),

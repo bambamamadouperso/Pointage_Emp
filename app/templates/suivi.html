@@ -216,7 +216,7 @@
   <div class="table-wrap"><table class="suivi">
     <thead><tr>
       {% if not single_day %}{{ th('jour', 'Date') }}{% endif %}
-      {{ th('matricule', 'Matricule') }}{{ th('nom', 'Nom') }}{{ th('service', 'Service') }}
+      {{ th('matricule', 'Matricule') }}{{ th('nom', 'Nom') }}{{ th('service', 'Service') }}{% if has_direction %}{{ th('direction', 'Direction') }}{% endif %}
       {% if has_hierarchy %}{{ th('responsable', 'Responsable') }}{% endif %}
       {{ th('premier', '1er pointage') }}{{ th('statut', 'Statut') }}{{ th('dernier', 'Dernier pointage') }}
       {% if show_validee %}{{ th('validee', 'Durée standard', 'right') }}{% endif %}{{ th('effective', 'Durée effective', 'right') }}
@@ -229,7 +229,8 @@
         {% if not single_day %}<td class="nowrap">{{ r.jour | jour_fr(True) }}</td>{% endif %}
         <td class="mono">{{ r.matricule }}</td>
         <td class="nowrap">{% if r.hors_liste %}<span class="badge st-out" title="A pointé mais n'est pas dans la table des employés">Hors liste</span>{% else %}{{ r.nom }} {{ r.prenom or '' }}{% endif %}</td>
-        <td>{{ r.service or '—' }}{% if r.direction or r.site %}<br><span class="muted small" title="Direction · site">{{ [r.direction, r.site] | select | join(' · ') }}</span>{% endif %}</td>
+        <td>{{ r.service or '—' }}{% if r.site %}<br><span class="muted small" title="Site">{{ r.site }}</span>{% endif %}</td>
+        {% if has_direction %}<td class="small">{{ r.direction or '—' }}</td>{% endif %}
         {% if has_hierarchy %}<td class="small">{{ r.responsable or '—' }}</td>{% endif %}
         <td>{{ hhmm(r.premier_pointage) }}</td>
         <td class="nowrap"><span class="badge {{ cls }}">{{ label }}</span>{% if not r.jour_ouvre and r.statut not in ('NON_OUVRE', 'REPOS') %} <span class="muted small" title="Jour non ouvré ou férié">(non ouvré)</span>{% endif %}
@@ -246,7 +247,7 @@
     {% endfor %}
     </tbody>
     <tfoot><tr class="avg-row">
-      <td colspan="{{ 3 + (0 if single_day else 1) + (1 if has_hierarchy else 0) }}"><strong>Moyenne</strong>
+      <td colspan="{{ 3 + (0 if single_day else 1) + (1 if has_hierarchy else 0) + (1 if has_direction else 0) }}"><strong>Moyenne</strong>
         <span class="muted small">des {{ data.total | num }} ligne(s) filtrée(s), présents au bureau</span></td>
       <td><strong>{{ hhmm(k.moy_premier) }}</strong></td><td></td><td><strong>{{ hhmm(k.moy_dernier) }}</strong></td>
       {% if show_validee %}<td class="right"><strong>{{ hhmm(k.moy_validee) }}</strong></td>{% endif %}<td class="right"><strong>{{ hhmm(k.moy_effective) }}</strong></td>

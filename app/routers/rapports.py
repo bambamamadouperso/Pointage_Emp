@@ -56,6 +56,7 @@ def page(request: Request, db: Session = Depends(get_db)):
     sort = request.query_params.get("tri", "absences")
     sort = sort if sort in sorts else "absences"
     context = dict(f=f, preset=preset, presets=rapports.PRESETS, sorts=sorts, sort=sort, configured=mapping is not None, std=std,
+                   has_direction=bool(mapping and mapping.dir_col),
                    data=None, error=None, services=[], managers=[], categories=[], directions=[], scope_label=None,
                    hhmm=pointage.hhmm, dims=dimension_filters(mapping),
                    series=rapports.SERIES, has_hierarchy=bool(mapping and mapping.hier_table), today=date.today(),
@@ -221,6 +222,8 @@ def export_pdf(request: Request, db: Session = Depends(get_db)):
     f, data = result
     k = data["kpi"]
     std = validee_allowed(db, request.session.get("role"))
+    _, mapping = load_config(db)
+    has_dir = bool(mapping and mapping.dir_col)
     cut = None if std else -1  # durée standard (dernières colonnes) réservée aux RH et aux administrateurs
 
     def pct(v):
@@ -301,12 +304,19 @@ def export_pdf(request: Request, db: Session = Depends(get_db)):
             colors[(i, 10)] = pdf.RED
         if e["retards"]:
             colors[(i, 7)] = pdf.ORANGE
-    doc.table(["Matricule", "Nom", "Service", "Statut du personnel", "Attendus", "Présences", "Présence", "Retards",
-               "Min. de retard", "Ponctualité", "Absences", "Oublis", "Congés", "Heures standard"][:cut],
-              [[e["matricule"], " ".join(filter(None, [e["nom"], e["prenom"]])), e["service"], e["categorie"], num(e["attendus"]),
+    # Colonne Direction (si configurée) après le service : les numéros de colonnes colorées sont décalés d'autant.
+    if has_dir:
+        pills = {(i, j + (j >= 3)): v for (i, j), v in pills.items()}
+        colors = {(i, j + (j >= 3)): v for (i, j), v in colors.items()}
+    doc.table(["Matricule", "Nom", "Service", *(["Direction"] if has_dir else []), "Statut du personnel", "Attendus",
+               "Présences", "Présence", "Retards", "Min. de retard", "Ponctualité", "Absences", "Oublis", "Congés",
+               "Heures standard"][:cut],
+              [[e["matricule"], " ".join(filter(None, [e["nom"], e["prenom"]])), e["service"],
+                *([e.get("direction")] if has_dir else []), e["categorie"], num(e["attendus"]),
                 num(e["presents"]), pct(e["taux_presence"]), num(e["retards"]), num(e["retard_min_total"]),
                 pct(e["taux_ponctualite"]), num(e["absences"]), num(e["incomplets"]), num(e["conges"]),
                 hours(e["heures_validees"])][:cut] for e in data["employes"]],
-              [18, 42, 34, 24, 17, 18, 18, 16, 18, 20, 17, 15, 15, 20][:cut], (["L"] * 4 + ["R"] * 10)[:cut], pills, colors)
+              [18, 40, 30, *([28] if has_dir else []), 22, 16, 17, 18, 15, 18, 19, 16, 14, 14, 19][:cut],
+              (["L"] * (4 + has_dir) + ["R"] * 10)[:cut], pills, colors)
     return Response(doc.output_bytes(), media_type="application/pdf",
                     headers={"Content-Disposition": f'attachment; filename="rapport_{f.du:%Y%m%d}_{f.au:%Y%m%d}.pdf"'})

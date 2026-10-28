@@ -1,0 +1,175 @@
+{% extends "base.html" %}
+{% block title %}Aide · indicateurs et calculs{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Aide : indicateurs et méthodes de calcul</h1>
+    <p class="muted">Définition de chaque indicateur du suivi journalier, des rapports et des résumés par mail, avec sa formule.
+      Les valeurs entre crochets sont les <strong>paramètres en vigueur aujourd'hui</strong>
+      {%- if can(role, 'rh') %} (modifiables dans <a href="/admin/parametres">Paramètres horaires</a>){% endif %}.</p></div>
+</div>
+
+<nav class="card help-toc" aria-label="Sommaire">
+  <strong>Sommaire</strong>
+  <ol>
+    <li><a href="#principes">Principes : la journée-employé</a></li>
+    <li><a href="#statuts">Statuts d'une journée</a></li>
+    <li><a href="#durees">Retard et durées</a></li>
+    <li><a href="#suivi">Indicateurs du suivi journalier</a></li>
+    <li><a href="#rapports">Indicateurs des rapports</a></li>
+    <li><a href="#alertes">Employés à suivre (alertes)</a></li>
+    <li><a href="#couleurs">Couleurs et seuils</a></li>
+    <li><a href="#filtres">Filtres et périmètre</a></li>
+  </ol>
+</nav>
+
+{% if not configured %}<div class="flash warn">La source des pointages n'est pas encore configurée : les valeurs affichées sont les valeurs par défaut.</div>{% endif %}
+
+<section class="card help" id="principes">
+  <h2>1. Principes : la journée-employé</h2>
+  <p>Tous les calculs partent d'une <strong>ligne par employé et par jour</strong> (la « journée-employé ») : chaque employé actif de la
+    liste a une ligne chaque jour, qu'il ait pointé ou non ; une personne qui a pointé sans figurer dans la liste apparaît aussi
+    (« hors liste »).</p>
+  <dl class="help-defs">
+    <dt>P1 — premier pointage</dt><dd>Heure du premier passage du badge dans la journée.</dd>
+    <dt>P2 — dernier pointage</dt><dd>Heure du dernier passage du badge (au moins deux pointages ; poste de nuit : le lendemain matin est rattaché au poste).</dd>
+    <dt>Jour ouvré</dt><dd>Jour de la semaine travaillé [{{ p.jours_ouvres }}], hors jours fériés. Pour un agent en horaires postés,
+      c'est le planning qui décide (poste de travail, congé ou formation = jour attendu ; repos ou férié = non attendu).</dd>
+    <dt>Horaire de bureau</dt><dd>Début [{{ p.debut_journee }}], seuil de retard [{{ p.seuil_retard }}], pause de [{{ p.debut_pause }}] à
+      [{{ p.fin_pause }}] avec [{{ p.duree_pause_deduite }}] déduites, fin de journée [{{ p.fin_journee }}], objectif de durée [{{ p.objectif_duree }}].</dd>
+  </dl>
+</section>
+
+<section class="card help" id="statuts">
+  <h2>2. Statuts d'une journée</h2>
+  <p class="muted small">Un seul statut par journée-employé, déterminé dans l'ordre ci-dessous (la première règle qui s'applique l'emporte).</p>
+  <div class="table-wrap"><table class="help-table">
+    <thead><tr><th>Statut</th><th>Règle</th><th>Durée standard du jour</th></tr></thead>
+    <tbody>
+      <tr><td><span class="badge st-mater">Congé maternité</span></td><td>Jour attendu dans une période de congé de maternité validée (même si l'employée badge).</td><td>[{{ p.duree_maternite }}]</td></tr>
+      <tr><td><span class="badge st-leave">Congé Annuel</span> <span class="badge st-leave">Congé exceptionnel</span></td><td>Congé approuvé (source des congés) un jour attendu sans pointage, ou poste « congé » du planning.</td><td>[{{ p.duree_conge }}]</td></tr>
+      <tr><td><span class="badge st-train">Formation</span></td><td>Poste « formation » du planning des horaires postés.</td><td>durée du poste</td></tr>
+      <tr><td><span class="badge st-off">Repos (planning)</span></td><td>Poste « repos » du planning.</td><td>durée du code, sinon [{{ p.duree_repos }}]</td></tr>
+      <tr><td><span class="badge st-mission">En mission</span></td><td>Autorisation de mission approuvée un jour travaillé (même si la personne badge), sauf arrêt maladie ou congé le même jour.</td><td>[{{ p.duree_mission }}]</td></tr>
+      <tr><td><span class="badge st-sick">Arrêt maladie</span></td><td>Arrêt maladie validé, jour attendu sans pointage.</td><td>[{{ p.duree_arret_maladie }}]</td></tr>
+      <tr><td><span class="badge st-remote">Télétravail</span></td><td>Télétravail approuvé, jour sans pointage (y compris un jour non ouvré).</td><td>[{{ p.duree_teletravail }}]</td></tr>
+      <tr><td><span class="badge st-field">Sur le terrain</span></td><td>Agent terrain (commercial…) un jour ouvré, qu'il passe au bureau ou non : ni retard ni pointage incomplet.</td><td>au moins [{{ p.duree_terrain }}]</td></tr>
+      <tr><td><span class="badge st-abs">Absent</span></td><td>Jour attendu, <strong>aucun pointage</strong> et aucune situation ci-dessus. Une demande non encore validée reste une absence (signalée « ⏳ en attente »).</td><td>—</td></tr>
+      <tr><td><span class="badge st-inc">Pointage incomplet</span></td><td><strong>Un seul pointage</strong> dans la journée (arrivée ou départ manquant = oubli de badge).</td><td>—</td></tr>
+      <tr><td><span class="badge st-late">En retard</span></td><td>Au moins deux pointages et <code>P1 ≥ seuil de retard</code> [{{ p.seuil_retard }}] (seuil décalé des heures d'allaitement ; poste planifié : début du poste + même tolérance).</td><td>calculée (voir 3)</td></tr>
+      <tr><td><span class="badge st-ok">À l'heure</span></td><td>Au moins deux pointages et <code>P1 &lt; seuil de retard</code>.</td><td>calculée (voir 3)</td></tr>
+      <tr><td><span class="badge st-off">Jour non ouvré</span></td><td>Jour non travaillé (week-end, férié) sans pointage.</td><td>—</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section class="card help" id="durees">
+  <h2>3. Retard et durées</h2>
+  <dl class="help-defs">
+    <dt>Minutes de retard</dt>
+    <dd><code class="formula">retard = P1 − début de journée [{{ p.debut_journee }}] − heures d'allaitement</code>
+      — compté seulement pour une journée « En retard » (poste planifié : <code>P1 − début du poste</code>).
+      Le retard cumulé est la somme de ces minutes.</dd>
+    <dt>Pause déduite</dt>
+    <dd><code class="formula">pause = [{{ p.duree_pause_deduite }}] si P1 &lt; [{{ p.debut_pause }}] et P2 &gt; [{{ p.fin_pause }}], sinon 0</code>
+      (poste planifié : pause du poste).</dd>
+    <dt>Durée effective</dt>
+    <dd><code class="formula">durée effective = (P2 − P1) − pause</code> — le temps réellement passé entre le premier et le dernier pointage.
+      Pour un congé, un télétravail, un arrêt maladie, un congé de maternité, ou une mission sans pointage : la durée attribuée du statut.</dd>
+    <dt>Durée standard <span class="muted small">(anciennement « durée validée » ; visible des RH et administrateurs{{ '' if std else ' seulement' }})</span></dt>
+    <dd><code class="formula">durée standard = (MIN(P2, fin de journée [{{ p.fin_journee }}]) − début validé) − pause</code>, jamais négative,<br>
+      avec <code>début validé = début de journée [{{ p.debut_journee }}] si P1 &lt; seuil [{{ p.seuil_retard }}], sinon P1</code>.
+      Le temps avant le début de journée et après la fin de journée n'est pas compté (un pointage après [{{ p.fin_journee }}] seulement donne 0h).
+      <br>Poste planifié : entre le début du poste (ou l'arrivée tardive) et sa fin (ou le départ anticipé), pause du poste déduite.
+      <br>Autres statuts : durée attribuée (tableau ci-dessus).</dd>
+    <dt>Période d'allaitement</dt>
+    <dd><code class="formula">durée standard = MAX(durée standard, MIN(objectif [{{ p.objectif_duree }}], temps travaillé + heures d'allaitement))</code>
+      — temps travaillé = (P2 − P1) − pause ; heures d'allaitement [{{ p.heures_allaitement }}] par défaut (1 h, 2 h ou 3 h selon la période).
+      Exemple : 7h travaillées + 1 h → 8h. Le seuil de retard est décalé d'autant. Une journée sans pointage reste une absence.</dd>
+  </dl>
+</section>
+
+<section class="card help" id="suivi">
+  <h2>4. Indicateurs du suivi journalier</h2>
+  <p class="muted small">Calculés sur toutes les lignes filtrées (période, service, direction, statut du personnel, équipe…), une ligne = une journée-employé.</p>
+  <div class="table-wrap"><table class="help-table">
+    <thead><tr><th>Indicateur</th><th>Définition et formule</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Présents</strong></td><td><code>nombre de journées À l'heure + En retard + Pointage incomplet</code></td></tr>
+      <tr><td><strong>Retards</strong></td><td><code>nombre de journées En retard</code> (arrivée ≥ seuil)</td></tr>
+      <tr><td><strong>Absents</strong></td><td><code>nombre de journées Absent</code> (jour attendu, aucun pointage, aucune situation justifiée)</td></tr>
+      <tr><td><strong>Autres situations</strong></td><td>Nombre de journées par statut : congé (annuel + exceptionnel), télétravail, terrain, arrêt maladie, maternité, mission, formation, repos.</td></tr>
+      <tr><td><strong>Hors liste</strong></td><td><code>nombre de badges distincts</code> qui ont pointé sans figurer dans la liste des employés.</td></tr>
+      <tr><td><strong>Ponctualité</strong></td><td><code class="formula">À l'heure ÷ (À l'heure + En retard) × 100</code></td></tr>
+      <tr><td><strong>Pointages moyens — arrivée</strong></td><td>Moyenne des P1 des journées À l'heure, En retard et Pointage incomplet, hors horaires postés.</td></tr>
+      <tr><td><strong>Pointages moyens — départ</strong></td><td>Moyenne des P2 des journées À l'heure et En retard (au moins deux pointages), hors horaires postés.</td></tr>
+      <tr><td><strong>Durées moyennes</strong> (standard / effective)</td><td>Moyenne des durées des journées où elle est calculée sur les pointages (présents au bureau ayant au moins deux pointages) ;
+        les journées à durée attribuée (congés, télétravail, terrain, maladie, maternité, formation, repos, mission) sont exclues.</td></tr>
+      <tr><td><strong>Ligne « Moyenne »</strong> du tableau</td><td>Mêmes moyennes que ci-dessus pour les lignes filtrées.</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section class="card help" id="rapports">
+  <h2>5. Indicateurs des rapports</h2>
+  <p class="muted small">Sur la période choisie, pour les employés de la liste. Trois notions de base :</p>
+  <dl class="help-defs">
+    <dt>Journées attendues</dt><dd><code>jour ouvré et statut ≠ Jour non ouvré</code></dd>
+    <dt>Journées disponibles</dt><dd><code>journées attendues − congés (annuel, exceptionnel, maternité) − arrêts maladie</code></dd>
+    <dt>Journées présentes</dt><dd>Journées disponibles au statut À l'heure, En retard, Pointage incomplet, Sur le terrain, Télétravail, Formation ou En mission.</dd>
+  </dl>
+  <div class="table-wrap"><table class="help-table">
+    <thead><tr><th>Indicateur</th><th>Formule</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Taux de présence</strong></td><td><code class="formula">journées présentes ÷ journées disponibles × 100</code></td></tr>
+      <tr><td><strong>Taux d'absentéisme</strong></td><td><code class="formula">journées Absent ÷ journées disponibles × 100</code></td></tr>
+      <tr><td><strong>Taux de ponctualité</strong></td><td><code class="formula">À l'heure ÷ (À l'heure + En retard) × 100</code></td></tr>
+      <tr><td><strong>Retards</strong></td><td>Nombre de journées En retard ; <em>cumul</em> = somme des minutes de retard ; <em>moyenne</em> = cumul ÷ nombre de retards.</td></tr>
+      <tr><td><strong>Heures standard</strong> <span class="muted small">(RH et administrateurs)</span></td><td><code class="formula">Σ durées standard ÷ 60</code> (toutes les journées, durées attribuées comprises)</td></tr>
+      <tr><td><strong>Moyenne / jour au bureau</strong> <span class="muted small">(RH et administrateurs)</span></td><td>Moyenne de la durée standard des journées À l'heure et En retard.</td></tr>
+      <tr><td><strong>Oublis de badge</strong></td><td>Nombre de journées Pointage incomplet, <strong>jours terminés</strong> seulement (aujourd'hui, le départ n'a pas encore eu lieu).</td></tr>
+      <tr><td><strong>Arrivée moyenne</strong> (par employé)</td><td>Moyenne des P1 des journées À l'heure et En retard, hors horaires postés.</td></tr>
+      <tr><td><strong>Évolution</strong> (▲ ▼)</td><td>Écart en points avec la période précédente de même durée (périodes de 120 jours au plus, si les pointages la couvrent).</td></tr>
+      <tr><td><strong>Présence par jour / par semaine</strong></td><td>Répartition des journées-employé par statut ; par semaine au-delà de 62 jours.</td></tr>
+      <tr><td><strong>Selon le jour de la semaine</strong></td><td>Absentéisme et part des retards (<code>retards ÷ (à l'heure + retards)</code>) pour chaque jour de la semaine.</td></tr>
+      <tr><td><strong>Heures d'arrivée au bureau</strong></td><td>Nombre de premiers pointages par quart d'heure (journées À l'heure et En retard, hors horaires postés).</td></tr>
+      <tr><td><strong>Par service, statut du personnel, direction, site</strong></td><td>Mêmes indicateurs calculés pour chaque groupe ; classés du plus fort au plus faible absentéisme.</td></tr>
+      <tr><td><strong>Résumés par mail</strong> (quotidien, hebdomadaire)</td><td>Mêmes formules, limitées à l'équipe du responsable (N-1 ou toute la hiérarchie) ;
+        moyennes par jour de présence au bureau = moyenne des durées des journées À l'heure et En retard.</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section class="card help" id="alertes">
+  <h2>6. Employés à suivre (alertes)</h2>
+  <div class="table-wrap"><table class="help-table">
+    <thead><tr><th>Motif</th><th>Déclenché quand</th><th>Gravité</th></tr></thead>
+    <tbody>
+      <tr><td>Absences répétées</td><td><code>absences ≥ {{ alert.absences }}</code> sur la période</td><td><span class="badge st-abs">forte</span></td></tr>
+      <tr><td>Absences en début ou fin de semaine</td><td><code>absences ≥ 2</code> et au moins 70 % d'entre elles un lundi ou un vendredi</td><td><span class="badge st-late">moyenne</span></td></tr>
+      <tr><td>Retards fréquents</td><td><code>retards ≥ {{ alert.retards }}</code> ou <code>retard cumulé ≥ {{ alert.minutes // 60 }}h{{ '%02d' % (alert.minutes % 60) }}</code></td><td><span class="badge st-late">moyenne</span></td></tr>
+      <tr><td>Oublis de badge</td><td><code>pointages incomplets ≥ {{ alert.incomplets }}</code></td><td><span class="badge st-inc">faible</span></td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section class="card help" id="couleurs">
+  <h2>7. Couleurs et seuils</h2>
+  <ul class="rule-list">
+    <li><span class="dur dur-ok">≥ {{ p.objectif_duree }}</span> / <span class="dur dur-ko">&lt; {{ p.objectif_duree }}</span> : durée standard ou effective qui atteint (vert) ou non (rouge) l'objectif de durée.</li>
+    <li>Exports PDF des rapports — taux de présence et de ponctualité : <span class="badge st-ok">≥ 95 %</span> <span class="badge st-late">≥ 85 %</span> <span class="badge st-abs">&lt; 85 %</span> ;
+      taux d'absentéisme : <span class="badge st-ok">≤ 5 %</span> <span class="badge st-late">≤ 10 %</span> <span class="badge st-abs">&gt; 10 %</span>.</li>
+    <li>Résumés par mail : taux de présence vert à partir de 95 %, orange à partir de 85 %, rouge en dessous.</li>
+  </ul>
+</section>
+
+<section class="card help" id="filtres">
+  <h2>8. Filtres et périmètre</h2>
+  <ul class="rule-list">
+    <li><strong>Service, direction{{ '' if has_direction else ' (à configurer : colonne de la table Personnel)' }}, site, statut du personnel</strong> : ne gardent que les employés concernés ; tous les indicateurs sont recalculés sur ce périmètre.</li>
+    <li><strong>Statut du personnel</strong> : « Cadre » et « Non Cadre » cochés par défaut ; tout décocher = tout le personnel.</li>
+    <li><strong>Horaires</strong> : bureau, postés (au moins un poste planifié sur la période) ou tous.</li>
+    <li><strong>Équipe de</strong> : la hiérarchie d'un responsable (ou ses directs seulement). Un compte rattaché à une équipe ne voit que son équipe.</li>
+    <li><strong>Personnes</strong> (suivi) : employés de la liste, hors liste, ou tous. Les rapports portent sur les employés de la liste.</li>
+  </ul>
+</section>
+{% endblock %}

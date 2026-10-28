@@ -1579,6 +1579,13 @@ def test_direction_filter_and_reports(configured, pg, logged_client):
         both = logged_client.get(f"/suivi?date={MON.isoformat()}&direction=Direction+RH"
                                  f"&direction=Direction+Industrielle&pop=liste").text
         assert "E001</td>" in both and "E003</td>" in both and "E005</td>" not in both
+        # Colonne « Direction » dédiée (écran triable, PDF) une fois la colonne configurée.
+        head = both.split("<thead>")[1].split("</thead>")[0]
+        assert ">Direction</a>" in head and "sort=direction" in head
+        assert '<td class="small">Direction Industrielle</td>' in both
+        assert "Direction Industrielle" in logged_client.get(f"/suivi?date={MON.isoformat()}&sort=direction&dir=desc").text
+        body = _pdf_text(logged_client.get(f"/suivi/export.pdf?date={MON.isoformat()}&pop=liste").content)
+        assert "(DIRECTION) Tj" in body and "(Direction RH) Tj" in body
         xlsx = load_workbook(io.BytesIO(logged_client.get(
             f"/suivi/export.xlsx?date={MON.isoformat()}&direction=Direction+RH").content))
         ws = xlsx.active
@@ -1589,6 +1596,8 @@ def test_direction_filter_and_reports(configured, pg, logged_client):
         url = f"/rapports?p=perso&du={MON.isoformat()}&au={(MON + timedelta(days=4)).isoformat()}"
         rep = logged_client.get(url).text
         assert "Par direction" in rep and "(sans direction)" in rep and "Direction Industrielle" in rep
+        assert "<th>Direction</th>" in rep.split("Par employé")[1]
+        assert "(DIRECTION) Tj" in _pdf_text(logged_client.get("/rapports/export.pdf?" + url.split("?", 1)[1]).content)
         assert "Ba Khady" not in logged_client.get(url + "&direction=Direction+RH").text
         wb = load_workbook(io.BytesIO(logged_client.get("/rapports/export.xlsx?" + url.split("?", 1)[1]).content))
         assert "Directions" in wb.sheetnames and wb["Employés"].cell(1, 22).value == "Direction"
@@ -2477,3 +2486,33 @@ def test_default_staff_categories(configured, pg, logged_client):
         with pg.begin() as c:
             c.execute(text(f'UPDATE {SCHEMA}."Personnel" SET "IDStatut" = 2 WHERE "IDPersonnel" = 107'))
             c.execute(text(f"DELETE FROM {SCHEMA}.statuts WHERE id = 3"))
+
+
+def test_help_page(configured, logged_client):
+    """Aide : définitions et formules des indicateurs, avec les paramètres en vigueur ; accessible à tous."""
+    from fastapi.testclient import TestClient
+
+    from app import auth
+    from app.main import app
+    from app.models import User
+
+    page = logged_client.get("/aide").text
+    for part in ("Indicateurs et calculs", "Statuts d'une journée", "Taux de présence", "Taux d'absentéisme",
+                 "Ponctualité", "Durée standard", "durée effective = (P2 − P1) − pause", "Absences répétées",
+                 "journées présentes ÷ journées disponibles × 100", "Hors liste"):
+        assert part in page, part
+    import re
+    assert re.search(r"seuil de retard \[\d+h\d\d\]", page)  # valeur du paramètre en vigueur
+    with SessionLocal() as db:
+        db.query(User).filter_by(username="lect_aide").delete()
+        db.add(User(username="lect_aide", role="lecteur", password_hash=auth.hash_password("motdepasse7")))
+        db.commit()
+    try:
+        c = TestClient(app)
+        c.post("/login", data={"username": "lect_aide", "password": "motdepasse7"})
+        r = c.get("/aide")
+        assert r.status_code == 200 and "Taux de présence" in r.text and 'href="/aide"' in r.text
+    finally:
+        with SessionLocal() as db:
+            db.query(User).filter_by(username="lect_aide").delete()
+            db.commit()

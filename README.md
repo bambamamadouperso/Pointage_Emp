@@ -186,6 +186,15 @@ sont plus synchronisés depuis le délai choisi (garde-fou). Même serveur SMTP 
 mails de badge. La page montre la situation du jour (qui recevrait quel message, à quelle heure), un aperçu, un essai
 et le journal des envois.
 
+**Direction** : quand la colonne est configurée (*Administration → Source des pointages*, champ « Direction » de la
+table Personnel, avec une table de libellés si c'est un code), le suivi journalier et le tableau « Par employé » des
+rapports ont une **colonne Direction** dédiée (triable dans le suivi, reprise dans les exports Excel et PDF), en plus
+du **filtre Direction** et du regroupement « Par direction ».
+
+**Aide** (menu *Aide → Indicateurs et calculs*, accessible à tous) : définition de chaque indicateur (statuts,
+retard, durées, suivi, rapports, alertes, couleurs, filtres) avec sa méthode et sa formule de calcul, illustrées par
+les paramètres horaires en vigueur.
+
 **Durée standard** (anciennement « durée validée ») : réservée aux **RH et aux administrateurs** — suivi, rapports
 (heures standard, moyenne par jour au bureau) et exports Excel/PDF ; les managers et lecteurs ne la voient pas.
 *Administration → Paramètres horaires → Affichage du suivi journalier* permet aussi de la masquer pour tous ; quand
