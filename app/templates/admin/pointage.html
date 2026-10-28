@@ -246,7 +246,7 @@
     <p class="muted small">Plusieurs valeurs : séparez-les par des virgules. La comparaison ignore majuscules, accents et espaces
       (« Approuvée » = « APPROUVEE »). Seules les demandes dont la nature est l'une de ces valeurs sont prises en compte.
       Chaque jour ouvré de congé reçoit la « Durée attribuée par jour de congé » (8h par défaut, voir Paramètres horaires)
-      en durée validée et en durée effective. Un jour où la personne a badgé garde le statut calculé d'après ses pointages.</p>
+      en durée standard et en durée effective. Un jour où la personne a badgé garde le statut calculé d'après ses pointages.</p>
     {% else %}
     <input type="hidden" name="leave_ref" value="{{ m.leave_ref or 'key' }}">
     <input type="hidden" name="leave_state_values" value="{{ m.leave_state_values or 'Approuvée' }}">
@@ -280,7 +280,7 @@
       <label>Valeur(s) « approuvé » <input name="tw_state_values" value="{{ m.tw_state_values }}" placeholder="Approuvée"></label>
     </div>
     <p class="muted small">Chaque jour de télétravail, y compris un jour non ouvré (week-end, férié), reçoit la « Durée attribuée par jour de télétravail » (8h par défaut,
-      voir Paramètres horaires) en durée validée et en durée effective. Un congé approuvé le même jour l'emporte ;
+      voir Paramètres horaires) en durée standard et en durée effective. Un congé approuvé le même jour l'emporte ;
       un jour où la personne a badgé garde le statut calculé d'après ses pointages.</p>
     {% else %}
     <input type="hidden" name="tw_ref" value="{{ m.tw_ref or 'key' }}">
@@ -333,7 +333,7 @@
     <p class="muted small">Source typique : une <strong>feuille Smartsheet</strong> d'autorisations de mission, synchronisée par un job
       (<a href="/connections/new?kind=smartsheet">nouvelle connexion Smartsheet</a>) ; choisissez ensuite ici la table créée par le job.
       Chaque jour ouvré (ou poste planifié) de la mission reçoit la « Durée attribuée par jour de mission » (8h par défaut, voir Paramètres horaires)
-      en durée validée — même si la personne a badgé. Un arrêt maladie ou un congé approuvé le même jour l'emporte ; les jours non ouvrés restent non ouvrés.</p>
+      en durée standard — même si la personne a badgé. Un arrêt maladie ou un congé approuvé le même jour l'emporte ; les jours non ouvrés restent non ouvrés.</p>
     {% if not m.mission_table %}
     <input type="hidden" name="mission_ref" value="{{ m.mission_ref or 'matricule' }}">
     <input type="hidden" name="mission_state_values" value="{{ m.mission_state_values }}">

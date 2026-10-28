@@ -77,7 +77,7 @@ employé / responsable peuvent contenir la clé employé, le matricule ou l'iden
 
 - P1 = premier pointage, P2 = dernier pointage (les pointages intermédiaires sont ignorés).
 - **En retard** si P1 ≥ seuil de retard (7h45 compris), sinon **à l'heure**.
-- **Durée validée** = (MIN(P2, fin de journée) − début validé) − pause déduite, où début validé = début de
+- **Durée standard** = (MIN(P2, fin de journée) − début validé) − pause déduite, où début validé = début de
   journée (7h30) si P1 < seuil de retard, sinon P1.
 - **Durée effective** = (P2 − P1) − pause déduite.
 - La pause (1h30 par défaut) n'est déduite que si la présence couvre la plage de pause (P1 < début de pause et
@@ -106,7 +106,7 @@ statuts), colonne « Responsable », tri par colonne, filtres conservés dans l'
 
 **Horaires postés** (*Administration → Horaires postés*) : pour les agents en équipes (3×8, 2×12…), le planning
 Excel (ex. « PLANNING ATF » : légende des codes, ligne `MATRICULE`, une ligne par jour) est importé tel quel.
-Les jours planifiés remplacent l'horaire de bureau : retard et durée validée calculés sur le poste du jour
+Les jours planifiés remplacent l'horaire de bureau : retard et durée standard calculés sur le poste du jour
 (P1 06h–14h, 1806 18h–06h…), poste de nuit compté le jour où il commence (départ du lendemain rattaché, marge
 réglable « marge avant/après un poste »), repos `P4` → « Repos (planning) », congé `P11` → « Congé Annuel »,
 formation → « Formation », absence possible un week-end planifié. Tables PostgreSQL `pointage_postes`
@@ -127,15 +127,20 @@ seul e-mail qui regroupe ses demandes (employé, période, état, étape, jours 
 - Dans le suivi journalier, les absences couvertes par une demande non validée portent la mention
   « ⏳ Congé … en attente de validation (état) ».
 
-**Maternité et allaitement** (*Administration → Maternité et allaitement*, rôles RH et admin) : périodes saisies
-par employée (matricule, du, au).
+**Maternité et allaitement** : périodes par employée (matricule, du, au).
+- *Demande par l'employée* (*Suivi → Maternité et allaitement*, compte rattaché à son matricule) : congé de maternité
+  ou période d'allaitement (heures par jour au choix), certificat facultatif. La demande suit le **circuit de
+  validation paramétré** dans *Ressources humaines → Maternité : périodes et circuit* (mêmes étapes que les arrêts
+  maladie : responsable N+1, agent RH habilité, utilisateur désigné ; aucune étape = validée d'office), avec
+  notifications par e-mail facultatives. Elle ne s'applique au suivi qu'une fois validée ; annulée par les RH, la
+  période est retirée. Une saisie par un agent RH (ou dans la page RH) est validée d'office.
 - *Congé de maternité* : statut « Congé maternité » chaque jour attendu de la période, même si l'employée badge ;
   durée attribuée par jour paramétrable (*Paramètres horaires*, 8h par défaut). Compté comme un congé dans les
   rapports (ni absence, ni journée disponible).
 - *Période d'allaitement* : les heures d'allaitement (1 h, 2 h ou 3 h ; paramètre « Heures d'allaitement par jour »,
   1 h par défaut, ou valeur choisie pour la période) peuvent être prises en début ou en fin de journée. La durée
   validée part du **temps réellement travaillé** (du premier au dernier pointage, pause déduite) complété par les
-  heures d'allaitement jusqu'à l'objectif : 7h travaillées + 1 h → 8h validées ; 6h + 1 h → 7h ; jamais au-delà de
+  heures d'allaitement jusqu'à l'objectif : 7h travaillées + 1 h → 8h standard ; 6h + 1 h → 7h ; jamais au-delà de
   l'objectif ni moins que la durée travaillée. Le seuil de retard est décalé des heures d'allaitement (7h45 + 1 h →
   retard à partir de 8h45). Une journée sans pointage reste une absence. La durée effective reste la durée réelle ;
   le suivi affiche la mention « Allaitement » (colonne dans l'export).
@@ -148,7 +153,7 @@ exclure les agents postés des indicateurs et des tableaux.
 synchronisée), reliée aux employés par matricule ou par **adresse e-mail** (colonne « contact » Smartsheet) ;
 plusieurs colonnes « date aller » / « date retour » possibles (du premier aller au dernier retour) ; un jour ouvré ou
 un poste planifié couvert par une mission approuvée devient « En mission », avec la
-« durée attribuée par jour de mission » (8h par défaut) en durée validée. Congé et arrêt maladie l'emportent.
+« durée attribuée par jour de mission » (8h par défaut) en durée standard. Congé et arrêt maladie l'emportent.
 
 **Résumés par mail** (*Administration → Résumés par mail*) : chaque responsable abonné reçoit le point de la veille
 (quotidien) et/ou de la semaine passée (hebdomadaire) sur son équipe N-1 (ou toute sa hiérarchie) : taux de présence
@@ -181,9 +186,11 @@ sont plus synchronisés depuis le délai choisi (garde-fou). Même serveur SMTP 
 mails de badge. La page montre la situation du jour (qui recevrait quel message, à quelle heure), un aperçu, un essai
 et le journal des envois.
 
-**Durée validée masquable** (*Administration → Paramètres horaires → Affichage du suivi journalier*) : visible pour
-tous, seulement pour les RH et les administrateurs, ou masquée pour tous (écran du suivi et export Excel). Quand elle
-est visible, chacun peut aussi la masquer pour lui-même (« Masquer la durée validée » dans le suivi).
+**Durée standard** (anciennement « durée validée ») : réservée aux **RH et aux administrateurs** — suivi, rapports
+(heures standard, moyenne par jour au bureau) et exports Excel/PDF ; les managers et lecteurs ne la voient pas.
+*Administration → Paramètres horaires → Affichage du suivi journalier* permet aussi de la masquer pour tous ; quand
+elle est visible, chacun peut la masquer pour lui-même (« Masquer la durée standard » dans le suivi). Dans le suivi et
+ses exports, la colonne **Statut** est placée entre le premier et le dernier pointage.
 
 **Arrêts maladie** (*Arrêts maladie*, *Administration → Circuit arrêts maladie*) : déclaration par l'employé avec
 justificatif, circuit de validation paramétrable, saisie RH validée d'office. **Notifications par e-mail**

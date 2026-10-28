@@ -51,12 +51,15 @@
     {# Groupes repliables (état mémorisé dans le navigateur) ; celui de la page affichée est toujours ouvert. #}
     {% macro group(key, label, active) %}<details class="nav-sec" data-nav-key="{{ key }}" open {% if active %}data-active{% endif %}>
       <summary class="nav-group">{{ label }}<span class="nav-caret" aria-hidden="true">▾</span></summary>{{ caller() }}</details>{% endmacro %}
-    {% call group('suivi', 'Suivi', path.startswith(('/suivi', '/rapports', '/arrets'))) %}
+    {% call group('suivi', 'Suivi', path.startswith(('/suivi', '/rapports', '/arrets', '/maternite'))) %}
     {{ nav('/suivi', 'clock', 'Suivi journalier', path.startswith('/suivi')) }}
     {{ nav('/rapports', 'chart', 'Rapports', path.startswith('/rapports')) }}
     {% set sick_n = sick_pending_count(user, role) %}
     <a href="/arrets" class="{{ 'active' if path.startswith('/arrets') }}" {% if path.startswith('/arrets') %}aria-current="page"{% endif %}>
       <svg class="ico"><use href="#i-sick"/></svg><span>Arrêts maladie</span>{% if sick_n %}<span class="nav-badge" title="{{ sick_n }} arrêt(s) à valider">{{ sick_n }}</span>{% endif %}</a>
+    {% set mat_n = maternity_pending_count(user, role) %}
+    <a href="/maternite" class="{{ 'active' if path.startswith('/maternite') }}" {% if path.startswith('/maternite') %}aria-current="page"{% endif %}>
+      <svg class="ico"><use href="#i-user"/></svg><span>Maternité et allaitement</span>{% if mat_n %}<span class="nav-badge" title="{{ mat_n }} demande(s) à valider">{{ mat_n }}</span>{% endif %}</a>
     {% endcall %}
     {% if can(role, 'manager') %}
     {% call group('sync', 'Synchronisation', path == '/' or path.startswith(('/jobs', '/runs', '/logs', '/data', '/connections'))) %}
@@ -75,7 +78,7 @@
     {{ nav('/admin/parametres', 'sliders', 'Paramètres horaires', path.startswith('/admin/parametres')) }}
     {{ nav('/admin/terrain', 'pin', 'Agents terrain', path.startswith('/admin/terrain')) }}
     {{ nav('/admin/planning', 'cal', 'Horaires postés', path.startswith('/admin/planning')) }}
-    {{ nav('/admin/maternite', 'user', 'Maternité et allaitement', path.startswith('/admin/maternite')) }}
+    {{ nav('/admin/maternite', 'user', 'Maternité : périodes et circuit', path.startswith('/admin/maternite')) }}
     {{ nav('/admin/arrets', 'sick', 'Circuit arrêts maladie', path.startswith('/admin/arrets')) }}
     {{ nav('/admin/verifier', 'user', 'Vérifier un employé', path.startswith('/admin/verifier')) }}
     {% endcall %}

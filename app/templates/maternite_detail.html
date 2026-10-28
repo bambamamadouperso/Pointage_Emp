@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}{{ kinds[req.kind] }} · {{ req.name }}{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><h1>{{ kinds[req.kind] }} · {{ req.name }}
+      <span class="badge {{ {'valide': 'ok', 'refuse': 'err', 'annule': '', 'en_attente': 'warn'}[req.status] }}">{{ req.status_label }}</span></h1>
+    <p class="muted">Matricule {{ req.matricule }} · du {{ req.start_date | jour_fr }} au {{ req.end_date | jour_fr }}
+      · {{ req.days }} jour(s) dont {{ working_days }} du lundi au vendredi{% if hours_label %} · {{ hours_label }}{% endif %}</p></div>
+  <a href="/maternite" class="muted">← Maternité et allaitement</a>
+</div>
+
+<div class="sick-grid">
+  <section class="card">
+    <h2>Circuit de validation</h2>
+    {% if req.source == 'rh' %}
+      <p class="muted small">Saisie par un agent RH habilité ({{ req.created_by }}) : validée d'office.</p>
+    {% elif not timeline %}
+      <p class="muted small">Aucune étape n'était paramétrée : validée dès la demande.</p>
+    {% else %}
+    <ol class="steps">
+      <li class="done"><span class="step-dot"></span><div><strong>Demande</strong><span class="muted small">par {{ req.created_by }} · {{ req.created_at | dt }}</span></div></li>
+      {% for st in timeline %}
+      <li class="{{ {'faite': 'done', 'en_cours': 'current', 'refusee': 'refused', 'a_venir': 'todo'}[st.state] }}">
+        <span class="step-dot"></span><div><strong>{{ st.label }}</strong>
+          <span class="muted small">{{ {'faite': 'Validé', 'en_cours': 'En attente', 'refusee': 'Refusé', 'a_venir': 'À venir'}[st.state] }}</span></div></li>
+      {% endfor %}
+    </ol>
+    {% endif %}
+    {% if req.status == 'valide' %}<p class="small"><span class="badge ok">Appliquée au suivi</span>
+      {{ 'Les jours attendus de la période passent en « Congé maternité ».' if req.kind == 'maternite' else "Les heures d'allaitement complètent la durée travaillée jusqu'à l'objectif." }}</p>{% endif %}
+
+    {% if can_act %}
+    <form method="post" action="/maternite/{{ req.id }}/decision" class="form decision">
+      <label>Commentaire <span class="muted small">(obligatoire en cas de refus)</span><textarea name="commentaire" rows="2" class="plain"></textarea></label>
+      <div class="form-actions">
+        <button class="btn primary" name="decision" value="valider">Valider</button>
+        <button class="btn danger" name="decision" value="refuser" data-confirm="Refuser cette demande ?">Refuser</button>
+      </div>
+    </form>
+    {% endif %}
+  </section>
+
+  <section class="card">
+    <h2>Certificat</h2>
+    {% if req.file_path %}
+      <p><a class="btn" href="/maternite/{{ req.id }}/certificat" target="_blank" rel="noopener">Ouvrir « {{ req.file_name }} »</a></p>
+      {% if req.file_type.startswith('image/') %}<img class="attachment-preview" src="/maternite/{{ req.id }}/certificat" alt="Certificat joint à la demande">{% endif %}
+    {% else %}<p class="empty">Aucun certificat joint.</p>{% endif %}
+    {% if req.comment %}<h3>Commentaire de la demande</h3><p>{{ req.comment }}</p>{% endif %}
+    {% if can_cancel %}
+    <details class="cancel-box"><summary class="btn small ghost">Annuler la demande…</summary>
+      <form method="post" action="/maternite/{{ req.id }}/annuler" class="form" data-confirm="Annuler cette demande ?{{ ' La période ne s’appliquera plus au suivi.' if req.status == 'valide' }}">
+        <label>Motif <textarea name="commentaire" rows="2" class="plain"></textarea></label>
+        <button class="btn small danger">Confirmer l'annulation</button>
+      </form></details>
+    {% endif %}
+  </section>
+</div>
+
+<section class="card">
+  <h2>Historique</h2>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Date</th><th>Par</th><th>Action</th><th>Étape</th><th>Commentaire</th></tr></thead>
+    <tbody>{% for h in history %}
+      <tr><td class="small nowrap">{{ h.at | dt }}</td><td>{{ h.actor }}</td><td>{{ actions.get(h.action, h.action) }}</td>
+        <td class="small">{{ h.step_label or '—' }}</td><td class="small">{{ h.comment or '—' }}</td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+</section>
+{% endblock %}

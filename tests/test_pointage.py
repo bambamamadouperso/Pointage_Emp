@@ -221,9 +221,11 @@ def test_screen_filters_detail_and_export(configured, logged_client):
     xlsx = logged_client.get(f"/suivi/export.xlsx?date={MON.isoformat()}&statut=RETARD&statut=ABSENT")
     assert xlsx.status_code == 200
     ws = load_workbook(io.BytesIO(xlsx.content))["Suivi journalier"]
-    statuts = {ws.cell(r, 10).value for r in range(2, ws.max_row + 1) if ws.cell(r, 1).value not in (None, "Moyenne")}
+    statuts = {ws.cell(r, 8).value for r in range(2, ws.max_row + 1) if ws.cell(r, 1).value not in (None, "Moyenne")}
     assert statuts == {"En retard", "Absent"}
-    assert ws.cell(1, 11).value == "Durée validée"
+    # Statut entre le premier et le dernier pointage, comme à l'écran.
+    assert [ws.cell(1, c).value for c in (7, 8, 9)] == ["1er pointage", "Statut", "Dernier pointage"]
+    assert ws.cell(1, 11).value == "Durée standard"
 
 
 def test_roles_and_audit(configured, client):
@@ -354,7 +356,7 @@ def test_admin_users_and_params_pages(configured, logged_client):
 def test_diagnostics(configured, pg):
     with SessionLocal() as db:
         m = pointage.Mapping.from_json(db.query(PointageConfig).one().data)
-    d = pointage.diagnostics(pg, m)
+    d = pointage.diagnostics(pg, m, days=(date.today() - date(2026, 8, 28)).days)  # fenêtre couvrant les données de test
     assert (d["total"], d["actifs"], d["inactifs"]) == (7, 6, 1)
     assert d["hors_liste"] == 1 and d["sans_pointage"] == 1  # badge 99 ; Ba Khady n'a jamais pointé
     assert d["dernier_pointage"] == datetime(2026, 9, 26, 12, 0)
@@ -525,7 +527,7 @@ def test_check_employee_tool(configured, logged_client):
 
 
 def test_field_agents_never_absent_nor_late(configured, pg, logged_client):
-    """Agents terrain (service entier ou employé) : « Sur le terrain », durée validée minimale, jamais absent/retard."""
+    """Agents terrain (service entier ou employé) : « Sur le terrain », durée standard minimale, jamais absent/retard."""
     page = logged_client.get("/admin/terrain").text
     assert "Aucun agent terrain" in page and "Production" in page
     r = logged_client.post("/admin/terrain", data={"type": "employe", "matricule": "E002", "libelle": "Commercial"},
@@ -604,19 +606,19 @@ def _pdf_text(content: bytes) -> str:
 
 
 def test_pdf_exports(configured, logged_client):
-    """Exports PDF du suivi et des rapports : mêmes filtres que l'écran, durée validée masquable."""
+    """Exports PDF du suivi et des rapports : mêmes filtres que l'écran, durée standard masquable."""
     r = logged_client.get(f"/suivi/export.pdf?date={MON.isoformat()}&statut=RETARD&statut=ABSENT")
     assert r.status_code == 200 and r.headers["content-type"] == "application/pdf"
     assert f'suivi_{MON:%Y%m%d}.pdf' in r.headers["content-disposition"]
     body = _pdf_text(r.content)
     assert "Suivi journalier des pointages" in body and "Moyenne" in body and "En retard" in body
-    assert "(En retard, Absent) Tj" in body and "(VALIDÉE) Tj" in body and "Ba Khady" in body
+    assert "(En retard, Absent) Tj" in body and "(STANDARD) Tj" in body and "Ba Khady" in body
     assert "E001" not in body  # à l'heure : exclu par le filtre des statuts
     assert "Export PDF" in logged_client.get(f"/suivi?date={MON.isoformat()}").text
     try:
         assert logged_client.get("/suivi/affichage?validee=0", follow_redirects=False).status_code in (302, 303)
         hidden = _pdf_text(logged_client.get(f"/suivi/export.pdf?date={MON.isoformat()}").content)
-        assert "(VALIDÉE) Tj" not in hidden and "(EFFECTIVE) Tj" in hidden
+        assert "(STANDARD) Tj" not in hidden and "(EFFECTIVE) Tj" in hidden
     finally:
         logged_client.get("/suivi/affichage?validee=1", follow_redirects=False)
 
@@ -847,7 +849,7 @@ def test_field_agents_excel_import(configured, pg, logged_client):
 
 
 def test_average_punches_and_duration_colours(configured, logged_client):
-    """Moyennes du 1er et du dernier pointage ; durée validée en vert (objectif atteint) ou rouge ; export."""
+    """Moyennes du 1er et du dernier pointage ; durée standard en vert (objectif atteint) ou rouge ; export."""
     import io
 
     from openpyxl import load_workbook
@@ -875,7 +877,7 @@ def test_average_punches_and_duration_colours(configured, logged_client):
     cells = page.split("<tbody>")[1].split("</tbody>")[0]
     assert cells.count('class="dur dur-ok"') == 2  # validée 7h30 et effective 8h20 d'Awa
     last = [c.value for c in ws[ws.max_row]]
-    assert last[0] == "Moyenne" and last[6].strftime("%H:%M") == "07:42" and last[7].strftime("%H:%M") == "15:26"
+    assert last[0] == "Moyenne" and last[6].strftime("%H:%M") == "07:42" and last[8].strftime("%H:%M") == "15:26"
     logged_client.post("/admin/parametres", data={**values, "objectif_duree": "08:00",
                        "jours_ouvres": ["1", "2", "3", "4", "5"], "date_effet": MON.isoformat()})
 
@@ -1328,8 +1330,8 @@ def test_manager_digests(configured, pg, logged_client, monkeypatch):
     subject, body, text_version = digests.render(week, "Diallo Awa")
     assert subject.startswith("Bilan hebdomadaire des pointages de votre équipe — semaine du 21 septembre au 27")
     assert "Détail par collaborateur" in body
-    # Moyennes par jour de présence au bureau : durée validée et durée effective de chacun.
-    assert "Moy. validée / jour" in body and "Moy. effective / jour" in body
+    # Moyennes par jour de présence au bureau : durée standard et durée effective de chacun.
+    assert "Moy. standard / jour" in body and "Moy. effective / jour" in body
     ndiaye = next(e for e in week["employes"] if e["matricule"] == "E002")
     days = [r for r in rows(pg, MON, date(2026, 9, 27)).values()
             if r.matricule == "E002" and r.statut in ("A_L_HEURE", "RETARD")]
@@ -2006,7 +2008,7 @@ def test_punch_reminders(configured, pg, logged_client, monkeypatch):
 
 
 def test_hide_validated_duration(configured, logged_client):
-    """Durée validée du suivi : règle d'affichage (tous / RH et admin / personne) et choix personnel, écran et export."""
+    """Durée standard du suivi : règle d'affichage (RH et admin / personne) et choix personnel, écran et export."""
     from fastapi.testclient import TestClient
     from openpyxl import load_workbook
 
@@ -2015,17 +2017,17 @@ def test_hide_validated_duration(configured, logged_client):
 
     url = f"/suivi?date={MON.isoformat()}"
     page = logged_client.get(url).text
-    assert "Durée validée" in page and "Masquer la durée validée" in page
+    assert "Durée standard" in page and "Masquer la durée standard" in page
     # Choix personnel : masquée à l'écran et dans l'export, puis réaffichée.
     logged_client.get("/suivi/affichage?validee=0", headers={"referer": f"http://testserver{url}"})
     page = logged_client.get(url).text
-    assert "Durée validée" not in page and "Afficher la durée validée" in page and "Durée effective moyenne" in page
+    assert "Durée standard" not in page and "Afficher la durée standard" in page and "Durée effective moyenne" in page
     ws = load_workbook(io.BytesIO(logged_client.get(f"/suivi/export.xlsx?date={MON.isoformat()}").content))["Suivi journalier"]
     headers = [c.value for c in ws[1]]
-    assert "Durée validée" not in headers and "Durée validée (min)" not in headers
+    assert "Durée standard" not in headers and "Durée standard (min)" not in headers
     assert headers[10:12] == ["Durée effective", "Durée effective (min)"] and headers[12] == "Responsable"
     logged_client.get("/suivi/affichage?validee=1")
-    assert "Durée validée" in logged_client.get(url).text
+    assert "Durée standard" in logged_client.get(url).text
 
     # Règle « RH et administrateurs » : un lecteur ne la voit plus (ni bouton pour la réafficher), l'admin si.
     r = logged_client.post("/admin/parametres/affichage", data={"validee_display": "rh"}, follow_redirects=True)
@@ -2038,15 +2040,27 @@ def test_hide_validated_duration(configured, logged_client):
         client = TestClient(app)
         client.post("/login", data={"username": "lect_vd", "password": "motdepasse7"})
         page = client.get(url).text
-        assert "Durée validée" not in page and "Afficher la durée validée" not in page
+        assert "Durée standard" not in page and "Afficher la durée standard" not in page
         ws = load_workbook(io.BytesIO(client.get(f"/suivi/export.xlsx?date={MON.isoformat()}").content))["Suivi journalier"]
-        assert "Durée validée" not in [c.value for c in ws[1]]
-        assert "Durée validée" in logged_client.get(url).text
+        assert "Durée standard" not in [c.value for c in ws[1]]
+        assert "Durée standard" in logged_client.get(url).text
+        # Rapports : heures standard réservées aux RH et aux administrateurs (écran, Excel, PDF, tri).
+        q = f"p=perso&du={MON.isoformat()}&au={TUE.isoformat()}"
+        assert "Heures standard" not in client.get("/rapports?" + q + "&tri=heures").text
+        assert "Heures standard" in logged_client.get("/rapports?" + q).text
+        wb = load_workbook(io.BytesIO(client.get("/rapports/export.xlsx?" + q).content))
+        assert not {"Heures standard", "Moyenne heures / jour au bureau"} & {c.value for c in wb["Employés"][1]}
+        assert "Heures standard" in [c.value for c in load_workbook(io.BytesIO(
+            logged_client.get("/rapports/export.xlsx?" + q).content))["Employés"][1]]
+        assert "(STANDARD) Tj" not in _pdf_text(client.get("/rapports/export.pdf?" + q).content)
+        # L'ancien réglage « visible pour tous » n'existe plus : retour à « RH et administrateurs ».
+        logged_client.post("/admin/parametres/affichage", data={"validee_display": "tous"})
+        assert "Durée standard" not in client.get(url).text
         # Règle « masquée pour tous » : l'administrateur ne la voit plus non plus.
         logged_client.post("/admin/parametres/affichage", data={"validee_display": "aucun"})
-        assert "Durée validée" not in logged_client.get(url).text
+        assert "Durée standard" not in logged_client.get(url).text
     finally:
-        logged_client.post("/admin/parametres/affichage", data={"validee_display": "tous"})
+        logged_client.post("/admin/parametres/affichage", data={"validee_display": "rh"})
         with SessionLocal() as db:
             db.query(User).filter_by(username="lect_vd").delete()
             db.commit()
@@ -2171,6 +2185,122 @@ def test_maternity_leave_and_breastfeeding(configured, pg, logged_client):
             c.execute(text(f"DELETE FROM {SCHEMA}.pointage_maternite"))
 
 
+def test_maternity_requests_workflow(configured, pg, logged_client):
+    """Demandes de maternité et d'allaitement faites par l'employée : circuit paramétré (N+1 puis RH), effet sur le
+    suivi seulement une fois validée, chevauchement, refus motivé, annulation (RH), saisie RH validée d'office,
+    suppression de la période par les RH → demande annulée."""
+    from datetime import timedelta as td
+
+    from fastapi.testclient import TestClient
+
+    from app import maternite
+    from app.main import app
+    from app.models import MaternityRequest, MaternityRequestAction, MaternitySettings, User
+
+    def allaitement(mat="E003", day=MON):
+        with pg.connect() as c:
+            return c.execute(text(f"SELECT allaitement FROM {SCHEMA}.f_pointage_journalier(:d, :d) WHERE matricule = :m"),
+                             {"d": day, "m": mat}).scalar()
+
+    for data in ({"username": "mat_fatou", "role": "lecteur", "emp_matricule": "E003"},
+                 {"username": "mat_awa", "role": "manager", "emp_matricule": "E001"},
+                 {"username": "mat_rh", "role": "lecteur", "sick_leave_hr": "true"},
+                 {"username": "mat_moussa", "role": "lecteur", "emp_matricule": "E002"}):
+        r = logged_client.post("/admin/users/save", data={**data, "password": "motdepasse1"}, follow_redirects=True)
+        assert "enregistré" in r.text, r.text[:500]
+
+    def client(name):
+        c = TestClient(app)
+        c.post("/login", data={"username": name, "password": "motdepasse1"})
+        return c
+
+    try:
+        # Circuit défini dans les paramètres (Ressources humaines → Maternité : périodes et circuit).
+        r = logged_client.post("/admin/maternite/circuit", data={"type": ["responsable", "rh"], "user": ["", ""]},
+                               follow_redirects=True)
+        assert "Circuit enregistré : Responsable N+1 de l&#39;employé → Agent RH habilité" in r.text
+        fatou, awa, rh, moussa = client("mat_fatou"), client("mat_awa"), client("mat_rh"), client("mat_moussa")
+        page = fatou.get("/maternite").text
+        assert "Faire une demande" in page and "Responsable N+1 de l&#39;employé → Agent RH habilité" in page
+
+        # Demande d'allaitement (2 h) : pour elle-même uniquement, sans effet tant qu'elle n'est pas validée.
+        r = fatou.post("/maternite", data={"type": "allaitement", "du": MON.isoformat(), "au": MON.isoformat(),
+                                           "heures": "02:00", "matricule": "E005"}, follow_redirects=True)
+        assert "transmise pour validation" in r.text and "Sow Fatou" in r.text
+        with SessionLocal() as db:
+            req = db.query(MaternityRequest).one()
+            assert (req.matricule, req.manager_matricule, req.status, req.hours) == ("E003", "E001", "en_attente", "02:00")
+            rid = req.id
+        assert allaitement() is None
+        assert "Valider" not in fatou.get(f"/maternite/{rid}").text  # pas de validation de sa propre demande
+        assert "Sow Fatou" not in moussa.get("/maternite").text  # ni visible d'un autre employé
+        assert moussa.get(f"/maternite/{rid}", follow_redirects=True).text.count("Demande introuvable") == 1
+
+        # Étape 1 : le responsable N+1 ; étape 2 : les RH → période appliquée au suivi.
+        page = awa.get("/maternite").text
+        assert "À valider" in page and 'title="1 demande(s) à valider"' in page
+        assert "passe à l&#39;étape suivante" in awa.post(f"/maternite/{rid}/decision", data={"decision": "valider"},
+                                                           follow_redirects=True).text
+        assert allaitement() is None
+        r = rh.post(f"/maternite/{rid}/decision", data={"decision": "valider", "commentaire": "OK"}, follow_redirects=True)
+        assert "Demande validée" in r.text and "Appliquée au suivi" in r.text
+        assert allaitement() == td(hours=2)
+        with SessionLocal() as db:
+            pg_id = db.get(MaternityRequest, rid).pg_id
+        assert pg_id and f"Demande n°{rid}" in logged_client.get("/admin/maternite").text
+
+        # Chevauchement ; demande de congé de maternité avec certificat, refus motivé obligatoire.
+        r = fatou.post("/maternite", data={"type": "allaitement", "du": MON.isoformat(), "au": TUE.isoformat()},
+                       follow_redirects=True)
+        assert "couvre déjà" in r.text
+        r = fatou.post("/maternite", data={"type": "maternite", "du": "2026-10-05", "au": "2026-12-31"},
+                       files={"certificat": ("certificat.png", b"\x89PNG....")}, follow_redirects=True)
+        assert "transmise pour validation" in r.text
+        with SessionLocal() as db:
+            second = db.query(MaternityRequest).filter(MaternityRequest.id != rid).one().id
+        assert fatou.get(f"/maternite/{second}/certificat").content == b"\x89PNG...."
+        assert moussa.get(f"/maternite/{second}/certificat").status_code == 404
+        assert "motif du refus" in awa.post(f"/maternite/{second}/decision", data={"decision": "refuser"},
+                                             follow_redirects=True).text
+        r = awa.post(f"/maternite/{second}/decision", data={"decision": "refuser", "commentaire": "Dates à revoir"},
+                     follow_redirects=True)
+        assert "Demande refusée" in r.text
+        with SessionLocal() as db:
+            assert db.get(MaternityRequest, second).status == "refuse"
+            subject, _, text_body = maternite.build_notification(db.get(MaternityRequest, second), "refuse", "http://p", "",
+                                                                 "Dates à revoir")
+        assert subject.startswith("Congé de maternité refusé(e)") and "Dates à revoir" in text_body
+
+        # Annulation d'une demande validée : réservée aux RH, la période est retirée du suivi.
+        assert "que par les RH" in fatou.post(f"/maternite/{rid}/annuler", follow_redirects=True).text
+        assert "Demande annulée" in rh.post(f"/maternite/{rid}/annuler", data={"commentaire": "erreur"},
+                                            follow_redirects=True).text
+        assert allaitement() is None
+
+        # Saisie par un agent RH : validée d'office ; suppression de la période par les RH → demande annulée.
+        r = rh.post("/maternite", data={"type": "allaitement", "du": MON.isoformat(), "au": MON.isoformat(),
+                                        "matricule": "E007"}, follow_redirects=True)
+        assert "enregistré(e) et validé(e)" in r.text and allaitement("E007") == td(hours=1)
+        with SessionLocal() as db:
+            third = db.query(MaternityRequest).filter(MaternityRequest.matricule == "E007").one()
+            assert (third.status, third.source) == ("valide", "rh")
+            third_id, third_pg = third.id, third.pg_id
+        r = logged_client.post(f"/admin/maternite/{third_pg}/delete", follow_redirects=True)
+        assert f"La demande n°{third_id} d&#39;origine est annulée" in r.text
+        with SessionLocal() as db:
+            assert db.get(MaternityRequest, third_id).status == "annule"
+        assert allaitement("E007") is None
+    finally:
+        with pg.begin() as c:
+            c.execute(text(f"DELETE FROM {SCHEMA}.pointage_maternite"))
+        with SessionLocal() as db:
+            db.query(MaternityRequestAction).delete()
+            db.query(MaternityRequest).delete()
+            db.query(MaternitySettings).delete()
+            db.query(User).filter(User.username.in_(["mat_fatou", "mat_awa", "mat_rh", "mat_moussa"])).delete()
+            db.commit()
+
+
 def before_absences(rows) -> int:
     return sum(1 for r in rows.values() if r.statut == "ABSENT")
 
@@ -2273,6 +2403,7 @@ def test_pending_leave_reminders(configured, pg, logged_client, monkeypatch):
             db.commit()
 
         # Administration : situation par validateur, aperçu ; suivi : absence signalée « en attente de validation ».
+        monkeypatch.setattr(validations, "local_now", lambda: TUE9)  # « aujourd'hui » = date des données de test
         page = logged_client.get("/admin/validations").text
         assert "Demandes en attente" in page and "matricule introuvable" in page and "ProchainvalidateurMatricule" in page
         assert "Demandes à valider" in logged_client.get("/admin/validations/apercu?validateur=E001").text
@@ -2332,16 +2463,16 @@ def test_default_staff_categories(configured, pg, logged_client):
         # Réglage : plus aucun statut par défaut → tout le personnel.
         page = logged_client.get("/admin/parametres").text
         assert "Statuts du personnel cochés par défaut" in page and 'value="Stagiaire" >' in page.replace("  ", " ")
-        r = logged_client.post("/admin/parametres/affichage", data={"validee_display": "tous", "categories_form": "1"},
+        r = logged_client.post("/admin/parametres/affichage", data={"validee_display": "rh", "categories_form": "1"},
                                follow_redirects=True)
         assert "statuts du personnel par défaut : tous" in r.text
         assert "E007</td>" in logged_client.get(url).text
-        logged_client.post("/admin/parametres/affichage", data={"validee_display": "tous", "categories_form": "1",
+        logged_client.post("/admin/parametres/affichage", data={"validee_display": "rh", "categories_form": "1",
                                                                  "default_categories": ["Stagiaire"]})
         page = logged_client.get(url).text
         assert "E007</td>" in page and "E001</td>" not in page
     finally:
-        logged_client.post("/admin/parametres/affichage", data={"validee_display": "tous", "categories_form": "1",
+        logged_client.post("/admin/parametres/affichage", data={"validee_display": "rh", "categories_form": "1",
                                                                  "default_categories": ["Cadre", "Non cadre"]})
         with pg.begin() as c:
             c.execute(text(f'UPDATE {SCHEMA}."Personnel" SET "IDStatut" = 2 WHERE "IDPersonnel" = 107'))

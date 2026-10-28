@@ -4,7 +4,7 @@
 <div class="page-head">
   <div><h1>Maternité et allaitement</h1>
     <p class="muted">Congés de maternité et périodes d'allaitement des employées : statut « Congé maternité » pendant le congé,
-      heures d'allaitement prises en compte dans la durée validée pendant l'allaitement.</p></div>
+      heures d'allaitement prises en compte dans la durée standard pendant l'allaitement.</p></div>
   <a href="/admin" class="muted">← {{ 'Administration' if can(role, 'admin') else 'Ressources humaines' }}</a>
 </div>
 {% if mapping is none %}
@@ -18,15 +18,15 @@
   <h2>Règles appliquées</h2>
   <ul class="rule-list">
     <li><span class="badge st-mater">Congé maternité</span> chaque jour attendu de la période (jour ouvré ou poste planifié), même si
-      l'employée badge : ni absence ni retard. Durée validée : <strong>{{ params.get('duree_maternite', '08:00') | replace(':', 'h') }}</strong>
+      l'employée badge : ni absence ni retard. Durée standard : <strong>{{ params.get('duree_maternite', '08:00') | replace(':', 'h') }}</strong>
       par jour (<a href="/admin/parametres">Paramètres horaires</a> → « Durée attribuée par jour de congé de maternité »).</li>
     <li><span class="badge st-ok">Allaitement</span> pendant la période d'allaitement, les heures d'allaitement
       (<strong>{{ h_def_label }}</strong> par défaut, ou celles choisies pour la période : 1 h, 2 h ou 3 h) peuvent être prises
       en début ou en fin de journée :
       <ul>
-        <li><strong>Durée validée</strong> : on part du <strong>temps réellement travaillé</strong> (du premier au dernier pointage,
+        <li><strong>Durée standard</strong> : on part du <strong>temps réellement travaillé</strong> (du premier au dernier pointage,
           pause déduite) et on y ajoute les heures d'allaitement, jusqu'à l'objectif de <strong>{{ objectif | replace(':', 'h') }}</strong> :
-          7h travaillées + 1h → <strong>8h validées</strong> ; 6h + 1h → 7h ; 6h + 2h → 8h ;
+          7h travaillées + 1h → <strong>8h standard</strong> ; 6h + 1h → 7h ; 6h + 2h → 8h ;
           jamais au-delà de l'objectif, jamais moins que la durée travaillée (8h30 → 8h30).</li>
         <li><strong>Retard</strong> : le seuil de retard est décalé des heures d'allaitement (ex. seuil 7h45 + 1h → retard à partir de 8h45) ;
           les minutes de retard sont comptées à partir de ce seuil décalé. Un départ avancé est couvert par la règle de durée ci-dessus.</li>
@@ -36,8 +36,15 @@
   </ul>
 </section>
 
+{% if pending %}
+<div class="flash warn">{{ pending | length }} demande(s) d'employée(s) attendent votre validation :
+  <a href="/maternite">ouvrir les demandes</a>.</div>
+{% endif %}
+
 <section class="card">
   <h2>Enregistrer une période</h2>
+  <p class="muted small">Saisie par les RH : <strong>validée d'office</strong>. Les employées font elles-mêmes leur demande dans
+    <a href="/maternite">Suivi → Maternité et allaitement</a> ; elle suit le circuit de validation ci-dessous.</p>
   <form method="post" action="/admin/maternite" class="form maternity-form">
     <div class="row">
       <label class="grow">Employée (matricule)
@@ -60,7 +67,7 @@
   <h2>Périodes enregistrées</h2>
   {% if not entries %}<p class="empty">Aucune période enregistrée.</p>{% else %}
   <div class="table-wrap"><table>
-    <thead><tr><th>Employée</th><th>Type</th><th>Période</th><th>Heures / jour</th><th>Commentaire</th><th>Saisi par</th><th></th></tr></thead>
+    <thead><tr><th>Employée</th><th>Type</th><th>Période</th><th>Heures / jour</th><th>Commentaire</th><th>Saisi par</th><th>Origine</th><th></th></tr></thead>
     <tbody>{% for e in entries %}
       <tr><td><span class="mono small">{{ e.matricule }}</span> {{ e.nom or '(introuvable dans la liste des employés)' }}
           {% if e.service %}<br><span class="muted small">{{ e.service }}</span>{% endif %}</td>
@@ -71,12 +78,33 @@
         <td>{% if e.type == 'allaitement' %}{% if e.heures %}{{ (e.heures.total_seconds() // 3600) | int }} h{% else %}{{ h_def_label }} <span class="muted small">(par défaut)</span>{% endif %}{% else %}—{% endif %}</td>
         <td class="small">{{ e.commentaire or '—' }}</td>
         <td class="small muted">{{ e.auteur or '—' }}<br>{{ e.modifie_le.strftime('%d/%m/%Y') }}</td>
+        <td class="small">{% if from_requests.get(e.id) %}<a href="/maternite/{{ from_requests[e.id] }}">Demande n°{{ from_requests[e.id] }}</a>{% else %}<span class="muted">Saisie RH</span>{% endif %}</td>
         <td><form method="post" action="/admin/maternite/{{ e.id }}/delete" data-confirm="Supprimer cette période ({{ kinds[e.type] }} de {{ e.nom or e.matricule }}) ?">
           <button class="btn small danger">Supprimer</button></form></td></tr>
     {% endfor %}</tbody>
   </table></div>
   {% endif %}
 </section>
+
+<h2 class="section-title" id="circuit">Demandes des employées : circuit de validation</h2>
+{% set wf_action, wf_object = "/admin/maternite/circuit", "les demandes faites par les employées" %}
+{% include "_workflow_editor.html" %}
+
+<form method="post" action="/admin/maternite/notifications" class="card form" style="max-width:860px">
+  <h2>Notifications par e-mail</h2>
+  <label class="check"><input type="checkbox" name="notify" value="true" {{ 'checked' if notify }}>
+    <span><strong>Prévenir par e-mail</strong> les valideurs de l'étape en cours quand une demande leur revient, puis l'employée
+      (et l'auteur de la demande) quand elle est validée ou refusée.</span></label>
+  <ul class="rule-list small">
+    <li>Envoi avec le serveur SMTP des <a href="/admin/mails">Mails de badge</a> :
+      {% if mail.smtp_host and mail.from_email %}<strong>{{ mail.smtp_host }}</strong>, expéditeur {{ mail.from_email }}
+      {% else %}<span class="warn-text">serveur non configuré — aucun mail ne partira</span>{% endif %}.</li>
+    <li>Mode : {% if mail.mode == 'production' %}<span class="badge ok">Production</span>
+      {% else %}<span class="badge warn">Test</span> — tous les mails partent vers les adresses de test
+      ({{ mail.test_recipients or 'aucune adresse de test' }}).{% endif %}</li>
+  </ul>
+  <div class="form-actions"><button class="btn primary">Enregistrer</button></div>
+</form>
 {% endif %}
 {% endblock %}
 {% block scripts %}

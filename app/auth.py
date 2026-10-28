@@ -131,7 +131,7 @@ PUBLIC_PATHS = re.compile(r"^/(login|health|static/.*)$")
 RULES = [
     ("GET", re.compile(r"^/jobs/(new|\d+/edit|\d+/columns)$"), "admin"),
     ("*", re.compile(r"^/(suivi|rapports)(/.*)?$"), "lecteur"),
-    ("*", re.compile(r"^/arrets(/.*)?$"), "lecteur"),
+    ("*", re.compile(r"^/(arrets|maternite)(/.*)?$"), "lecteur"),
     ("*", re.compile(r"^/(compte|logout)$"), "lecteur"),
     # Réglages RH (pas la source des pointages, les mails de badge/SMTP, les utilisateurs ni l'audit).
     ("GET", re.compile(r"^/admin$"), "rh"),

@@ -15,13 +15,13 @@
   <div class="card-head"><div><h2>{{ title }}</h2><p class="muted small">Classés du plus fort au plus faible absentéisme.</p></div></div>
   <div class="table-wrap"><table class="report-table">
     <thead><tr><th>{{ first_col }}</th><th class="right">Employés</th><th>Présence</th><th>Absentéisme</th><th class="right">Ponctualité</th>
-      <th class="right">Retards</th><th class="right">Oublis de badge</th><th class="right">Moy. / jour au bureau</th></tr></thead>
+      <th class="right">Retards</th><th class="right">Oublis de badge</th>{% if std %}<th class="right" title="Durée standard moyenne par jour de présence au bureau">Moy. / jour au bureau</th>{% endif %}</tr></thead>
     <tbody>{% for s in rows %}
       <tr><td><a href="?{{ request.query_params | with_param(param, s.groupe) }}">{{ s.groupe }}</a></td><td class="right">{{ s.employes }}</td>
         <td class="nowrap"><span class="meter ok"><span style="width:{{ (s.taux_presence or 0) | round(1) }}%"></span></span> {{ pct(s.taux_presence) }}</td>
         <td class="nowrap"><span class="meter err"><span style="width:{{ ([(s.taux_absence or 0) * 3, 100] | min) | round(1) }}%"></span></span> {{ pct(s.taux_absence) }}</td>
         <td class="right">{{ pct(s.taux_ponctualite) }}</td><td class="right">{{ s.retards }}</td><td class="right">{{ s.incomplets }}</td>
-        <td class="right">{{ hhmm(timedelta(hours=s.heures_moy_bureau | float)) if s.heures_moy_bureau else '—' }}</td></tr>
+        {% if std %}<td class="right">{{ hhmm(timedelta(hours=s.heures_moy_bureau | float)) if s.heures_moy_bureau else '—' }}</td>{% endif %}</tr>
     {% endfor %}</tbody>
   </table></div>
 </section>
@@ -92,8 +92,8 @@
     <span class="hint">à l'heure / (à l'heure + retards) {{ delta(k.taux_ponctualite, prev.get('taux_ponctualite')) }}</span></div>
   <div class="stat c-late"><span class="label">Retards</span><span class="value">{{ k.retards | num }}</span>
     <span class="hint">{{ hhmm(timedelta(minutes=k.retard_min_total | float)) }} cumulées{% if k.retard_min_moyen %} · {{ k.retard_min_moyen | round | int }} min en moyenne{% endif %}</span></div>
-  <div class="stat c-teal"><span class="label">Heures validées</span><span class="value">{{ (k.heures_validees or 0) | round | int | num }} h</span>
-    <span class="hint">{% if k.heures_moy_bureau %}{{ hhmm(timedelta(hours=k.heures_moy_bureau | float)) }} par jour au bureau{% endif %}</span></div>
+  {% if std %}<div class="stat c-teal"><span class="label">Heures standard</span><span class="value">{{ (k.heures_validees or 0) | round | int | num }} h</span>
+    <span class="hint">{% if k.heures_moy_bureau %}{{ hhmm(timedelta(hours=k.heures_moy_bureau | float)) }} par jour au bureau{% endif %}</span></div>{% endif %}
   <div class="stat c-inc"><span class="label">Oublis de badge</span><span class="value">{{ k.incomplets | num }}</span>
     <span class="hint">journées avec un seul pointage</span></div>
 </section>
@@ -196,7 +196,7 @@
   <div class="table-wrap"><table class="report-table">
     <thead><tr><th>Matricule</th><th>Nom</th><th>Service</th>{% if categories %}<th>Statut</th>{% endif %}<th class="right">Présence</th><th class="right">Absences</th>
       <th class="right">Retards</th><th class="right">Retard cumulé</th><th class="right">Arrivée moy.</th><th class="right">Oublis</th>
-      <th class="right">Congé</th><th class="right">Télétr.</th><th class="right">Heures validées</th></tr></thead>
+      <th class="right">Congé</th><th class="right">Télétr.</th>{% if std %}<th class="right">Heures standard</th>{% endif %}</tr></thead>
     <tbody>{% for e in data.employes[:100] %}
       <tr><td class="mono small">{{ e.matricule }}</td>
         <td class="nowrap">{{ e.nom }} {{ e.prenom or '' }}{% if e.terrain %} <span class="badge st-field" title="Agent terrain">terrain</span>{% endif %}</td>
@@ -205,7 +205,7 @@
         <td class="right">{{ hhmm(timedelta(minutes=e.retard_min_total | float)) if e.retard_min_total else '·' }}</td>
         <td class="right">{% if e.arrivee_moy_min %}{{ '%02d' | format((e.arrivee_moy_min // 60) | int) }}h{{ '%02d' | format((e.arrivee_moy_min % 60) | int) }}{% else %}—{% endif %}</td>
         <td class="right">{{ e.incomplets or '·' }}</td><td class="right">{{ e.conges or '·' }}</td><td class="right">{{ e.teletravail or '·' }}</td>
-        <td class="right">{{ '%.1f' | format(e.heures_validees | float) if e.heures_validees else '—' }}</td></tr>
+        {% if std %}<td class="right">{{ '%.1f' | format(e.heures_validees | float) if e.heures_validees else '—' }}</td>{% endif %}</tr>
     {% endfor %}</tbody>
   </table></div>
 </section>

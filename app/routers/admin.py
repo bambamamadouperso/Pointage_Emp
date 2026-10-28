@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from .. import auth, pointage, scheduler
 from ..database import get_db
 from ..errors import friendly
-from ..models import ROLES, VALIDEE_DISPLAY, AuditEntry, Connection, PointageConfig, SyncJob, User, utcnow
+from ..models import ROLES, VALIDEE_DISPLAY, AuditEntry, Connection, MaternityRequest, PointageConfig, SyncJob, User, utcnow
 from ..sync import is_running, make_engine
 from ..web import flash, redirect, render, require_login
 
@@ -269,7 +269,7 @@ def params_page(request: Request, db: Session = Depends(get_db)):
 
     from .suivi import default_categories
 
-    context.update(validee_modes=VALIDEE_DISPLAY, validee_display=suivi_settings(db).validee_display or "tous",
+    context.update(validee_modes=VALIDEE_DISPLAY, validee_display=suivi_settings(db).validee_display if suivi_settings(db).validee_display in VALIDEE_DISPLAY else "rh",
                    default_cats=default_categories(db, mapping), categories=[])
     if mapping is not None and mapping.cat_col:
         engine = make_engine(cfg.conn, **pointage.WEB_LIMITS)
@@ -285,24 +285,24 @@ def params_page(request: Request, db: Session = Depends(get_db)):
 
 @router.post("/parametres/affichage")
 async def display_save(request: Request, db: Session = Depends(get_db)):
-    """Visibilité de la durée validée et statuts du personnel cochés par défaut (suivi, rapports, exports)."""
+    """Visibilité de la durée standard et statuts du personnel cochés par défaut (suivi, rapports, exports)."""
     from .suivi import suivi_settings
 
     form = await request.form()
-    validee_display = str(form.get("validee_display", "tous") or "tous")
+    validee_display = str(form.get("validee_display", "rh") or "rh")
     if validee_display not in VALIDEE_DISPLAY:
-        validee_display = "tous"
+        validee_display = "rh"
     cats = pointage.multi([str(v) for v in form.getlist("default_categories")])
     s = suivi_settings(db)
-    before = s.validee_display or "tous"
+    before = s.validee_display if s.validee_display in VALIDEE_DISPLAY else "rh"
     s.validee_display, s.updated_at, s.updated_by = validee_display, utcnow(), request.session.get("user", "")
     if "categories_form" in form:  # liste des statuts affichée (colonne configurée) : on enregistre le choix
         s.default_categories = ", ".join(cats)
     db.commit()
     auth.audit(request, "Affichage du suivi", "",
-               f"durée validée : {VALIDEE_DISPLAY[before]} → {VALIDEE_DISPLAY[validee_display]} ; statuts par défaut : "
+               f"durée standard : {VALIDEE_DISPLAY[before]} → {VALIDEE_DISPLAY[validee_display]} ; statuts par défaut : "
                f"{s.default_categories or 'tous'}")
-    flash(request, f"Affichage enregistré : durée validée {VALIDEE_DISPLAY[validee_display].lower()} ; statuts du "
+    flash(request, f"Affichage enregistré : durée standard {VALIDEE_DISPLAY[validee_display].lower()} ; statuts du "
                    f"personnel par défaut : {s.default_categories or 'tous'}.", "ok")
     return redirect("/admin/parametres#affichage")
 
@@ -396,8 +396,19 @@ def holiday_delete(request: Request, jour: str = Form(...), db: Session = Depend
 @router.get("/maternite")
 def maternity_page(request: Request, db: Session = Depends(get_db)):
     cfg, mapping = _mapping_ready(db)
+    from .. import arrets, maternite
+    from ..mails import get_settings as mail_settings_of
+
+    username, role = request.session.get("user", ""), request.session.get("role")
+    users = db.scalars(select(User).where(User.active.is_(True)).order_by(User.username)).all()
+    requests = db.scalars(select(MaternityRequest).where(MaternityRequest.pg_id.is_not(None))).all()
     context = dict(mapping=mapping, entries=[], error=None, kinds=pointage.MATERNITY_KINDS,
-                   hours=pointage.ALLAITEMENT_HOURS, params={}, employees=[])
+                   hours=pointage.ALLAITEMENT_HOURS, params={}, employees=[],
+                   # Circuit de validation des demandes faites par les employées.
+                   steps=maternite.get_workflow(db), types=arrets.STEP_TYPES, users=users,
+                   hr_users=[u for u in users if u.sick_leave_hr], notify=maternite.notify_enabled(db),
+                   mail=mail_settings_of(db), from_requests={r.pg_id: r.id for r in requests},
+                   pending=maternite.pending_for(db, arrets.get_user(db, username), role, username))
     if mapping is not None:
         engine = make_engine(cfg.conn, **pointage.WEB_LIMITS)
         try:
@@ -424,7 +435,7 @@ def maternity_add(request: Request, matricule: str = Form(""), type: str = Form(
     ref = matricule.split(" — ")[0].strip()  # liste de suggestions : « matricule — nom »
     engine = make_engine(cfg.conn, **pointage.WEB_LIMITS)
     try:
-        mat, name = pointage.maternity_add(engine, mapping, ref=ref, kind=type, du=pointage.parse_day(du),
+        mat, name, _ = pointage.maternity_add(engine, mapping, ref=ref, kind=type, du=pointage.parse_day(du),
                                            au=pointage.parse_day(au), heures=heures.strip() or None,
                                            comment=commentaire, author=request.session.get("user", ""))
     except pointage.PointageError as exc:
@@ -451,9 +462,12 @@ def maternity_delete(request: Request, entry_id: int, db: Session = Depends(get_
     finally:
         engine.dispose()
     if row:
+        from .. import maternite
+
+        origin = maternite.entry_deleted(db, entry_id, request.session.get("user", ""))
         auth.audit(request, f"{pointage.MATERNITY_KINDS[row['type']]} supprimé(e)", row["matricule"],
-                   f"du {row['du']:%d/%m/%Y} au {row['au']:%d/%m/%Y}")
-        flash(request, "Période supprimée.", "ok")
+                   f"du {row['du']:%d/%m/%Y} au {row['au']:%d/%m/%Y}" + (f" (demande n°{origin.id} annulée)" if origin else ""))
+        flash(request, "Période supprimée." + (f" La demande n°{origin.id} d'origine est annulée." if origin else ""), "ok")
     return redirect("/admin/maternite")
 
 

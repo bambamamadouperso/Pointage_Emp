@@ -41,8 +41,9 @@ class SickLeaveError(Exception):
 # --------------------------------------------------------------------------- circuit de validation
 
 
-def get_workflow(db) -> list[dict]:
-    row = db.scalars(select(SickLeaveSettings).order_by(SickLeaveSettings.id)).first()
+def get_workflow(db, settings_model=SickLeaveSettings) -> list[dict]:
+    """Circuit paramétré (arrêts maladie par défaut ; `settings_model` : autre circuit, ex. maternité)."""
+    row = db.scalars(select(settings_model).order_by(settings_model.id)).first()
     if row is None or not row.workflow:
         return [dict(s) for s in DEFAULT_WORKFLOW]
     try:
@@ -52,7 +53,7 @@ def get_workflow(db) -> list[dict]:
     return [s for s in steps if isinstance(s, dict) and s.get("type") in STEP_TYPES]
 
 
-def save_workflow(db, steps: list[dict], author: str) -> None:
+def save_workflow(db, steps: list[dict], author: str, settings_model=SickLeaveSettings) -> None:
     clean = []
     for s in steps:
         kind = s.get("type")
@@ -65,9 +66,9 @@ def save_workflow(db, steps: list[dict], author: str) -> None:
             clean.append({"type": kind, "user": user})
         else:
             clean.append({"type": kind})
-    row = db.scalars(select(SickLeaveSettings).order_by(SickLeaveSettings.id)).first()
+    row = db.scalars(select(settings_model).order_by(settings_model.id)).first()
     if row is None:
-        row = SickLeaveSettings()
+        row = settings_model()
         db.add(row)
     row.workflow, row.updated_at, row.updated_by = json.dumps(clean), utcnow(), author
     db.commit()
@@ -341,15 +342,15 @@ EVENTS = {
 }
 
 
-def notify_enabled(db) -> bool:
-    row = db.scalars(select(SickLeaveSettings).order_by(SickLeaveSettings.id)).first()
+def notify_enabled(db, settings_model=SickLeaveSettings) -> bool:
+    row = db.scalars(select(settings_model).order_by(settings_model.id)).first()
     return bool(row and row.notify)
 
 
-def set_notify(db, enabled: bool, author: str) -> None:
-    row = db.scalars(select(SickLeaveSettings).order_by(SickLeaveSettings.id)).first()
+def set_notify(db, enabled: bool, author: str, settings_model=SickLeaveSettings) -> None:
+    row = db.scalars(select(settings_model).order_by(settings_model.id)).first()
     if row is None:
-        row = SickLeaveSettings(workflow=json.dumps(DEFAULT_WORKFLOW))
+        row = settings_model(workflow=json.dumps(DEFAULT_WORKFLOW))
         db.add(row)
     row.notify, row.updated_at, row.updated_by = enabled, utcnow(), author
     db.commit()
@@ -414,8 +415,8 @@ def addresses(db, users: list[User]) -> list[tuple[str, str]]:
     return out
 
 
-def _mail_html(title: str, intro: str, leave: SickLeave, rows: list[tuple[str, str]], link: str, button: str,
-               company: str) -> str:
+def _mail_html(title: str, intro: str, leave, rows: list[tuple[str, str]], link: str, button: str,
+               company: str, eyebrow: str = "Arrêt maladie", accent: str = "#57534e") -> str:
     import html as h
 
     cells = "".join(
@@ -428,7 +429,7 @@ def _mail_html(title: str, intro: str, leave: SickLeave, rows: list[tuple[str, s
 <body style="margin:0;padding:0;background:#f2f5f9;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f2f5f9;">
 <tr><td align="center" style="padding:32px 12px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;">
 <tr><td style="background:#ffffff;border:1px solid #e3e9f0;border-radius:16px;padding:30px 34px;font-family:'Segoe UI',Helvetica,Arial,sans-serif;">
-<p style="margin:0 0 6px;font-size:12px;font-weight:600;letter-spacing:1.2px;text-transform:uppercase;color:#57534e;">Arrêt maladie</p>
+<p style="margin:0 0 6px;font-size:12px;font-weight:600;letter-spacing:1.2px;text-transform:uppercase;color:{accent};">{h.escape(eyebrow)}</p>
 <h1 style="margin:0;font-size:22px;line-height:1.3;color:#0b1a2b;">{h.escape(title)}</h1>
 <p style="margin:12px 0 18px;font-size:15px;line-height:1.6;color:#46566a;">{h.escape(intro)}</p>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-top:1px solid #eef2f6;">{cells}</table>
@@ -468,12 +469,9 @@ def build_notification(leave: SickLeave, event: str, base_url: str, company: str
 
 def notify(leave_id: int, event: str, base_url: str = "", actor: str = "", comment: str = "") -> dict:
     """Envoie les mails d'un événement. Ne lève jamais d'exception (un souci de mail ne bloque pas l'arrêt)."""
-    from email.message import EmailMessage
-    from email.utils import formataddr, formatdate, make_msgid, parseaddr
-
     from .database import SessionLocal
     from .joblog import write_log
-    from .mails import _quit, get_settings, open_smtp, parse_addresses, test_banner, valid_email
+    from .mails import get_settings
 
     try:
         with SessionLocal() as db:
@@ -492,34 +490,10 @@ def notify(leave_id: int, event: str, base_url: str = "", actor: str = "", comme
                                          f"n'a d'adresse e-mail ({', '.join(u.username for u in users)}).")
                 return {"status": "no_recipient", "sent": 0}
             subject, body, text_body = build_notification(leave, event, base_url, s.company, comment)
-            test_to = [a for a in parse_addresses(s.test_recipients) if valid_email(a)]
-            production = s.mode == "production"
-            if not production and not test_to:
-                write_log("WARNING", "Arrêts maladie : mode test sans adresse de test, notification non envoyée.")
+            messages, production = build_messages(s, recipients, subject, body, text_body, "Arrêts maladie")
+            if messages is None:
                 return {"status": "no_test_recipient", "sent": 0}
-            messages = []
-            for email, name in recipients:
-                msg = EmailMessage()
-                msg["Subject"] = subject if production else f"[TEST] {subject}"
-                msg["From"] = formataddr((s.from_name or "", s.from_email))
-                msg["To"] = email if production else ", ".join(test_to)
-                if s.reply_to:
-                    msg["Reply-To"] = s.reply_to
-                msg["Date"] = formatdate(localtime=True)
-                msg["Message-ID"] = make_msgid(domain=(parseaddr(s.from_email)[1].split("@")[-1] or None))
-                msg["Auto-Submitted"] = "auto-generated"
-                html_body = body if production else re.sub(r"(<body[^>]*>)", lambda mm: mm.group(1)
-                                                           + test_banner(email, name), body, count=1)
-                msg.set_content(text_body if production else f"[MODE TEST — destinataire prévu : {name} <{email}>]\n\n"
-                                + text_body)
-                msg.add_alternative(html_body, subtype="html")
-                messages.append(msg)
-        client = open_smtp(s)
-        try:
-            for msg in messages:
-                client.send_message(msg)
-        finally:
-            _quit(client)
+        send_messages(s, messages)
         write_log("INFO", f"Arrêt maladie n°{leave_id} : {len(messages)} mail(s) « {EVENTS[event].lower()} » envoyé(s)"
                           + ("" if production else " (mode test)") + ".")
         return {"status": "sent", "sent": len(messages), "to": [e for e, _ in recipients]}
@@ -529,6 +503,51 @@ def notify(leave_id: int, event: str, base_url: str = "", actor: str = "", comme
         except Exception:  # noqa: BLE001
             pass
         return {"status": "error", "error": str(exc)}
+
+
+def build_messages(s, recipients: list[tuple[str, str]], subject: str, body: str, text_body: str, module: str):
+    """Mails prêts à partir selon le mode des « Mails de badge » (test : vers les adresses de test, avec bandeau).
+    Renvoie (messages, production) ; (None, False) en mode test sans adresse de test."""
+    from email.message import EmailMessage
+    from email.utils import formataddr, formatdate, make_msgid, parseaddr
+
+    from .joblog import write_log
+    from .mails import parse_addresses, test_banner, valid_email
+
+    test_to = [a for a in parse_addresses(s.test_recipients) if valid_email(a)]
+    production = s.mode == "production"
+    if not production and not test_to:
+        write_log("WARNING", f"{module} : mode test sans adresse de test, notification non envoyée.")
+        return None, False
+    messages = []
+    for email, name in recipients:
+        msg = EmailMessage()
+        msg["Subject"] = subject if production else f"[TEST] {subject}"
+        msg["From"] = formataddr((s.from_name or "", s.from_email))
+        msg["To"] = email if production else ", ".join(test_to)
+        if s.reply_to:
+            msg["Reply-To"] = s.reply_to
+        msg["Date"] = formatdate(localtime=True)
+        msg["Message-ID"] = make_msgid(domain=(parseaddr(s.from_email)[1].split("@")[-1] or None))
+        msg["Auto-Submitted"] = "auto-generated"
+        html_body = body if production else re.sub(r"(<body[^>]*>)", lambda mm: mm.group(1)
+                                                   + test_banner(email, name), body, count=1)
+        msg.set_content(text_body if production else f"[MODE TEST — destinataire prévu : {name} <{email}>]\n\n"
+                        + text_body)
+        msg.add_alternative(html_body, subtype="html")
+        messages.append(msg)
+    return messages, production
+
+
+def send_messages(s, messages) -> None:
+    from .mails import _quit, open_smtp
+
+    client = open_smtp(s)
+    try:
+        for msg in messages:
+            client.send_message(msg)
+    finally:
+        _quit(client)
 
 
 def start_notify(leave_id: int, event: str, base_url: str = "", actor: str = "", comment: str = "") -> None:

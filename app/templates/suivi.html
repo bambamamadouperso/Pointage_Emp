@@ -169,7 +169,7 @@
     <span class="kpi-value kpi-pair"><span><small>Arrivée</small>{{ hhmm(k.moy_premier) }}</span><span><small>Départ</small>{{ hhmm(k.moy_dernier) }}</span></span></div>
   {% if show_validee %}
   <div class="kpi c-sky" title="Moyennes des présents au bureau"><span class="kpi-label">Durées moyennes</span>
-    <span class="kpi-value kpi-pair"><span><small>Validée</small>{{ hhmm(k.moy_validee) }}</span><span><small>Effective</small>{{ hhmm(k.moy_effective) }}</span></span></div>
+    <span class="kpi-value kpi-pair"><span><small>Standard</small>{{ hhmm(k.moy_validee) }}</span><span><small>Effective</small>{{ hhmm(k.moy_effective) }}</span></span></div>
   {% else %}
   <div class="kpi c-sky" title="Moyenne des présents au bureau"><span class="kpi-label">Durée effective moyenne</span>
     <span class="kpi-value">{{ hhmm(k.moy_effective) }}</span><span class="kpi-sub">présents au bureau</span></div>
@@ -200,8 +200,8 @@
 
 <section class="card table-card">
   <p class="muted small kpi-note">{{ k.employes | num }} personne(s) · chaque employé de la liste apparaît chaque jour, qu'il ait pointé ou non{% if not single_day %} ; sur une période, les compteurs portent sur des journées-employé{% endif %}. Cliquez sur une ligne pour le détail des pointages.
-    {% if validee_ok %}· {% if show_validee %}<a href="/suivi/affichage?validee=0" title="Masquer la colonne « Durée validée » (écran et export Excel)">Masquer la durée validée</a>
-    {% else %}<a href="/suivi/affichage?validee=1">Afficher la durée validée</a>{% endif %}{% endif %}</p>
+    {% if validee_ok %}· {% if show_validee %}<a href="/suivi/affichage?validee=0" title="Masquer la colonne « Durée standard » (écran et export Excel)">Masquer la durée standard</a>
+    {% else %}<a href="/suivi/affichage?validee=1">Afficher la durée standard</a>{% endif %}{% endif %}</p>
   {% if not data.rows %}
     <p class="empty">Aucune ligne ne correspond aux filtres.
       {% if f.population == 'hors' and (f.service or f.team) %}<br>Les personnes <strong>hors liste</strong> n'ont pas de fiche employé :
@@ -218,8 +218,8 @@
       {% if not single_day %}{{ th('jour', 'Date') }}{% endif %}
       {{ th('matricule', 'Matricule') }}{{ th('nom', 'Nom') }}{{ th('service', 'Service') }}
       {% if has_hierarchy %}{{ th('responsable', 'Responsable') }}{% endif %}
-      {{ th('premier', '1er pointage') }}{{ th('dernier', 'Dernier pointage') }}{{ th('statut', 'Statut') }}
-      {% if show_validee %}{{ th('validee', 'Durée validée', 'right') }}{% endif %}{{ th('effective', 'Durée effective', 'right') }}
+      {{ th('premier', '1er pointage') }}{{ th('statut', 'Statut') }}{{ th('dernier', 'Dernier pointage') }}
+      {% if show_validee %}{{ th('validee', 'Durée standard', 'right') }}{% endif %}{{ th('effective', 'Durée effective', 'right') }}
     </tr></thead>
     <tbody>
     {% for r in data.rows %}
@@ -232,12 +232,12 @@
         <td>{{ r.service or '—' }}{% if r.direction or r.site %}<br><span class="muted small" title="Direction · site">{{ [r.direction, r.site] | select | join(' · ') }}</span>{% endif %}</td>
         {% if has_hierarchy %}<td class="small">{{ r.responsable or '—' }}</td>{% endif %}
         <td>{{ hhmm(r.premier_pointage) }}</td>
-        <td>{{ hhmm(r.dernier_pointage) if r.nb_pointages > 1 else '—' }}{% if r.nb_pointages > 1 and r.dernier_pointage.date() > r.jour %} <span class="muted small" title="Le lendemain (poste de nuit)">+1 j</span>{% endif %}</td>
         <td class="nowrap"><span class="badge {{ cls }}">{{ label }}</span>{% if not r.jour_ouvre and r.statut not in ('NON_OUVRE', 'REPOS') %} <span class="muted small" title="Jour non ouvré ou férié">(non ouvré)</span>{% endif %}
           {% if r.poste %}<br><span class="poste-tag" title="Poste planifié (horaires postés)">{{ r.poste }}</span>{% endif %}
           {% set attente = pending.get((r.emp_key, r.jour)) if r.statut == 'ABSENT' else none %}
           {% if attente %}<br><span class="pending-tag" title="Tant que la demande n'est pas validée, la journée reste comptée absente">⏳ {{ attente }}</span>{% endif %}
           {% if r.allaitement %}<br><span class="allait-tag" title="Période d'allaitement : ces heures complètent la durée travaillée jusqu'à l'objectif">Allaitement {{ hhmm(r.allaitement) }}</span>{% endif %}</td>
+        <td>{{ hhmm(r.dernier_pointage) if r.nb_pointages > 1 else '—' }}{% if r.nb_pointages > 1 and r.dernier_pointage.date() > r.jour %} <span class="muted small" title="Le lendemain (poste de nuit)">+1 j</span>{% endif %}</td>
         {% if show_validee %}<td class="right">{% if r.duree_validee_min is not none %}<span class="dur {{ 'dur-ok' if r.duree_validee_min >= objectif_min else 'dur-ko' }}"
           title="{{ 'Objectif atteint' if r.duree_validee_min >= objectif_min else 'Sous l\'objectif' }} ({{ objectif_min // 60 }}h{{ '%02d' % (objectif_min % 60) }})">{{ hhmm(r.duree_validee) }}</span>{% else %}—{% endif %}</td>{% endif %}
         <td class="right">{% if r.duree_effective_min is not none %}<span class="dur {{ 'dur-ok' if r.duree_effective_min >= objectif_min else 'dur-ko' }}"
@@ -248,12 +248,12 @@
     <tfoot><tr class="avg-row">
       <td colspan="{{ 3 + (0 if single_day else 1) + (1 if has_hierarchy else 0) }}"><strong>Moyenne</strong>
         <span class="muted small">des {{ data.total | num }} ligne(s) filtrée(s), présents au bureau</span></td>
-      <td><strong>{{ hhmm(k.moy_premier) }}</strong></td><td><strong>{{ hhmm(k.moy_dernier) }}</strong></td><td></td>
+      <td><strong>{{ hhmm(k.moy_premier) }}</strong></td><td></td><td><strong>{{ hhmm(k.moy_dernier) }}</strong></td>
       {% if show_validee %}<td class="right"><strong>{{ hhmm(k.moy_validee) }}</strong></td>{% endif %}<td class="right"><strong>{{ hhmm(k.moy_effective) }}</strong></td>
     </tr></tfoot>
   </table></div>
   <p class="muted small dur-legend"><span class="dur dur-ok">≥ {{ objectif_min // 60 }}h{{ '%02d' % (objectif_min % 60) }}</span> objectif de durée atteint ·
-    <span class="dur dur-ko">&lt; {{ objectif_min // 60 }}h{{ '%02d' % (objectif_min % 60) }}</span> sous l'objectif ({{ 'durées validée et effective' if show_validee else 'durée effective' }})
+    <span class="dur dur-ko">&lt; {{ objectif_min // 60 }}h{{ '%02d' % (objectif_min % 60) }}</span> sous l'objectif ({{ 'durées standard et effective' if show_validee else 'durée effective' }})
     {% if can(role, 'admin') %}(<a href="/admin/parametres">modifier l'objectif</a>){% endif %}</p>
   {% include "_pager.html" with context %}
   {% endif %}

@@ -107,7 +107,7 @@ def _filters(request: Request, defaults: Optional[list[str]] = None) -> tuple[po
 
 
 def objectif_minutes(engine, mapping, day) -> int:
-    """Objectif de durée validée (paramètre historisé, 8h par défaut) en minutes."""
+    """Objectif de durée standard (paramètre historisé, 8h par défaut) en minutes."""
     try:
         h, m = pointage.params_at(engine, mapping, day)["objectif_duree"].split(":")
         return int(h) * 60 + int(m)
@@ -118,18 +118,18 @@ def objectif_minutes(engine, mapping, day) -> int:
 def suivi_settings(db: Session) -> SuiviSettings:
     row = db.query(SuiviSettings).order_by(SuiviSettings.id).first()
     if row is None:
-        row = SuiviSettings(validee_display="tous")
+        row = SuiviSettings(validee_display="rh")
         db.add(row)
         db.commit()
     return row
 
 
 def validee_allowed(db: Session, role: Optional[str]) -> bool:
-    """La règle d'affichage (Paramètres horaires) autorise-t-elle ce rôle à voir la durée validée ?"""
-    mode = suivi_settings(db).validee_display or "tous"
+    """La règle d'affichage (Paramètres horaires) autorise-t-elle ce rôle à voir la durée standard ?"""
+    mode = suivi_settings(db).validee_display
     if mode not in VALIDEE_DISPLAY:
-        mode = "tous"
-    return mode == "tous" or (mode == "rh" and role in ("admin", "rh"))
+        mode = "rh"  # ancien réglage « visible pour tous » : désormais réservé aux RH et aux administrateurs
+    return mode == "rh" and role in ("admin", "rh")
 
 
 def show_validee(request: Request, db: Session) -> tuple[bool, bool]:
@@ -186,7 +186,7 @@ def _pending_requests(db: Session, engine, mapping, f, rows) -> dict:
 
 @router.get("/affichage")
 def display_toggle(request: Request, validee: str = "1"):
-    """Masque ou réaffiche la durée validée pour l'utilisateur connecté (mémorisé pour sa session)."""
+    """Masque ou réaffiche la durée standard pour l'utilisateur connecté (mémorisé pour sa session)."""
     request.session["hide_validee"] = validee == "0"
     return redirect(back_url(request, "/suivi"))
 
@@ -315,7 +315,7 @@ def _averages(rows) -> dict:
 def _filter_items(request: Request, f: pointage.Filters, objectif: int, with_validee: bool, count: int) -> list:
     return [
         ("Du", f.du.strftime("%d/%m/%Y")), ("Au", f.au.strftime("%d/%m/%Y")), ("Recherche", f.q or "—"),
-        ("Objectif de durée validée", f"{objectif // 60}h{objectif % 60:02d} (vert si atteint, rouge sinon)"),
+        ("Objectif de durée standard", f"{objectif // 60}h{objectif % 60:02d} (vert si atteint, rouge sinon)"),
         ("Service", ", ".join(f.service) or "Tous"), ("Statut du personnel", ", ".join(f.categorie) or "Tous"),
         ("Direction", ", ".join(f.direction) or "Toutes"), ("Site", ", ".join(f.site) or "Tous"),
         ("Personnes", {"liste": "employés de la liste", "hors": "hors liste"}.get(f.population, "toutes")),
@@ -323,7 +323,7 @@ def _filter_items(request: Request, f: pointage.Filters, objectif: int, with_val
         ("Périmètre", "équipe du compte" if f.scope_root is not None else "tout le personnel"),
         ("Statuts", ", ".join(pointage.STATUTS[s][0] for s in f.statuts) or "Tous"),
         ("Horaires", pointage.HORAIRES.get(f.horaires, "Tous (bureau et postés)")),
-        ("Durée validée", "affichée" if with_validee else "masquée"),
+        ("Durée standard", "affichée" if with_validee else "masquée"),
         ("Lignes", count), ("Exporté par", request.session.get("user", "")),
     ]
 
@@ -346,8 +346,8 @@ def export(request: Request, db: Session = Depends(get_db)):
     wb = Workbook()
     ws = wb.active
     ws.title = "Suivi journalier"
-    headers = ["Date", "Matricule", "Nom", "Prénom", "Service", "Statut du personnel", "1er pointage", "Dernier pointage", "Nb pointages",
-               "Statut", "Durée validée", "Durée effective", "Durée validée (min)", "Durée effective (min)",
+    headers = ["Date", "Matricule", "Nom", "Prénom", "Service", "Statut du personnel", "1er pointage", "Statut", "Dernier pointage",
+               "Nb pointages", "Durée standard", "Durée effective", "Durée standard (min)", "Durée effective (min)",
                "Responsable", "Dans la liste des employés", "Poste planifié", "Direction", "Site", "Allaitement"]
     ws.append(headers)
     fills = {"A_L_HEURE": "DCFCE7", "RETARD": "FFEDD5", "ABSENT": "FEE2E2", "INCOMPLET": "E5E7EB", "NON_OUVRE": "E0F2FE",
@@ -358,9 +358,9 @@ def export(request: Request, db: Session = Depends(get_db)):
     for r in rows:
         ws.append([
             r["jour"], r["matricule"], r["nom"], r["prenom"], r["service"], r["categorie"],
-            r["premier_pointage"].time() if r["premier_pointage"] else None,
+            r["premier_pointage"].time() if r["premier_pointage"] else None, r["statut_libelle"],
             r["dernier_pointage"].time() if r["dernier_pointage"] else None,
-            r["nb_pointages"], r["statut_libelle"], r["duree_validee"], r["duree_effective"],
+            r["nb_pointages"], r["duree_validee"], r["duree_effective"],
             float(r["duree_validee_min"]) if r["duree_validee_min"] is not None else None,
             float(r["duree_effective_min"]) if r["duree_effective_min"] is not None else None,
             r["responsable"], "Non" if r["hors_liste"] else "Oui", r.get("poste"), r.get("direction"), r.get("site"),
@@ -368,11 +368,11 @@ def export(request: Request, db: Session = Depends(get_db)):
         ])
         row = ws.max_row
         ws.cell(row, 1).number_format = "DD/MM/YYYY"
-        for col in (7, 8):
+        for col in (7, 9):
             ws.cell(row, col).number_format = "HH:MM"
         for col in (11, 12, 20):
             ws.cell(row, col).number_format = "[H]:MM"
-        ws.cell(row, 10).fill = PatternFill("solid", fgColor=fills.get(r["statut"], "FFFFFF"))
+        ws.cell(row, 8).fill = PatternFill("solid", fgColor=fills.get(r["statut"], "FFFFFF"))
         for col, key in ((11, "duree_validee_min"), (12, "duree_effective_min")):  # objectif : vert atteint, rouge sinon
             if r[key] is not None:
                 ok = float(r[key]) >= objectif
@@ -390,17 +390,17 @@ def export(request: Request, db: Session = Depends(get_db)):
 
     moy = _averages(rows)
     ws.append([])
-    ws.append(["Moyenne", "", "présents au bureau", "", "", "", moy["premier"], moy["dernier"], "", "",
+    ws.append(["Moyenne", "", "présents au bureau", "", "", "", moy["premier"], "", moy["dernier"], "",
                moy["validee"], moy["effective"]])
     row = ws.max_row
     for col in range(1, 13):
         ws.cell(row, col).font = Font(bold=True)
-    for col in (7, 8):
+    for col in (7, 9):
         ws.cell(row, col).number_format = "HH:MM"
     for col in (11, 12):
         ws.cell(row, col).number_format = "[H]:MM"
     if not with_validee:
-        # Durée validée masquée (règle d'affichage ou choix de l'utilisateur) : colonnes retirées de l'export.
+        # Durée standard masquée (règle d'affichage ou choix de l'utilisateur) : colonnes retirées de l'export.
         for col in (13, 11):
             ws.delete_cols(col)
         for i, cell in enumerate(ws[1], 1):
@@ -437,11 +437,11 @@ def export_pdf(request: Request, db: Session = Depends(get_db)):
     doc = pdf.Document("Suivi journalier des pointages", f"{period} · {len(rows)} ligne(s)", request.session.get("user", ""))
     doc.filters([(k, v) for k, v in _filter_items(request, f, objectif, with_validee, len(rows))
                  if k not in ("Du", "Au", "Lignes", "Exporté par") and v not in ("—", "Tous", "Toutes", "toutes")])
-    headers = ["Date", "Matricule", "Nom", "Service", "Statut du personnel", "1er pointage", "Dernier", "Nb", "Statut",
-               *(["Durée validée"] if with_validee else []), "Durée effective", "Responsable"]
-    widths = [17, 16, 40, 30, 22, 16, 15, 8, 31, *([17] if with_validee else []), 17, 34]
-    align = ["C", "L", "L", "L", "L", "C", "C", "C", "L", *(["C"] if with_validee else []), "C", "L"]
-    status_col = 8
+    headers = ["Date", "Matricule", "Nom", "Service", "Statut du personnel", "1er pointage", "Statut", "Dernier", "Nb",
+               *(["Durée standard"] if with_validee else []), "Durée effective", "Responsable"]
+    widths = [17, 16, 40, 30, 22, 16, 31, 15, 8, *([17] if with_validee else []), 17, 34]
+    align = ["C", "L", "L", "L", "L", "C", "L", "C", "C", *(["C"] if with_validee else []), "C", "L"]
+    status_col, first_duration = 6, 9
     count = lambda *codes: sum(1 for r in rows if r["statut"] in codes)  # noqa: E731
     moy = _averages(rows)
     doc.kpis([
@@ -460,17 +460,17 @@ def export_pdf(request: Request, db: Session = Depends(get_db)):
         body.append([r["jour"].strftime("%d/%m/%Y"), r["matricule"], " ".join(filter(None, [r["nom"], r["prenom"]])),
                      r["service"], r["categorie"],
                      hhmm(r["premier_pointage"]) if r["premier_pointage"] else "",
-                     hhmm(r["dernier_pointage"]) if r["dernier_pointage"] else "", r["nb_pointages"] or "",
                      r["statut_libelle"] + (" (allaitement)" if r.get("allaitement") else ""),
+                     hhmm(r["dernier_pointage"]) if r["dernier_pointage"] else "", r["nb_pointages"] or "",
                      *([hhmm(r["duree_validee"]) if r["duree_validee"] is not None else ""] if with_validee else []),
                      hhmm(r["duree_effective"]) if r["duree_effective"] is not None else "", r["responsable"]])
         pills[(i, status_col)] = pdf.STATUS_PILLS.get(r["statut"], pdf.STATUS_PILLS["INCOMPLET"])
-        for col, key in ((status_col + 1, "duree_validee_min") if with_validee else (None, None),
-                         (status_col + 1 + with_validee, "duree_effective_min")):
+        for col, key in ((first_duration, "duree_validee_min") if with_validee else (None, None),
+                         (first_duration + with_validee, "duree_effective_min")):
             if col is not None and r[key] is not None:  # objectif : vert atteint, rouge sinon
                 pills[(i, col)] = pdf.GOOD if float(r[key]) >= objectif else pdf.BAD
-    body.append(["Moyenne", "", "présents au bureau", "", "", hhmm(moy["premier"]) if moy["premier"] else "",
-                 hhmm(moy["dernier"]) if moy["dernier"] else "", "", "",
+    body.append(["Moyenne", "", "présents au bureau", "", "", hhmm(moy["premier"]) if moy["premier"] else "", "",
+                 hhmm(moy["dernier"]) if moy["dernier"] else "", "",
                  *([hhmm(moy["validee"]) if moy["validee"] else ""] if with_validee else []),
                  hhmm(moy["effective"]) if moy["effective"] else "", ""])
     doc.table(headers, body, widths, align, pills, colors, bold_last=True)

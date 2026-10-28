@@ -12,12 +12,21 @@ from ..database import get_db
 from ..errors import friendly
 from ..sync import make_engine
 from ..web import render, require_login
-from .suivi import ScopeError, apply_scope, chosen_categories, default_categories, dimension_filters, load_config
+from .suivi import (ScopeError, apply_scope, chosen_categories, default_categories, dimension_filters, load_config,
+                    validee_allowed)
 
 router = APIRouter(prefix="/rapports", dependencies=[Depends(require_login)])
 
 SORTS = {"absences": "Absences", "retards": "Retards", "retard_min": "Minutes de retard", "incomplets": "Oublis de badge",
-         "presence": "Taux de présence (croissant)", "heures": "Heures validées", "nom": "Nom"}
+         "presence": "Taux de présence (croissant)", "heures": "Heures standard", "nom": "Nom"}
+
+
+# Durée standard (heures standard, moyenne par jour) : réservée aux RH et aux administrateurs (Paramètres horaires).
+STD_HEADERS = {"Heures standard", "Moyenne heures / jour au bureau", "Moy. / jour au bureau"}
+
+
+def _sorts(std: bool) -> dict:
+    return SORTS if std else {k: v for k, v in SORTS.items() if k != "heures"}
 
 
 def _filters(request: Request, defaults: Optional[list[str]] = None) -> tuple[pointage.Filters, str]:
@@ -42,9 +51,11 @@ def _filters(request: Request, defaults: Optional[list[str]] = None) -> tuple[po
 def page(request: Request, db: Session = Depends(get_db)):
     cfg, mapping = load_config(db)
     f, preset = _filters(request, default_categories(db, mapping))
+    std = validee_allowed(db, request.session.get("role"))
+    sorts = _sorts(std)
     sort = request.query_params.get("tri", "absences")
-    sort = sort if sort in SORTS else "absences"
-    context = dict(f=f, preset=preset, presets=rapports.PRESETS, sorts=SORTS, sort=sort, configured=mapping is not None,
+    sort = sort if sort in sorts else "absences"
+    context = dict(f=f, preset=preset, presets=rapports.PRESETS, sorts=sorts, sort=sort, configured=mapping is not None, std=std,
                    data=None, error=None, services=[], managers=[], categories=[], directions=[], scope_label=None,
                    hhmm=pointage.hhmm, dims=dimension_filters(mapping),
                    series=rapports.SERIES, has_hierarchy=bool(mapping and mapping.hier_table), today=date.today(),
@@ -83,7 +94,9 @@ def _export_data(request: Request, db: Session):
     engine = make_engine(cfg.conn, **pointage.WEB_LIMITS)
     try:
         apply_scope(request, db, engine, mapping, f)
-        data = rapports.build(engine, mapping, f, request.query_params.get("tri", "absences"), compare=False)
+        sort = request.query_params.get("tri", "absences")
+        sort = sort if sort in _sorts(validee_allowed(db, request.session.get("role"))) else "absences"
+        data = rapports.build(engine, mapping, f, sort, compare=False)
     except ScopeError as exc:
         return Response(str(exc), status_code=403, media_type="text/plain; charset=utf-8")
     except Exception as exc:
@@ -100,6 +113,16 @@ def _filter_items(request: Request, f: pointage.Filters) -> list:
             ("Équipe", (f.team + (" (directs)" if f.directs else "")) if f.team else "Toutes"),
             ("Horaires", pointage.HORAIRES.get(f.horaires, "Tous (bureau et postés)")),
             ("Exporté par", request.session.get("user", ""))]
+
+
+def _without_std(title: str, headers: list, rows: list, pct_cols: set) -> tuple:
+    """Feuille sans les colonnes de durée standard (numéros des colonnes en pourcentage recalculés)."""
+    keep = [i for i, h in enumerate(headers) if h not in STD_HEADERS]
+    if len(keep) == len(headers):
+        return title, headers, rows, pct_cols
+    renum = {old + 1: new + 1 for new, old in enumerate(keep)}
+    return (title, [headers[i] for i in keep], [[row[i] for i in keep] for row in rows],
+            {renum[c] for c in pct_cols if c in renum})
 
 
 @router.get("/export.xlsx")
@@ -124,32 +147,32 @@ def export(request: Request, db: Session = Depends(get_db)):
         ("Employés", ["Matricule", "Nom", "Prénom", "Service", "Statut du personnel", "Responsable", "Agent terrain", "Jours attendus",
                       "Présences", "Taux de présence", "À l'heure", "Retards", "Minutes de retard", "Taux de ponctualité",
                       "Absences", "dont lundi/vendredi", "Pointages incomplets", "Congés", "Télétravail", "Sur le terrain",
-                      "Heures validées", "Direction", "Site"],
+                      "Heures standard", "Direction", "Site"],
          [[e["matricule"], e["nom"], e["prenom"], e["service"], e["categorie"], e["responsable"], "Oui" if e["terrain"] else "Non",
            e["attendus"], e["presents"], pct(e["taux_presence"]), e["a_l_heure"], e["retards"], float(e["retard_min_total"]),
            pct(e["taux_ponctualite"]), e["absences"], e["absences_lun_ven"], e["incomplets"], e["conges"], e["teletravail"],
            e["terrain_jours"], hours(e["heures_validees"]), e.get("direction"), e.get("site")]
           for e in data["employes"]], {10, 14}),
         ("Services", ["Service", "Employés", "Taux de présence", "Taux d'absentéisme", "Taux de ponctualité", "Retards",
-                      "Minutes de retard", "Absences", "Pointages incomplets", "Heures validées",
+                      "Minutes de retard", "Absences", "Pointages incomplets", "Heures standard",
                       "Moyenne heures / jour au bureau"],
          [[s["service"], s["employes"], pct(s["taux_presence"]), pct(s["taux_absence"]), pct(s["taux_ponctualite"]),
            s["retards"], float(s["retard_min_total"]), s["absences"], s["incomplets"], hours(s["heures_validees"]),
            hours(s["heures_moy_bureau"])] for s in data["services"]], {3, 4, 5}),
         *([("Statuts du personnel", ["Statut du personnel", "Employés", "Taux de présence", "Taux d'absentéisme", "Taux de ponctualité",
-                            "Retards", "Minutes de retard", "Absences", "Pointages incomplets", "Heures validées",
+                            "Retards", "Minutes de retard", "Absences", "Pointages incomplets", "Heures standard",
                             "Moyenne heures / jour au bureau"],
              [[g["groupe"], g["employes"], pct(g["taux_presence"]), pct(g["taux_absence"]), pct(g["taux_ponctualite"]),
                g["retards"], float(g["retard_min_total"]), g["absences"], g["incomplets"], hours(g["heures_validees"]),
                hours(g["heures_moy_bureau"])] for g in data["categories"]], {3, 4, 5})] if data["categories"] else []),
         *([("Directions", ["Direction", "Employés", "Taux de présence", "Taux d'absentéisme", "Taux de ponctualité",
-                            "Retards", "Minutes de retard", "Absences", "Pointages incomplets", "Heures validées",
+                            "Retards", "Minutes de retard", "Absences", "Pointages incomplets", "Heures standard",
                             "Moyenne heures / jour au bureau"],
              [[g["groupe"], g["employes"], pct(g["taux_presence"]), pct(g["taux_absence"]), pct(g["taux_ponctualite"]),
                g["retards"], float(g["retard_min_total"]), g["absences"], g["incomplets"], hours(g["heures_validees"]),
                hours(g["heures_moy_bureau"])] for g in data["directions"]], {3, 4, 5})] if data.get("directions") else []),
         *([("Sites", ["Site", "Employés", "Taux de présence", "Taux d'absentéisme", "Taux de ponctualité",
-                      "Retards", "Minutes de retard", "Absences", "Pointages incomplets", "Heures validées",
+                      "Retards", "Minutes de retard", "Absences", "Pointages incomplets", "Heures standard",
                       "Moyenne heures / jour au bureau"],
              [[g["groupe"], g["employes"], pct(g["taux_presence"]), pct(g["taux_absence"]), pct(g["taux_ponctualite"]),
                g["retards"], float(g["retard_min_total"]), g["absences"], g["incomplets"], hours(g["heures_validees"]),
@@ -161,6 +184,8 @@ def export(request: Request, db: Session = Depends(get_db)):
          [[a["motif"], a["matricule"], a["nom"], a["service"], a["responsable"], a["detail"]] for a in data["alertes"]],
          set()),
     ]
+    if not validee_allowed(db, request.session.get("role")):
+        sheets = [_without_std(*sheet) for sheet in sheets]
     for i, (title, headers, rows, pct_cols) in enumerate(sheets):
         ws = wb.active if i == 0 else wb.create_sheet()
         ws.title = title
@@ -195,6 +220,8 @@ def export_pdf(request: Request, db: Session = Depends(get_db)):
         return result
     f, data = result
     k = data["kpi"]
+    std = validee_allowed(db, request.session.get("role"))
+    cut = None if std else -1  # durée standard (dernières colonnes) réservée aux RH et aux administrateurs
 
     def pct(v):
         return f"{float(v):.1f} %".replace(".", ",") if v is not None else "—"
@@ -218,8 +245,9 @@ def export_pdf(request: Request, db: Session = Depends(get_db)):
         ("Taux d'absentéisme", pct(k["taux_absence"]), f"{num(k['absences'])} journée(s) d'absence", pdf.RED),
         ("Taux de ponctualité", pct(k["taux_ponctualite"]), "à l'heure / (à l'heure + retards)", pdf.BLUE),
         ("Retards", num(k["retards"]), f"{pointage.hhmm(timedelta(minutes=float(k['retard_min_total'] or 0)))} cumulées", pdf.ORANGE),
-        ("Heures validées", f"{num(round(float(k['heures_validees'] or 0)))} h",
-         f"{hours(k['heures_moy_bureau'])} par jour au bureau" if k.get("heures_moy_bureau") else "", pdf.TEAL),
+        ("Heures standard", f"{num(round(float(k['heures_validees'] or 0)))} h",
+         f"{hours(k['heures_moy_bureau'])} par jour au bureau" if k.get("heures_moy_bureau") else "", pdf.TEAL) if std else
+        ("Journées attendues", num(k["attendus"]), f"{num(k['employes'])} employé(s)", pdf.TEAL),
         ("Oublis de badge", num(k["incomplets"]), "journées avec un seul pointage", pdf.GREY),
     ])
     doc.filters([("Employés", num(k["employes"])), ("Journées attendues", num(k["attendus"])), ("En congé", num(k["conges"])),
@@ -234,8 +262,10 @@ def export_pdf(request: Request, db: Session = Depends(get_db)):
                 pills[(i, col)] = pill
 
     group_headers = ["Employés", "Présence", "Absentéisme", "Ponctualité", "Retards", "Min. de retard", "Absences",
-                     "Oublis de badge", "Heures validées", "Moy. / jour au bureau"]
+                     "Oublis de badge", "Heures standard", "Moy. / jour au bureau"]
     group_widths = [16, 18, 20, 20, 15, 20, 16, 20, 20, 26]
+    if not std:
+        group_headers, group_widths = group_headers[:-2], group_widths[:-2]
     for title, key, field in (("Par service", "services", "service"), ("Par statut du personnel", "categories", "groupe"),
                               ("Par direction", "directions", "groupe"), ("Par site", "sites", "groupe")):
         groups = data.get(key) or []
@@ -251,7 +281,7 @@ def export_pdf(request: Request, db: Session = Depends(get_db)):
         doc.table([title[4:].capitalize()] + group_headers,
                   [[g[field], num(g["employes"]), pct(g["taux_presence"]), pct(g["taux_absence"]), pct(g["taux_ponctualite"]),
                     num(g["retards"]), num(g["retard_min_total"]), num(g["absences"]), num(g["incomplets"]),
-                    hours(g["heures_validees"]), hours(g["heures_moy_bureau"])] for g in groups],
+                    hours(g["heures_validees"]), hours(g["heures_moy_bureau"])][:None if std else -2] for g in groups],
                   [50] + group_widths, ["L"] + ["R"] * len(group_headers), pills, colors)
 
     if data["alertes"]:
@@ -262,7 +292,7 @@ def export_pdf(request: Request, db: Session = Depends(get_db)):
                   [50, 18, 44, 36, 40, 80], pills=pills, colors={(i, 1): pdf.MUTED for i in range(len(data["alertes"]))})
 
     doc.section("Par employé", f"{len(data['employes'])} employé(s), tri : "
-                               f"{SORTS.get(request.query_params.get('tri', 'absences'), SORTS['absences']).lower()}")
+                               f"{_sorts(std).get(request.query_params.get('tri', 'absences'), SORTS['absences']).lower()}")
     pills, colors = {}, {}
     for i, e in enumerate(data["employes"]):
         rates(e, i, ((6, "taux_presence", 95, 85, True), (9, "taux_ponctualite", 95, 85, True)), pills)
@@ -272,11 +302,11 @@ def export_pdf(request: Request, db: Session = Depends(get_db)):
         if e["retards"]:
             colors[(i, 7)] = pdf.ORANGE
     doc.table(["Matricule", "Nom", "Service", "Statut du personnel", "Attendus", "Présences", "Présence", "Retards",
-               "Min. de retard", "Ponctualité", "Absences", "Oublis", "Congés", "Heures validées"],
+               "Min. de retard", "Ponctualité", "Absences", "Oublis", "Congés", "Heures standard"][:cut],
               [[e["matricule"], " ".join(filter(None, [e["nom"], e["prenom"]])), e["service"], e["categorie"], num(e["attendus"]),
                 num(e["presents"]), pct(e["taux_presence"]), num(e["retards"]), num(e["retard_min_total"]),
                 pct(e["taux_ponctualite"]), num(e["absences"]), num(e["incomplets"]), num(e["conges"]),
-                hours(e["heures_validees"])] for e in data["employes"]],
-              [18, 42, 34, 24, 17, 18, 18, 16, 18, 20, 17, 15, 15, 20], ["L"] * 4 + ["R"] * 10, pills, colors)
+                hours(e["heures_validees"])][:cut] for e in data["employes"]],
+              [18, 42, 34, 24, 17, 18, 18, 16, 18, 20, 17, 15, 15, 20][:cut], (["L"] * 4 + ["R"] * 10)[:cut], pills, colors)
     return Response(doc.output_bytes(), media_type="application/pdf",
                     headers={"Content-Disposition": f'attachment; filename="rapport_{f.du:%Y%m%d}_{f.au:%Y%m%d}.pdf"'})

@@ -29,13 +29,13 @@ PARAMS = [
     ("jours_ouvres", "Jours ouvrés", "days", "1,2,3,4,5"),
     ("duree_conge", "Durée attribuée par jour de congé", "duration", "08:00"),
     ("duree_teletravail", "Durée attribuée par jour de télétravail", "duration", "08:00"),
-    ("duree_terrain", "Durée validée minimale par jour pour un agent terrain", "duration", "08:00"),
-    ("objectif_duree", "Objectif de durée validée (vert si atteint, rouge sinon)", "duration", "08:00"),
+    ("duree_terrain", "Durée standard minimale par jour pour un agent terrain", "duration", "08:00"),
+    ("objectif_duree", "Objectif de durée standard (vert si atteint, rouge sinon)", "duration", "08:00"),
     ("duree_arret_maladie", "Durée attribuée par jour d'arrêt maladie", "duration", "08:00"),
     ("duree_maternite", "Durée attribuée par jour de congé de maternité", "duration", "08:00"),
     ("heures_allaitement", "Heures d'allaitement par jour (période d'allaitement : 01:00, 02:00 ou 03:00)", "duration", "01:00"),
     ("duree_mission", "Durée attribuée par jour de mission (autorisation de mission approuvée)", "duration", "08:00"),
-    ("duree_repos", "Horaires postés : durée validée attribuée par jour de repos (planning)", "duration", "08:00"),
+    ("duree_repos", "Horaires postés : durée standard attribuée par jour de repos (planning)", "duration", "08:00"),
     ("marge_poste", "Horaires postés : marge avant/après un poste pour y rattacher les pointages", "duration", "04:00"),
 ]
 PARAM_LABELS = {k: label for k, label, _, _ in PARAMS}
@@ -178,7 +178,7 @@ class Mapping:
     # (« person », ex. Personnel : tout le personnel est attendu, même sans fiche dans la table des employés).
     reference: str = "emp"
     # Facultatif : demandes de congé. Un jour « Absent » couvert par un congé approuvé devient « Congé Annuel »
-    # ou « Congé exceptionnel » (durées validée et effective = paramètre « durée attribuée par jour de congé »).
+    # ou « Congé exceptionnel » (durées standard et effective = paramètre « durée attribuée par jour de congé »).
     leave_table: str = ""
     leave_emp_col: str = ""           # l'employé concerné
     leave_ref: str = "key"            # cette colonne contient la clé employé, le matricule ou l'id de la table des noms
@@ -831,7 +831,7 @@ c AS (
                  CASE WHEN g.p1::time < g.seuil_retard THEN g.debut_journee ELSE g.p1::time END END AS debut_valide,
         CASE WHEN g.n >= 2 AND g.poste_type = 'travail' THEN LEAST(g.p2, g.s_fin)::time
              WHEN g.n >= 2 AND g.poste_type IS NULL THEN LEAST(g.p2::time, g.fin_journee) END AS fin_validee,
-        -- Poste planifié : durée validée entre le début du poste (ou l'arrivée tardive) et sa fin (ou le départ anticipé).
+        -- Poste planifié : durée standard entre le début du poste (ou l'arrivée tardive) et sa fin (ou le départ anticipé).
         CASE WHEN g.n >= 2 AND g.poste_type = 'travail' THEN GREATEST(
                  (LEAST(g.p2, g.s_fin) - CASE WHEN g.p1 < g.s_debut + g.tolerance THEN g.s_debut ELSE g.p1 END) - g.s_pause,
                  interval '0') END AS hv_poste
@@ -876,8 +876,8 @@ CROSS JOIN LATERAL (
 ) v
 CROSS JOIN LATERAL (
     -- Période d'allaitement : priorité au temps réellement travaillé (du 1er au dernier pointage, pause déduite),
-    -- complété par les heures d'allaitement jusqu'à l'objectif (8h) : 7h travaillées + 1h → 8h validées, que l'heure
-    -- ait été prise en début ou en fin de journée. Jamais au-delà de l'objectif, jamais moins que la durée validée.
+    -- complété par les heures d'allaitement jusqu'à l'objectif (8h) : 7h travaillées + 1h → 8h standard, que l'heure
+    -- ait été prise en début ou en fin de journée. Jamais au-delà de l'objectif, jamais moins que la durée standard.
     SELECT CASE WHEN c.allaitement IS NOT NULL AND c.statut IN ('A_L_HEURE', 'RETARD', 'TERRAIN')
                      AND COALESCE(v.de, v.hv) IS NOT NULL
                 THEN GREATEST(v.hv, LEAST(c.objectif, COALESCE(v.de, v.hv) + c.allaitement)) ELSE v.hv END AS hv
@@ -958,7 +958,7 @@ SELECT * FROM {S}.f_pointage_journalier(COALESCE({first_day}, current_date), cur
         "raw_view": f"""CREATE VIEW {S}.v_pointage_brut AS
 SELECT {pkey} AS emp_key, {ts} AS horodatage, ({ts})::date AS jour FROM {punch} p""",
         "comment": f"COMMENT ON VIEW {S}.v_pointage_journalier IS "
-                   f"{lit('Suivi journalier des pointages (1er/dernier pointage, statut, durée validée, durée effective).')}",
+                   f"{lit('Suivi journalier des pointages (1er/dernier pointage, statut, durée standard, durée effective).')}",
     }
 
 
@@ -1987,8 +1987,9 @@ def maternity_entries(engine: Engine, m: Mapping) -> list[dict]:
 
 
 def maternity_add(engine: Engine, m: Mapping, *, ref: str, kind: str, du: date, au: date, heures: Optional[str],
-                  comment: str, author: str) -> tuple[str, str]:
-    """Enregistre un congé de maternité ou une période d'allaitement ; renvoie (matricule, nom). Lève PointageError."""
+                  comment: str, author: str) -> tuple[str, str, int]:
+    """Enregistre un congé de maternité ou une période d'allaitement ; renvoie (matricule, nom, identifiant de la
+    ligne). Lève PointageError."""
     if kind not in MATERNITY_KINDS:
         raise PointageError("Type de période inconnu.")
     if du is None or au is None:
@@ -2009,12 +2010,12 @@ def maternity_add(engine: Engine, m: Mapping, *, ref: str, kind: str, du: date, 
         if overlap:
             raise PointageError(f"{MATERNITY_KINDS[kind]} déjà enregistré(e) pour {found[1]} du "
                                 f"{overlap[0]:%d/%m/%Y} au {overlap[1]:%d/%m/%Y} : modifiez ou supprimez cette période.")
-        c.execute(text(
+        entry_id = c.execute(text(
             f"INSERT INTO {S}.pointage_maternite (matricule, type, du, au, heures, commentaire, auteur) "
-            f"VALUES (:m, :t, :du, :au, CAST(:h AS interval), :c, :a)"),
+            f"VALUES (:m, :t, :du, :au, CAST(:h AS interval), :c, :a) RETURNING id"),
             {"m": matricule, "t": kind, "du": du, "au": au, "h": heures if kind == "allaitement" and heures else None,
-             "c": (comment or "").strip()[:500], "a": author})
-    return matricule, found[1]
+             "c": (comment or "").strip()[:500], "a": author}).scalar()
+    return matricule, found[1], entry_id
 
 
 def maternity_delete(engine: Engine, m: Mapping, entry_id: int) -> Optional[dict]:

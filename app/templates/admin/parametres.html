@@ -61,10 +61,10 @@
 
 <form method="post" action="/admin/parametres/affichage" class="card form" id="affichage" style="max-width:980px">
   <h2>Affichage du suivi journalier</h2>
-  <label>Durée validée
+  <label>Durée standard
     <select name="validee_display">{% for k, label in validee_modes.items() %}<option value="{{ k }}" {{ 'selected' if validee_display == k }}>{{ label }}</option>{% endfor %}</select></label>
   <p class="muted small">S'applique à l'écran du suivi journalier et à son export Excel (colonne, moyenne et indicateur).
-    Quand elle est visible, chacun peut aussi la masquer pour lui-même depuis le suivi (« Masquer la durée validée »).</p>
+    Quand elle est visible, chacun peut aussi la masquer pour lui-même depuis le suivi (« Masquer la durée standard »).</p>
   {% if categories %}
   <input type="hidden" name="categories_form" value="1">
   <div class="field"><span class="field-label">Statuts du personnel cochés par défaut</span>

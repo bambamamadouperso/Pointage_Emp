@@ -17,8 +17,8 @@
   <ul class="rule-list">
     <li><span class="badge st-field">Sur le terrain</span> chaque jour ouvré sans congé ni télétravail, qu'il ait badgé ou non :
       pas de statut « Absent », « En retard » ni « Pointage incomplet ».</li>
-    <li><strong>Durée validée</strong> : au moins <strong>{{ duree | replace(':', 'h') }}</strong> par jour
-      (<a href="/admin/parametres">Paramètres horaires</a> → « Durée validée minimale par jour pour un agent terrain »),
+    <li><strong>Durée standard</strong> : au moins <strong>{{ duree | replace(':', 'h') }}</strong> par jour
+      (<a href="/admin/parametres">Paramètres horaires</a> → « Durée standard minimale par jour pour un agent terrain »),
       davantage si ses pointages le justifient.</li>
     <li><strong>Durée effective</strong> : mesurée seulement quand il badge à l'arrivée et au départ ; sinon « — ».</li>
     <li>Les congés et le télétravail approuvés gardent leur propre statut. Les jours non ouvrés restent « Jour non ouvré ».</li>

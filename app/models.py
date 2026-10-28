@@ -439,6 +439,71 @@ class SickLeaveSettings(Base):
     notify: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True, default=False)
 
 
+class MaternityRequest(Base):
+    """Demande de congé de maternité ou de période d'allaitement faite par l'employée (circuit de validation
+    paramétrable, comme les arrêts maladie). Une fois validée, la période est recopiée dans PostgreSQL
+    (table pointage_maternite, ligne `pg_id`) et s'applique au suivi."""
+
+    __tablename__ = "maternity_requests"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    emp_key: Mapped[str] = mapped_column(String(100), index=True)
+    matricule: Mapped[str] = mapped_column(String(100), default="")
+    name: Mapped[str] = mapped_column(String(255), default="")
+    kind: Mapped[str] = mapped_column(String(20), default="maternite")       # maternite, allaitement
+    start_date: Mapped[datetime] = mapped_column(DateTime)
+    end_date: Mapped[datetime] = mapped_column(DateTime)
+    hours: Mapped[str] = mapped_column(String(5), default="")               # allaitement : 01:00, 02:00, 03:00 ou vide (défaut)
+    comment: Mapped[str] = mapped_column(Text, default="")
+    source: Mapped[str] = mapped_column(String(20), default="employe")      # employe, rh
+    status: Mapped[str] = mapped_column(String(20), default="en_attente")   # voir SICK_STATUS
+    step: Mapped[int] = mapped_column(Integer, default=0)
+    workflow: Mapped[str] = mapped_column(Text, default="[]")               # circuit figé à la demande (JSON)
+    manager_matricule: Mapped[str] = mapped_column(String(100), default="")
+    manager_name: Mapped[str] = mapped_column(String(255), default="")
+    file_name: Mapped[str] = mapped_column(String(255), default="")         # certificat (facultatif)
+    file_path: Mapped[str] = mapped_column(String(255), default="")
+    file_type: Mapped[str] = mapped_column(String(100), default="")
+    pg_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)    # ligne de pointage_maternite une fois validée
+    created_by: Mapped[str] = mapped_column(String(100), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    decided_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+    @property
+    def status_label(self) -> str:
+        return SICK_STATUS.get(self.status, self.status)
+
+    @property
+    def days(self) -> int:
+        return (self.end_date.date() - self.start_date.date()).days + 1
+
+
+class MaternityRequestAction(Base):
+    """Historique d'une demande de maternité ou d'allaitement."""
+
+    __tablename__ = "maternity_request_actions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    request_id: Mapped[int] = mapped_column(ForeignKey("maternity_requests.id", ondelete="CASCADE"), index=True)
+    at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    actor: Mapped[str] = mapped_column(String(100), default="")
+    action: Mapped[str] = mapped_column(String(30), default="")
+    step_label: Mapped[str] = mapped_column(String(255), default="")
+    comment: Mapped[str] = mapped_column(Text, default="")
+
+
+class MaternitySettings(Base):
+    """Circuit de validation des demandes de maternité et d'allaitement (étapes ordonnées, JSON) et notifications."""
+
+    __tablename__ = "maternity_settings"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    workflow: Mapped[str] = mapped_column(Text, default="")
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    updated_by: Mapped[str] = mapped_column(String(100), default="")
+    notify: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True, default=False)
+
+
 DIGEST_KINDS = {"quotidien": "Quotidien", "hebdomadaire": "Hebdomadaire"}
 DIGEST_FREQUENCIES = {"quotidien": "Quotidien", "hebdomadaire": "Hebdomadaire", "les_deux": "Quotidien et hebdomadaire"}
 
@@ -601,20 +666,20 @@ class ReminderLog(Base):
     attempts: Mapped[int] = mapped_column(Integer, default=1)
 
 
+# Durée standard : réservée aux RH et aux administrateurs (jamais visible des managers ni des lecteurs).
 VALIDEE_DISPLAY = {
-    "tous": "Visible pour tous",
     "rh": "Visible seulement pour les RH et les administrateurs",
     "aucun": "Masquée pour tous",
 }
 
 
 class SuiviSettings(Base):
-    """Affichage du suivi journalier (une seule ligne) : visibilité de la durée validée."""
+    """Affichage du suivi journalier (une seule ligne) : visibilité de la durée standard."""
 
     __tablename__ = "suivi_settings"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    validee_display: Mapped[Optional[str]] = mapped_column(String(20), nullable=True, default="tous")
+    validee_display: Mapped[Optional[str]] = mapped_column(String(20), nullable=True, default="rh")
     # Statuts du personnel cochés par défaut dans le suivi et les rapports (séparés par des virgules ; vide = tous).
     default_categories: Mapped[Optional[str]] = mapped_column(Text, nullable=True, default="Cadre, Non Cadre")
     updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)

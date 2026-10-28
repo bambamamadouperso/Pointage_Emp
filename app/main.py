@@ -17,7 +17,8 @@ from .config import settings
 from .database import SessionLocal, init_db
 from .joblog import write_log
 from .models import ROLES, User
-from .routers import admin, arrets, connections, data, jobs, mails, monitoring, rapports, rappels, resumes, suivi, validations
+from .routers import (admin, arrets, connections, data, jobs, mails, maternite, monitoring, rapports, rappels, resumes, suivi,
+                      validations)
 from .web import LoginRequired, back_url, flash, redirect, render
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -223,3 +224,5 @@ app.include_router(rappels.router)
 app.include_router(validations.router)
 app.include_router(arrets.router)
 app.include_router(arrets.admin_router)
+app.include_router(maternite.router)
+app.include_router(maternite.admin_router)

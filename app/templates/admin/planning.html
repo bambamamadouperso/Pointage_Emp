@@ -19,14 +19,14 @@
       avant le début du poste + la tolérance de retard (la même que pour le bureau : écart entre « début de journée » et « seuil de retard »),
       sinon <span class="badge st-late">En retard</span>. Sans pointage : <span class="badge st-abs">Absent</span>, même un samedi ou un dimanche,
       sauf arrêt maladie, congé ou télétravail approuvé.</li>
-    <li><strong>Durée validée</strong> : du début du poste (ou de l'arrivée tardive) à sa fin (ou au départ anticipé), moins la pause du poste.
+    <li><strong>Durée standard</strong> : du début du poste (ou de l'arrivée tardive) à sa fin (ou au départ anticipé), moins la pause du poste.
       Un poste de nuit est compté <strong>le jour où il commence</strong> : le départ de 06h le lendemain lui est rattaché.</li>
     <li>Les pointages sont rattachés au poste s'ils ont lieu jusqu'à <strong>{{ marge | replace(':', 'h') }}</strong> avant son début ou
       après sa fin (<a href="/admin/parametres">Paramètres horaires</a> → « marge avant/après un poste »).</li>
     <li><span class="badge st-off">Repos (planning)</span>, <span class="badge st-leave">Congé Annuel</span>,
       <span class="badge st-train">Formation</span>, férié payé : jamais d'absence. Repos et fériés ne comptent pas dans les jours attendus des rapports.
-      Un jour de repos est crédité de <strong>{{ duree_repos | replace(':', 'h') }}</strong> de durée validée
-      (<a href="/admin/parametres">Paramètres horaires</a> → « durée validée attribuée par jour de repos » ; la « durée attribuée » d'un code l'emporte).</li>
+      Un jour de repos est crédité de <strong>{{ duree_repos | replace(':', 'h') }}</strong> de durée standard
+      (<a href="/admin/parametres">Paramètres horaires</a> → « durée standard attribuée par jour de repos » ; la « durée attribuée » d'un code l'emporte).</li>
     <li>Les jours sans planning pour un employé suivent l'horaire de bureau habituel.</li>
   </ul>
 </section>
@@ -132,7 +132,7 @@
 <section class="card" id="postes">
   <h2>Codes de poste</h2>
   <p class="muted small">Un poste de travail a des heures de début et de fin (fin ≤ début = poste de nuit, finit le lendemain) et, si besoin,
-    une pause déduite. Les autres types n'ont pas d'horaire ; « durée attribuée » est comptée en durée validée (formation, férié payé).</p>
+    une pause déduite. Les autres types n'ont pas d'horaire ; « durée attribuée » est comptée en durée standard (formation, férié payé).</p>
   <div class="table-wrap"><table class="postes">
     <thead><tr><th>Code</th><th>Libellé</th><th>Type</th><th>Début</th><th>Fin</th><th>Pause</th><th>Durée attribuée</th><th class="right">Jours planifiés</th><th></th></tr></thead>
     <tbody>

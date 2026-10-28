@@ -944,3 +944,6 @@ details.hors-liste > summary::-webkit-details-marker { display: none; }
 details.hors-liste > summary::before { content: "▸"; color: var(--muted); transition: transform .15s; }
 details.hors-liste[open] > summary::before { transform: rotate(90deg); }
 details.hors-liste .table-wrap { margin-top: .7rem; }
+
+/* Titre de partie entre deux groupes de cartes (ex. circuit des demandes de maternité). */
+.section-title { font-size: 1.1rem; margin: 30px 0 12px; padding-top: 18px; border-top: 1px solid var(--border, #e3e9f0); }

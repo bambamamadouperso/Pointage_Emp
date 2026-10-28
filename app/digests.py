@@ -163,7 +163,7 @@ def insights(data: dict) -> list[tuple[str, str]]:
             out.append(("info", f"Badge oublié (un seul pointage) : {_names(inc)}."))
         if short:
             h = data["objectif_min"]
-            out.append(("warn", f"Sous l'objectif de {h // 60}h{h % 60:02d} de durée validée : {_names(short)}."))
+            out.append(("warn", f"Sous l'objectif de {h // 60}h{h % 60:02d} de durée standard : {_names(short)}."))
     else:
         emps = data["employes"]
         absents = sorted((e for e in emps if e["absences"]), key=lambda e: -e["absences"])
@@ -269,7 +269,7 @@ def render(data: dict, manager_name: str, company: str = "", app_url: str = "") 
     th = 'style="padding:8px 6px;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:#7a8898;border-bottom:1px solid #e6ecf3;"'
     td = 'style="padding:8px 6px;font-size:13px;color:#2c3a4b;border-bottom:1px solid #f0f3f7;"'
     if daily:
-        head = f"<tr><th {th}>Collaborateur</th><th {th}>Statut</th><th {th}>Arrivée</th><th {th}>Départ</th><th {th}>Durée validée</th></tr>"
+        head = f"<tr><th {th}>Collaborateur</th><th {th}>Statut</th><th {th}>Arrivée</th><th {th}>Départ</th><th {th}>Durée standard</th></tr>"
         body = "".join(
             f"<tr><td {td}><strong>{html.escape(_name(r))}</strong><br><span style=\"color:#9aa6b2;font-size:11px;\">{html.escape(r['matricule'] or '')}</span></td>"
             f"<td {td}>{_pill(r['statut'])}</td><td {td}>{pointage.hhmm(r['premier_pointage']) if r['premier_pointage'] else '—'}</td>"
@@ -277,7 +277,7 @@ def render(data: dict, manager_name: str, company: str = "", app_url: str = "") 
             f"<td {td}>{_dur(r['duree_validee_min'], data['objectif_min'])}</td></tr>" for r in data["rows"])
     else:
         head = (f"<tr><th {th}>Collaborateur</th><th {th}>Présence</th><th {th}>Retards</th><th {th}>Absences</th>"
-                f"<th {th}>Oublis</th><th {th}>Heures validées</th><th {th}>Moy. validée / jour</th>"
+                f"<th {th}>Oublis</th><th {th}>Heures standard</th><th {th}>Moy. standard / jour</th>"
                 f"<th {th}>Moy. effective / jour</th></tr>")
         body = "".join(_week_row(e, td, data["objectif_min"])
                        for e in sorted(data["employes"], key=lambda e: _name(e).lower()))
@@ -322,7 +322,7 @@ def render(data: dict, manager_name: str, company: str = "", app_url: str = "") 
     if not daily and data["employes"]:
         def avg(v):
             return pointage.hhmm(timedelta(minutes=float(v))) if v is not None else "—"
-        lines += ["", "Moyennes par jour de présence au bureau (validée / effective) :",
+        lines += ["", "Moyennes par jour de présence au bureau (standard / effective) :",
                   *[f"- {_name(e)} : {avg(e.get('validee_moy_min'))} / {avg(e.get('effective_moy_min'))}"
                     for e in sorted(data["employes"], key=lambda e: _name(e).lower())]]
     return subject, body_html, "\n".join(lines)
