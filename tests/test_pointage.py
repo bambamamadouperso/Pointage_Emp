@@ -550,6 +550,33 @@ def test_field_agents_never_absent_nor_late(configured, pg, logged_client):
     assert rows(pg, WED)[("E005", WED)].statut == "NON_OUVRE"
     assert r[("E007", MON)].retard_min == 15  # 7h45 pour un début à 7h30
 
+    # Paramètre « Durées attribuées automatiquement » : agents terrain décochés → plus de minimum de 8h.
+    m = pointage.Mapping.from_json(_cfg_data())
+    current = pointage.params_at(pg, m, MON)
+    assert 'name="attribution_auto" value="TERRAIN" checked' in logged_client.get("/admin/parametres").text
+
+    def post_params(flags):
+        data = {k: v for k, v in current.items() if pointage.PARAM_TYPES[k] in ("time", "duration")}
+        data.update({"jours_ouvres": current["jours_ouvres"].split(","), "attribution_auto": flags,
+                     "attribution_auto_form": "1", "date_effet": "2026-09-01"})
+        return logged_client.post("/admin/parametres", data=data, follow_redirects=True)
+
+    try:
+        all_flags = list(pointage.ATTRIBUTIONS)
+        r_post = post_params([f for f in all_flags if f != "TERRAIN"])
+        assert "Durées attribuées automatiquement" in r_post.text
+        r = rows(pg, MON)
+        # Moussa : temps pointé seulement (7h30 au lieu du minimum de 8h) ; Khady sans pointage : aucune durée.
+        assert hm(r[("E002", MON)].duree_validee) == "7h30" and r[("E002", MON)].statut == "TERRAIN"
+        assert r[("E005", MON)].statut == "TERRAIN" and r[("E005", MON)].duree_validee is None
+        assert 'name="attribution_auto" value="TERRAIN" checked' not in logged_client.get("/admin/parametres").text
+        # Tout décoché : accepté (aucune durée attribuée).
+        post_params([])
+        assert pointage.params_at(pg, m, MON)["attribution_auto"] == ""
+    finally:
+        post_params(list(pointage.ATTRIBUTIONS))
+    assert hm(rows(pg, MON)[("E002", MON)].duree_validee) == "8h00"
+
     page = logged_client.get(f"/suivi?date={MON.isoformat()}").text
     assert "Sur le terrain" in page and 'badge st-field">Sur le terrain' in page
 

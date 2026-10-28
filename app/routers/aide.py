@@ -37,7 +37,9 @@ def page(request: Request, db: Session = Depends(get_db)):
     worked = [days[d.strip()] for d in str(params.get("jours_ouvres", "")).split(",") if d.strip() in days]
     p = {k: _hm(v) for k, v in params.items()}
     p["jours_ouvres"] = ", ".join(worked) or "—"
+    auto = [pointage.ATTRIBUTIONS[c][0] for c in str(params.get("attribution_auto", "")).split(",") if c in pointage.ATTRIBUTIONS]
     return render(request, "aide.html", p=p, statuts=pointage.STATUTS, std=validee_allowed(db, request.session.get("role")),
                   alert={"absences": rapports.ALERT_ABSENCES, "retards": rapports.ALERT_RETARDS,
                          "minutes": rapports.ALERT_LATE_MINUTES, "incomplets": rapports.ALERT_INCOMPLETS},
-                  has_direction=bool(mapping and mapping.dir_col), configured=mapping is not None)
+                  has_direction=bool(mapping and mapping.dir_col), configured=mapping is not None,
+                  auto_labels=", ".join(auto))

@@ -17,7 +17,7 @@
 <form method="post" action="/admin/parametres" class="card form" style="max-width:980px"
       data-confirm="Enregistrer ces paramètres ? Ils s'appliqueront à partir de la date d'effet choisie.">
   <div class="param-grid">
-    {% for key, label, kind, default in params if kind != 'days' %}
+    {% for key, label, kind, default in params if kind not in ('days', 'flags') %}
       <label>{{ label }}
         <input type="time" name="{{ key }}" value="{{ values[key] }}" required step="60">
         <span class="muted small">{% if kind == 'duration' %}durée (heures:minutes){% endif %} défaut {{ default }}</span>
@@ -31,6 +31,20 @@
         <label class="check"><input type="checkbox" name="jours_ouvres" value="{{ num }}" {{ 'checked' if num|string in open_days }}> {{ name }}</label>
       {% endfor %}
     </div>
+  </fieldset>
+  <fieldset class="limits" id="attribution"><legend>Durées attribuées automatiquement
+    <span class="muted small">(durée standard donnée d'office pour chaque jour de la situation)</span></legend>
+    <input type="hidden" name="attribution_auto_form" value="1">
+    {% set auto = (values.attribution_auto or '').split(',') %}
+    <div class="days attribution-checks">
+      {% for code, (label, duration_key) in attributions.items() %}
+        <label class="check"><input type="checkbox" name="attribution_auto" value="{{ code }}" {{ 'checked' if code in auto }}>
+          {{ label }} <span class="muted small">({{ values[duration_key] | replace(':', 'h') }})</span></label>
+      {% endfor %}
+    </div>
+    <p class="muted small">Décochée, la situation n'a plus de durée attribuée : la durée standard vient seulement des pointages
+      (agent terrain : temps réellement pointé, sans minimum ; congé, télétravail, arrêt maladie… sans pointage : aucune durée).
+      Le statut (congé, terrain…) reste affiché et compté de la même façon.</p>
   </fieldset>
   <div class="row">
     <label style="max-width:260px">Date d'effet <input type="date" name="date_effet" value="{{ today.isoformat() }}" required>

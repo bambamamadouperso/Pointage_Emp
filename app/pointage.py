@@ -37,7 +37,21 @@ PARAMS = [
     ("duree_mission", "Durée attribuée par jour de mission (autorisation de mission approuvée)", "duration", "08:00"),
     ("duree_repos", "Horaires postés : durée standard attribuée par jour de repos (planning)", "duration", "08:00"),
     ("marge_poste", "Horaires postés : marge avant/après un poste pour y rattacher les pointages", "duration", "04:00"),
+    # Situations dont la durée standard est attribuée automatiquement (ex. 8h par jour de congé) ; décochée : la
+    # durée standard vient seulement des pointages (agent terrain : temps pointé ; congé sans pointage : aucune).
+    ("attribution_auto", "Durées attribuées automatiquement", "flags",
+     "TERRAIN,CONGE,TELETRAVAIL,ARRET_MALADIE,MISSION,CONGE_MATERNITE,REPOS"),
 ]
+# Situations concernées par l'attribution automatique (paramètre « attribution_auto »), avec le paramètre de durée.
+ATTRIBUTIONS = {
+    "TERRAIN": ("Agents terrain (durée minimale par jour)", "duree_terrain"),
+    "CONGE": ("Congés (annuel, exceptionnel)", "duree_conge"),
+    "TELETRAVAIL": ("Télétravail", "duree_teletravail"),
+    "ARRET_MALADIE": ("Arrêt maladie", "duree_arret_maladie"),
+    "MISSION": ("Mission", "duree_mission"),
+    "CONGE_MATERNITE": ("Congé de maternité", "duree_maternite"),
+    "REPOS": ("Repos du planning (horaires postés)", "duree_repos"),
+}
 PARAM_LABELS = {k: label for k, label, _, _ in PARAMS}
 PARAM_TYPES = {k: kind for k, _, kind, _ in PARAMS}
 PARAM_DEFAULTS = {k: default for k, _, _, default in PARAMS}
@@ -65,7 +79,7 @@ CONGES = ("CONGE_ANNUEL", "CONGE_EXCEP", "CONGE_MATERNITE")
 MATERNITY_KINDS = {"maternite": "Congé de maternité", "allaitement": "Période d'allaitement"}
 ALLAITEMENT_HOURS = ("01:00", "02:00", "03:00")
 # Version des objets PostgreSQL : si elle change, ils sont réinstallés automatiquement.
-SQL_VERSION = 21
+SQL_VERSION = 22
 # Taille maximale des fichiers importés (planning, agents terrain).
 MAX_IMPORT_MB = 50
 # Limites des requêtes lancées depuis les pages web : une attente de verrou ou une requête lente ne doit jamais
@@ -92,6 +106,12 @@ def validate_param(key: str, raw: str) -> str:
     """Normalise une valeur saisie (HH:MM, durée HH:MM, jours « 1,2,3 ») ou lève PointageError."""
     kind = PARAM_TYPES[key]
     raw = (raw or "").strip()
+    if kind == "flags":
+        chosen = {f.strip().upper() for f in raw.split(",") if f.strip()}
+        unknown = chosen - set(ATTRIBUTIONS)
+        if unknown:
+            raise PointageError(f"{PARAM_LABELS[key]} : valeur inconnue ({', '.join(sorted(unknown))}).")
+        return ",".join(code for code in ATTRIBUTIONS if code in chosen)
     if kind == "days":
         days = sorted({int(d) for d in re.split(r"[,\s]+", raw) if d.isdigit() and 1 <= int(d) <= 7})
         if not days:
@@ -749,6 +769,7 @@ par AS (
         {param('duree_maternite', '::interval')} AS duree_maternite,
         {param('heures_allaitement', '::interval')} AS heures_allaitement,
         {param('objectif_duree', '::interval')} AS objectif,
+        ',' || {param('attribution_auto', '')} || ',' AS attrib,
         EXISTS (SELECT 1 FROM {S}.pointage_jours_feries f WHERE f.jour = d::date) AS ferie
     FROM generate_series(p_du::timestamp, LEAST(p_au, current_date)::timestamp, interval '1 day') AS d
 ),
@@ -797,7 +818,7 @@ g AS (
            p.debut_journee, p.debut_pause, p.fin_pause, p.fin_journee, p.seuil_retard, p.duree_pause,
            p.duree_conge, p.duree_teletravail, p.duree_terrain, p.duree_maladie, p.duree_repos, p.duree_mission, k.statut AS conge, t.statut AS tele,
            (mal.emp_key IS NOT NULL) AS maladie, (mi.emp_key IS NOT NULL) AS mission,
-           (mat.emp_key IS NOT NULL) AS maternite, p.duree_maternite, p.objectif,
+           (mat.emp_key IS NOT NULL) AS maternite, p.duree_maternite, p.objectif, p.attrib,
            CASE WHEN al.emp_key IS NOT NULL THEN COALESCE(al.heures, p.heures_allaitement) END AS allaitement,
            COALESCE(e.terrain, false) AS terrain,
            s.code AS poste_code, s.type AS poste_type, s.libelle AS poste_libelle, s.s_debut, s.s_fin,
@@ -879,25 +900,30 @@ SELECT c.emp_key, COALESCE(c.matricule, c.emp_key), COALESCE(c.nom, 'Hors liste'
        c.direction, c.site, c.allaitement, c.site_p1, c.site_p2
 FROM c
 CROSS JOIN LATERAL (
+    -- Durées attribuées (congé, télétravail…) : seulement pour les situations cochées dans le paramètre
+    -- « Durées attribuées automatiquement » ; sinon la durée vient des pointages (aucune sans pointage).
     SELECT CASE WHEN c.poste_type = 'travail' AND c.statut IN ('A_L_HEURE', 'RETARD') THEN c.hv_poste
                 -- Repos du planning : durée du code s'il en a une, sinon le paramètre « durée attribuée par jour de repos ».
-                WHEN c.poste_type = 'repos' THEN COALESCE(nullif(c.s_duree, interval '0'), c.duree_repos)
+                WHEN c.poste_type = 'repos' AND position(',REPOS,' in c.attrib) > 0 THEN COALESCE(nullif(c.s_duree, interval '0'), c.duree_repos)
                 WHEN c.poste_type IN ('formation', 'ferie') THEN nullif(c.s_duree, interval '0')
-                WHEN c.statut IN ('CONGE_ANNUEL', 'CONGE_EXCEP') THEN c.duree_conge
-                WHEN c.statut = 'TELETRAVAIL' THEN c.duree_teletravail
-                WHEN c.statut = 'ARRET_MALADIE' THEN c.duree_maladie
-                WHEN c.statut = 'MISSION' THEN c.duree_mission
-                WHEN c.statut = 'CONGE_MATERNITE' THEN c.duree_maternite
-                -- Agent terrain : au moins la durée prévue, davantage si ses pointages le justifient.
-                WHEN c.statut = 'TERRAIN' THEN GREATEST(c.duree_terrain, CASE WHEN c.n >= 2 THEN
+                WHEN c.statut IN ('CONGE_ANNUEL', 'CONGE_EXCEP') AND position(',CONGE,' in c.attrib) > 0 THEN c.duree_conge
+                WHEN c.statut = 'TELETRAVAIL' AND position(',TELETRAVAIL,' in c.attrib) > 0 THEN c.duree_teletravail
+                WHEN c.statut = 'ARRET_MALADIE' AND position(',ARRET_MALADIE,' in c.attrib) > 0 THEN c.duree_maladie
+                WHEN c.statut = 'MISSION' AND position(',MISSION,' in c.attrib) > 0 THEN c.duree_mission
+                WHEN c.statut = 'CONGE_MATERNITE' AND position(',CONGE_MATERNITE,' in c.attrib) > 0 THEN c.duree_maternite
+                -- Agent terrain : au moins la durée prévue (si attribuée), davantage si ses pointages le justifient.
+                WHEN c.statut = 'TERRAIN' THEN GREATEST(CASE WHEN position(',TERRAIN,' in c.attrib) > 0 THEN c.duree_terrain END,
+                    CASE WHEN c.n >= 2 THEN
                     (LEAST(c.p2::time, c.fin_journee) - LEAST(c.p1::time, c.debut_journee)) - c.pause END)
+                WHEN c.statut IN ('CONGE_ANNUEL', 'CONGE_EXCEP', 'TELETRAVAIL', 'ARRET_MALADIE', 'CONGE_MATERNITE',
+                                  'REPOS') THEN NULL
                 WHEN c.n >= 2 THEN GREATEST((c.fin_validee - c.debut_valide) - c.pause, interval '0') END AS hv,
-           CASE WHEN c.statut IN ('CONGE_ANNUEL', 'CONGE_EXCEP') THEN c.duree_conge
-                WHEN c.statut = 'TELETRAVAIL' THEN c.duree_teletravail
-                WHEN c.statut = 'ARRET_MALADIE' THEN c.duree_maladie
+           CASE WHEN c.statut IN ('CONGE_ANNUEL', 'CONGE_EXCEP') AND position(',CONGE,' in c.attrib) > 0 THEN c.duree_conge
+                WHEN c.statut = 'TELETRAVAIL' AND position(',TELETRAVAIL,' in c.attrib) > 0 THEN c.duree_teletravail
+                WHEN c.statut = 'ARRET_MALADIE' AND position(',ARRET_MALADIE,' in c.attrib) > 0 THEN c.duree_maladie
                 WHEN c.statut = 'FORMATION' AND c.n IS NULL THEN nullif(c.s_duree, interval '0')
-                WHEN c.statut = 'MISSION' AND c.n IS NULL THEN c.duree_mission
-                WHEN c.statut = 'CONGE_MATERNITE' THEN c.duree_maternite
+                WHEN c.statut = 'MISSION' AND c.n IS NULL AND position(',MISSION,' in c.attrib) > 0 THEN c.duree_mission
+                WHEN c.statut = 'CONGE_MATERNITE' AND position(',CONGE_MATERNITE,' in c.attrib) > 0 THEN c.duree_maternite
                 WHEN c.n >= 2 THEN GREATEST((c.p2 - c.p1) - COALESCE(c.pause, interval '0'), interval '0') END AS de
 ) v
 CROSS JOIN LATERAL (

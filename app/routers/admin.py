@@ -259,6 +259,7 @@ def _query(conn_id: int, m: pointage.Mapping) -> str:
 def params_page(request: Request, db: Session = Depends(get_db)):
     cfg, mapping = _mapping_ready(db)
     context = dict(mapping=mapping, params=pointage.PARAMS, weekdays=pointage.WEEKDAYS, today=date.today(),
+                   attributions=pointage.ATTRIBUTIONS,
                    values=dict(pointage.PARAM_DEFAULTS), history=[], holidays=[], error=None, upcoming=[])
     if mapping is not None:
         engine = make_engine(cfg.conn, **pointage.WEB_LIMITS)
@@ -327,7 +328,8 @@ async def params_save(request: Request, db: Session = Depends(get_db)):
         values = {}
         current = None
         for key, _, kind, _ in pointage.PARAMS:
-            if kind != "days" and key not in form:  # page ouverte avant l'ajout de ce paramètre : inchangé
+            present = f"{key}_form" in form if kind == "flags" else (kind == "days" or key in form)
+            if not present:  # page ouverte avant l'ajout de ce paramètre : inchangé
                 if current is None:
                     engine = make_engine(cfg.conn, **pointage.WEB_LIMITS)
                     try:
@@ -336,7 +338,7 @@ async def params_save(request: Request, db: Session = Depends(get_db)):
                         engine.dispose()
                 values[key] = current.get(key, pointage.PARAM_DEFAULTS[key])
                 continue
-            raw = ",".join(form.getlist("jours_ouvres")) if kind == "days" else str(form.get(key, ""))
+            raw = ",".join(form.getlist(key)) if kind in ("days", "flags") else str(form.get(key, ""))
             values[key] = pointage.validate_param(key, raw)
         problem = pointage.check_consistency(values)
         if problem:

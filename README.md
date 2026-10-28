@@ -201,6 +201,11 @@ paramétrée, mail à une liste de destinataires si un site n'a remonté aucun p
 (lecteur en panne, réseau, synchronisation arrêtée). Sites surveillés au choix (par défaut tous ceux qui ont pointé
 récemment), jours fériés exclus si souhaité, un seul contrôle par jour, bouton « Contrôler maintenant », journal.
 
+**Durées attribuées automatiquement** (*Paramètres horaires*, historisé avec la date d'effet) : une case par
+situation — agents terrain (minimum par jour), congés, télétravail, arrêt maladie, mission, congé de maternité, repos
+du planning. Décochée, la situation n'a plus de durée standard d'office (8h par défaut) : seule compte la durée des
+pointages (agent terrain : temps pointé, sans minimum ; journée sans pointage : aucune durée). Le statut ne change pas.
+
 **Préférences e-mail des employés** : sur sa page *Mon compte*, chaque employé (compte rattaché à son matricule)
 coche s'il veut recevoir les **mails de badge** (confirmation de chaque pointage) et les **rappels de pointage**.
 L'administrateur fait ce choix pour chaque utilisateur (*Administration → Utilisateurs → Modifier*, rubrique
