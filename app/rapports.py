@@ -151,6 +151,7 @@ def build(engine: Engine, m: Mapping, f: Filters, sort: str = "absences", compar
         out["semaine"] = [dict(x) for x in c.execute(text(f"""
             SELECT extract(isodow FROM jour)::int AS dow,
                 count(*) FILTER (WHERE {_DISPO}) AS disponibles,
+                count(*) FILTER (WHERE {_DISPO} AND {_PRESENT}) AS presents,
                 count(*) FILTER (WHERE statut = 'ABSENT') AS absences,
                 count(*) FILTER (WHERE statut = 'RETARD') AS retards,
                 count(*) FILTER (WHERE statut = 'A_L_HEURE') AS a_l_heure
@@ -160,6 +161,7 @@ def build(engine: Engine, m: Mapping, f: Filters, sort: str = "absences", compar
             ponct = w["retards"] + w["a_l_heure"]
             w["taux_retard"] = w["retards"] * 100.0 / ponct if ponct else None
             w["taux_absence"] = w["absences"] * 100.0 / w["disponibles"] if w["disponibles"] else None
+            w["taux_presence"] = w["presents"] * 100.0 / w["disponibles"] if w["disponibles"] else None
 
         # Heures d'arrivée au bureau, par quart d'heure.
         out["arrivees"] = [dict(x) for x in c.execute(text(f"""

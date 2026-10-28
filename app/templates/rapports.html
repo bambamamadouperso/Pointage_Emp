@@ -130,15 +130,18 @@
 <div class="report-grid">
   <section class="card">
     <h2>Selon le jour de la semaine</h2>
-    <p class="muted small">Un pic le lundi ou le vendredi signale souvent des absences de confort.</p>
-    <ul class="legend"><li><span class="swatch" style="background:#e11d48"></span>Taux d'absentéisme</li>
+    <p class="muted small">Un creux de présence (ou un pic d'absences) le lundi ou le vendredi signale souvent des absences de confort.</p>
+    <ul class="legend"><li><span class="swatch" style="background:#10b981"></span>Taux de présence</li>
+      <li><span class="swatch" style="background:#e11d48"></span>Taux d'absentéisme</li>
       <li><span class="swatch" style="background:#f97316"></span>Taux de retard</li></ul>
-    {% set wmax = [data.semaine | map(attribute='taux_absence') | select('number') | max | default(0),
+    {% set wmax = [data.semaine | map(attribute='taux_presence') | select('number') | max | default(0),
+                   data.semaine | map(attribute='taux_absence') | select('number') | max | default(0),
                    data.semaine | map(attribute='taux_retard') | select('number') | max | default(0), 1] | max %}
     <div class="hbars">
       {% for w in data.semaine %}
       <div class="hbar-row"><span class="hbar-label">{{ w.jour }}</span>
         <div class="hbar-track">
+          <div class="hbar" tabindex="0" data-tip="{{ w.jour }}|{{ pct(w.taux_presence) }} de présence ({{ w.presents }} journée(s) présente(s) sur {{ w.disponibles }})"><span style="width:{{ ((w.taux_presence or 0) / wmax * 100) | round(1) }}%; background:#10b981"></span><em>{{ pct(w.taux_presence) }}</em></div>
           <div class="hbar" tabindex="0" data-tip="{{ w.jour }}|{{ pct(w.taux_absence) }} d'absentéisme ({{ w.absences }} absence(s))"><span style="width:{{ ((w.taux_absence or 0) / wmax * 100) | round(1) }}%; background:#e11d48"></span><em>{{ pct(w.taux_absence) }}</em></div>
           <div class="hbar" tabindex="0" data-tip="{{ w.jour }}|{{ pct(w.taux_retard) }} de retards ({{ w.retards }} retard(s))"><span style="width:{{ ((w.taux_retard or 0) / wmax * 100) | round(1) }}%; background:#f97316"></span><em>{{ pct(w.taux_retard) }}</em></div>
         </div></div>

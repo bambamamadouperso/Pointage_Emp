@@ -590,7 +590,7 @@ def _cfg_data() -> str:
         return db.query(PointageConfig).one().data
 
 
-def test_reports_page_and_export(configured, logged_client):
+def test_reports_page_and_export(configured, pg, logged_client):
     """Rapports : indicateurs, graphiques, services, alertes, employés, export Excel."""
     import io
 
@@ -605,6 +605,13 @@ def test_reports_page_and_export(configured, logged_client):
         assert part in html, part
     assert "Ba Khady" in html and "Production" in html and "RH" in html
     assert "<svg class=\"chart\"" in html and "data-tip=" in html
+    assert "Taux de présence</li>" in html and "de présence (" in html  # par jour de la semaine
+    with SessionLocal() as db:
+        m = pointage.Mapping.from_json(db.query(PointageConfig).one().data)
+    from app import rapports
+    week = {w["jour"]: w for w in rapports.build(pg, m, pointage.Filters(du=MON, au=MON + timedelta(days=4)))["semaine"]}
+    lundi = week["Lundi"]
+    assert lundi["taux_presence"] == lundi["presents"] * 100.0 / lundi["disponibles"] and lundi["presents"] > 0
     # Tri, filtre service et période prédéfinie
     assert logged_client.get(url + "&tri=retards&service=RH").status_code == 200
     assert logged_client.get("/rapports?p=mois-1").status_code == 200
