@@ -621,13 +621,13 @@ class StaffAccessSettings(Base):
 
 
 # Ordre d'affichage : matin (avertissement puis alerte), soir (avertissement avant le départ, puis départ non pointé),
-# lendemain (oubli de la veille).
+# lendemain (pointage partiel de la veille).
 REMINDER_KINDS = {
     "arrivee": "Matin — avertissement : arrivée non pointée",
     "alerte": "Matin — alerte : toujours aucun pointage",
     "avant_depart": "Soir — avertissement : pensez à badger en partant",
     "depart": "Soir — départ non pointé",
-    "oubli": "Oubli de la veille",
+    "oubli": "Pointage partiel de la veille",
 }
 
 
@@ -666,7 +666,7 @@ class ReminderSettings(Base):
     predeparture_before: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=15)
     # Objet et texte personnalisés par type de rappel (JSON {type: {"subject": …, "body": …}}, vide = texte par défaut).
     texts: Mapped[Optional[str]] = mapped_column(Text, nullable=True, default="{}")
-    # Oubli de la veille : rappel le matin des journées restées incomplètes (un seul pointage), 3 jours au plus.
+    # Pointage partiel de la veille : rappel le matin des journées restées incomplètes (un seul pointage), 3 jours au plus.
     forgot_enabled: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True, default=False)
     forgot_time: Mapped[Optional[str]] = mapped_column(String(5), nullable=True, default="09:00")
     forgot_cc_manager: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True, default=False)

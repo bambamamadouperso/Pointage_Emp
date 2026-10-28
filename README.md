@@ -157,11 +157,11 @@ un poste planifié couvert par une mission approuvée devient « En mission », 
 
 **Résumés par mail** (*Administration → Résumés par mail*) : chaque responsable abonné reçoit le point de la veille
 (quotidien) et/ou de la semaine passée (hebdomadaire) sur son équipe N-1 (ou toute sa hiérarchie) : taux de présence
-et de ponctualité avec l'évolution, absences, retards, oublis de badge, autres situations, détail par collaborateur.
+et de ponctualité avec l'évolution, absences, retards, pointages partiels, autres situations, détail par collaborateur.
 Serveur SMTP et mode test/production des mails de badge ; un seul envoi par responsable et par période.
 
 **Rappels de pointage** (*Administration → Rappels de pointage*) : avertissements et alertes par e-mail aux
-employés pour limiter les oublis de badge. Cinq messages, activables séparément, à heure paramétrable et au texte
+employés pour limiter les pointages partiels. Cinq messages, activables séparément, à heure paramétrable et au texte
 personnalisable (objet et texte, variables `{prenom}`, `{nom}`, `{matricule}`, `{date}`, `{poste}`, `{arrivee}`,
 `{dernier}`) :
 - *matin — avertissement* (arrivée non pointée) : employé attendu (jour ouvré, sans congé, arrêt, télétravail,
@@ -173,7 +173,7 @@ personnalisable (objet et texte, variables `{prenom}`, `{nom}`, `{matricule}`, `
   de pointages) à l'heure choisie (ex. 16:45), ou N minutes avant la fin de leur poste ;
 - *soir — départ non pointé* : employé qui n'a badgé que son arrivée à l'heure choisie (ex. 17:45) ; poste
   planifié : N minutes après la fin du poste (nuits comprises) ;
-- *oubli de la veille* : chaque matin, rappel des journées restées incomplètes (un seul pointage) des 3 derniers
+- *pointage partiel de la veille* : chaque matin, rappel des journées restées incomplètes (un seul pointage) des 3 derniers
   jours, avec le responsable N+1 en copie si souhaité.
 
 Les rappels ont la même présentation que le mail de confirmation de badge (en-tête de l'entreprise, case

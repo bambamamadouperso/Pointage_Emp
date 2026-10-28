@@ -146,7 +146,7 @@ def start() -> None:
 
     scheduler.add_job(validations.run_due, IntervalTrigger(minutes=10), id="validations", replace_existing=True,
                       next_run_time=datetime.now() + timedelta(minutes=3))
-    from . import rappels  # rappels de pointage aux employés (arrivée, départ, oubli de la veille)
+    from . import rappels  # rappels de pointage aux employés (arrivée, départ, pointage partiel de la veille)
 
     scheduler.add_job(rappels.run_due, IntervalTrigger(minutes=5), id="rappels", replace_existing=True,
                       next_run_time=datetime.now() + timedelta(minutes=2))

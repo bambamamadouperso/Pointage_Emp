@@ -32,7 +32,7 @@
       <span><strong>Mails de badge</strong><br><span class="muted small">Un mail de confirmation à chacun de mes pointages.</span></span></label>
     <label class="check"><input type="checkbox" name="rappels" value="true" {{ 'checked' if prefs.rappels }} {{ 'disabled' if prefs.locked }}>
       <span><strong>Rappels de pointage</strong><br><span class="muted small">Avertissements et alertes quand mon arrivée ou mon départ
-        n'est pas badgé, oubli de la veille.</span></span></label>
+        n'est pas badgé, pointage partiel de la veille.</span></span></label>
     {% if not prefs.locked %}<div class="form-actions"><button class="btn primary">Enregistrer mes choix</button></div>{% endif %}
   </form>
 </section>

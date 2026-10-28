@@ -160,7 +160,7 @@ def insights(data: dict) -> list[tuple[str, str]]:
             late.sort(key=lambda x: -x[1])
             out.append(("warn", f"{len(late)} retard(s) : " + _names([f"{_name(r)} ({int(mn)} min)" for r, mn in late]) + "."))
         if inc:
-            out.append(("info", f"Badge oublié (un seul pointage) : {_names(inc)}."))
+            out.append(("info", f"Pointage partiel (un seul pointage) : {_names(inc)}."))
         if short:
             h = data["objectif_min"]
             out.append(("warn", f"Sous l'objectif de {h // 60}h{h % 60:02d} de durée standard : {_names(short)}."))
@@ -176,7 +176,7 @@ def insights(data: dict) -> list[tuple[str, str]]:
             out.append(("warn", f"{k['retards']} retard(s) cumulant {pointage.hhmm(timedelta(minutes=float(k['retard_min_total'])))} : "
                                 + _names([f"{_name(e)} ({e['retards']}×)" for e in late], 3) + "."))
         if inc:
-            out.append(("info", "Badges oubliés : " + _names([f"{_name(e)} ({e['incomplets']} j)" for e in inc]) + "."))
+            out.append(("info", "Pointages partiels : " + _names([f"{_name(e)} ({e['incomplets']} j)" for e in inc]) + "."))
         for a in data["alertes"]:
             if a["gravite"] >= 2 and a["motif"] == "Absences en début ou fin de semaine":
                 out.append(("warn", f"{a['nom']} : {a['detail']}."))
@@ -193,7 +193,7 @@ def insights(data: dict) -> list[tuple[str, str]]:
     if others:
         out.append(("info", ("Autres situations (journées) : " if not daily else "Autres situations : ") + ", ".join(others) + "."))
     if not k.get("absences") and not k.get("retards") and not k.get("incomplets"):
-        out.append(("ok", "Aucune absence, aucun retard, aucun oubli de badge : bravo à l'équipe !"))
+        out.append(("ok", "Aucune absence, aucun retard, aucun pointage partiel : bravo à l'équipe !"))
     return out
 
 
@@ -277,7 +277,7 @@ def render(data: dict, manager_name: str, company: str = "", app_url: str = "") 
             f"<td {td}>{_dur(r['duree_validee_min'], data['objectif_min'])}</td></tr>" for r in data["rows"])
     else:
         head = (f"<tr><th {th}>Collaborateur</th><th {th}>Présence</th><th {th}>Retards</th><th {th}>Absences</th>"
-                f"<th {th}>Oublis</th><th {th}>Heures standard</th><th {th}>Moy. standard / jour</th>"
+                f"<th {th}>Pointages partiels</th><th {th}>Heures standard</th><th {th}>Moy. standard / jour</th>"
                 f"<th {th}>Moy. effective / jour</th></tr>")
         body = "".join(_week_row(e, td, data["objectif_min"])
                        for e in sorted(data["employes"], key=lambda e: _name(e).lower()))

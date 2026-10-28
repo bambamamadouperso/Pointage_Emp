@@ -44,7 +44,7 @@ _ATTENDU = "jour_ouvre AND statut <> 'NON_OUVRE'"
 _DISPO = f"{_ATTENDU} AND statut NOT IN ('CONGE_ANNUEL', 'CONGE_EXCEP', 'CONGE_MATERNITE', 'ARRET_MALADIE')"
 _PRESENT = "statut IN ('A_L_HEURE', 'RETARD', 'INCOMPLET', 'TERRAIN', 'TELETRAVAIL', 'FORMATION', 'MISSION')"
 _BUREAU = "statut IN ('A_L_HEURE', 'RETARD')"
-# Les oublis de badge ne sont comptés que les jours terminés (aujourd'hui, le départ n'a pas encore eu lieu).
+# Les pointages partiels ne sont comptés que les jours terminés (aujourd'hui, le départ n'a pas encore eu lieu).
 
 
 def period(preset: str, today: Optional[date] = None) -> tuple[date, date]:
@@ -237,7 +237,7 @@ def alerts(employees: list[dict]) -> list[dict]:
             out.append({**who, "gravite": 2, "motif": "Retards fréquents",
                         "detail": f"{e['retards']} retard(s), {pointage.hhmm(timedelta(minutes=float(e['retard_min_total'])))} cumulées"})
         if e["incomplets"] >= ALERT_INCOMPLETS:
-            out.append({**who, "gravite": 1, "motif": "Oublis de badge",
+            out.append({**who, "gravite": 1, "motif": "Pointages partiels",
                         "detail": f"{e['incomplets']} journée(s) avec un seul pointage (arrivée ou départ manquant)"})
     out.sort(key=lambda a: (-a["gravite"], a["motif"], a["nom"]))
     return out

@@ -58,7 +58,7 @@
       <tr><td><span class="badge st-remote">Télétravail</span></td><td>Télétravail approuvé, jour sans pointage (y compris un jour non ouvré).</td><td>[{{ p.duree_teletravail }}]</td></tr>
       <tr><td><span class="badge st-field">Sur le terrain</span></td><td>Agent terrain (commercial…) un jour ouvré, qu'il passe au bureau ou non : ni retard ni pointage incomplet.</td><td>au moins [{{ p.duree_terrain }}]</td></tr>
       <tr><td><span class="badge st-abs">Absent</span></td><td>Jour attendu, <strong>aucun pointage</strong> et aucune situation ci-dessus. Une demande non encore validée reste une absence (signalée « ⏳ en attente »).</td><td>—</td></tr>
-      <tr><td><span class="badge st-inc">Pointage incomplet</span></td><td><strong>Un seul pointage</strong> dans la journée (arrivée ou départ manquant = oubli de badge).</td><td>—</td></tr>
+      <tr><td><span class="badge st-inc">Pointage incomplet</span></td><td><strong>Un seul pointage</strong> dans la journée (arrivée ou départ manquant = pointage partiel).</td><td>—</td></tr>
       <tr><td><span class="badge st-late">En retard</span></td><td>Au moins deux pointages et <code>P1 ≥ seuil de retard</code> [{{ p.seuil_retard }}] (seuil décalé des heures d'allaitement ; poste planifié : début du poste + même tolérance).</td><td>calculée (voir 3)</td></tr>
       <tr><td><span class="badge st-ok">À l'heure</span></td><td>Au moins deux pointages et <code>P1 &lt; seuil de retard</code>.</td><td>calculée (voir 3)</td></tr>
       <tr><td><span class="badge st-off">Jour non ouvré</span></td><td>Jour non travaillé (week-end, férié) sans pointage.</td><td>—</td></tr>
@@ -130,7 +130,7 @@
       <tr><td><strong>Retards</strong></td><td>Nombre de journées En retard ; <em>cumul</em> = somme des minutes de retard ; <em>moyenne</em> = cumul ÷ nombre de retards.</td></tr>
       <tr><td><strong>Heures standard</strong> <span class="muted small">(RH et administrateurs)</span></td><td><code class="formula">Σ durées standard ÷ 60</code> (toutes les journées, durées attribuées comprises)</td></tr>
       <tr><td><strong>Moyenne / jour au bureau</strong> <span class="muted small">(RH et administrateurs)</span></td><td>Moyenne de la durée standard des journées À l'heure et En retard.</td></tr>
-      <tr><td><strong>Oublis de badge</strong></td><td>Nombre de journées Pointage incomplet, <strong>jours terminés</strong> seulement (aujourd'hui, le départ n'a pas encore eu lieu).</td></tr>
+      <tr><td><strong>Pointages partiels</strong></td><td>Nombre de journées Pointage incomplet, <strong>jours terminés</strong> seulement (aujourd'hui, le départ n'a pas encore eu lieu).</td></tr>
       <tr><td><strong>Arrivée moyenne</strong> (par employé)</td><td>Moyenne des P1 des journées À l'heure et En retard, hors horaires postés.</td></tr>
       <tr><td><strong>Évolution</strong> (▲ ▼)</td><td>Écart en points avec la période précédente de même durée (périodes de 120 jours au plus, si les pointages la couvrent).</td></tr>
       <tr><td><strong>Présence par jour / par semaine</strong></td><td>Répartition des journées-employé par statut ; par semaine au-delà de 62 jours.</td></tr>
@@ -155,7 +155,7 @@
       <tr><td>Absences répétées</td><td><code>absences ≥ {{ alert.absences }}</code> sur la période</td><td><span class="badge st-abs">forte</span></td></tr>
       <tr><td>Absences en début ou fin de semaine</td><td><code>absences ≥ 2</code> et au moins 70 % d'entre elles un lundi ou un vendredi</td><td><span class="badge st-late">moyenne</span></td></tr>
       <tr><td>Retards fréquents</td><td><code>retards ≥ {{ alert.retards }}</code> ou <code>retard cumulé ≥ {{ alert.minutes // 60 }}h{{ '%02d' % (alert.minutes % 60) }}</code></td><td><span class="badge st-late">moyenne</span></td></tr>
-      <tr><td>Oublis de badge</td><td><code>pointages incomplets ≥ {{ alert.incomplets }}</code></td><td><span class="badge st-inc">faible</span></td></tr>
+      <tr><td>Pointages partiels</td><td><code>pointages incomplets ≥ {{ alert.incomplets }}</code></td><td><span class="badge st-inc">faible</span></td></tr>
     </tbody>
   </table></div>
 </section>

@@ -17,7 +17,7 @@ from .suivi import (ScopeError, apply_scope, chosen_categories, default_categori
 
 router = APIRouter(prefix="/rapports", dependencies=[Depends(require_login)])
 
-SORTS = {"absences": "Absences", "retards": "Retards", "retard_min": "Minutes de retard", "incomplets": "Oublis de badge",
+SORTS = {"absences": "Absences", "retards": "Retards", "retard_min": "Minutes de retard", "incomplets": "Pointages partiels",
          "presence": "Taux de présence (croissant)", "heures": "Heures standard", "nom": "Nom"}
 
 
@@ -252,7 +252,7 @@ def export_pdf(request: Request, db: Session = Depends(get_db)):
         ("Heures standard", f"{num(round(float(k['heures_validees'] or 0)))} h",
          f"{hours(k['heures_moy_bureau'])} par jour au bureau" if k.get("heures_moy_bureau") else "", pdf.TEAL) if std else
         ("Journées attendues", num(k["attendus"]), f"{num(k['employes'])} employé(s)", pdf.TEAL),
-        ("Oublis de badge", num(k["incomplets"]), "journées avec un seul pointage", pdf.GREY),
+        ("Pointages partiels", num(k["incomplets"]), "journées avec un seul pointage", pdf.GREY),
     ])
     doc.filters([("Employés", num(k["employes"])), ("Journées attendues", num(k["attendus"])), ("En congé", num(k["conges"])),
                  ("Arrêt maladie", num(k["maladies"])), ("Télétravail", num(k["teletravail"])),
@@ -266,7 +266,7 @@ def export_pdf(request: Request, db: Session = Depends(get_db)):
                 pills[(i, col)] = pill
 
     group_headers = ["Employés", "Présence", "Absentéisme", "Ponctualité", "Retards", "Min. de retard", "Absences",
-                     "Oublis de badge", "Heures standard", "Moy. / jour au bureau"]
+                     "Pointages partiels", "Heures standard", "Moy. / jour au bureau"]
     group_widths = [16, 18, 20, 20, 15, 20, 16, 20, 20, 26]
     if not std:
         group_headers, group_widths = group_headers[:-2], group_widths[:-2]
@@ -310,7 +310,7 @@ def export_pdf(request: Request, db: Session = Depends(get_db)):
         pills = {(i, j + (j >= 3)): v for (i, j), v in pills.items()}
         colors = {(i, j + (j >= 3)): v for (i, j), v in colors.items()}
     doc.table(["Matricule", "Nom", "Service", *(["Direction"] if has_dir else []), "Statut du personnel", "Attendus",
-               "Présences", "Présence", "Retards", "Min. de retard", "Ponctualité", "Absences", "Oublis", "Congés",
+               "Présences", "Présence", "Retards", "Min. de retard", "Ponctualité", "Absences", "Pointages partiels", "Congés",
                "Heures standard"][:cut],
               [[e["matricule"], " ".join(filter(None, [e["nom"], e["prenom"]])), e["service"],
                 *([e.get("direction")] if has_dir else []), e["categorie"], num(e["attendus"]),

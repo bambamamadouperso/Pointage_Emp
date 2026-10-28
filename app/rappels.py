@@ -1,4 +1,4 @@
-"""Rappels de pointage envoyés par e-mail aux employés, pour limiter les oublis de badge.
+"""Rappels de pointage envoyés par e-mail aux employés, pour limiter les pointages partiels.
 
 Cinq messages, chacun activable, à heure paramétrable et au texte personnalisable :
 - matin, avertissement (arrivée non pointée) : employé attendu aujourd'hui (jour ouvré, ni congé, ni arrêt, ni
@@ -10,7 +10,7 @@ Cinq messages, chacun activable, à heure paramétrable et au texte personnalisa
   ou N minutes avant la fin de son poste : « n'oubliez pas de badger en partant » ;
 - soir, départ non pointé : employé qui n'a qu'un seul pointage (son arrivée) à l'heure indiquée ; poste planifié :
   N minutes après la fin de son poste (nuits comprises) ;
-- oubli de la veille : le matin, rappel des journées restées incomplètes (un seul pointage) des 3 derniers jours,
+- pointage partiel de la veille : le matin, rappel des journées restées incomplètes (un seul pointage) des 3 derniers jours,
   avec copie au responsable si souhaité.
 
 Garde-fous (comme les résumés) : serveur SMTP et mode test / production des « Mails de badge » ; un seul rappel par
@@ -38,7 +38,7 @@ from .models import (REMINDER_AUDIENCES, REMINDER_KINDS, JobRun, MailSubscriber,
 logger = logging.getLogger("rappels")
 MAX_ATTEMPTS = 3
 WINDOW = timedelta(hours=3)  # au-delà, un rappel non envoyé (application arrêtée) est abandonné
-LOOKBACK_DAYS = 3            # oubli de la veille : journées incomplètes des 3 derniers jours
+LOOKBACK_DAYS = 3            # pointage partiel de la veille : journées incomplètes des 3 derniers jours
 _TIME = re.compile(r"^([01]?\d|2[0-3])[:hH]([0-5]\d)$")
 PRESENT = ("A_L_HEURE", "RETARD", "INCOMPLET")
 

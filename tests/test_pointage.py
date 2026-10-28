@@ -1947,7 +1947,7 @@ def test_punch_reminders(configured, pg, logged_client, monkeypatch):
         assert delivered[-1]["Subject"] == "[TEST] Rappel : pensez à pointer votre départ"
         assert "Votre dernier pointage aujourd'hui date de 07h40" in delivered[-1].get_body(("html",)).get_content()
 
-        # Oubli de la veille, en production : à l'employé, responsable N+1 (Sow Fatou) en copie.
+        # Pointage partiel de la veille, en production : à l'employé, responsable N+1 (Sow Fatou) en copie.
         configure(forgot_enabled=True, forgot_cc_manager=True)
         with SessionLocal() as db:
             db.query(MailSettings).one().mode = "production"
@@ -2058,7 +2058,7 @@ def test_punch_reminders(configured, pg, logged_client, monkeypatch):
         assert "Situation du jour" in page and "Rappels et heures d'envoi" in page and 'value="08:20"' in page
         assert "Pensez à pointer votre départ" in logged_client.get("/admin/rappels/apercu?kind=depart").text
         r = logged_client.post("/admin/rappels/essai", data={"kind": "oubli", "to": "moi@exemple.com"}, follow_redirects=True)
-        assert "Rappel d&#39;essai « Oubli de la veille » envoyé à moi@exemple.com" in r.text
+        assert "Rappel d&#39;essai « Pointage partiel de la veille » envoyé à moi@exemple.com" in r.text
         assert delivered[-1]["To"] == "moi@exemple.com" and delivered[-1]["Subject"].startswith("[TEST] Pointage incomplet")
         assert "Rappels de pointage" in logged_client.get("/admin").text
     finally:

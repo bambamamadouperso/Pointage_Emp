@@ -106,7 +106,7 @@
   <h3 class="moment">Le lendemain</h3>
   <div class="digest-plan">
     <label class="check"><input type="checkbox" name="forgot_enabled" value="true" {{ 'checked' if s.forgot_enabled }}>
-      <span><strong>Oubli de la veille</strong> — journée restée incomplète (un seul pointage), rappelée le lendemain ({{ lookback }} jours au plus)</span></label>
+      <span><strong>Pointage partiel de la veille</strong> — journée restée incomplète (un seul pointage), rappelée le lendemain ({{ lookback }} jours au plus)</span></label>
     <div class="inline">
       <label>Chaque matin à <input name="forgot_time" value="{{ s.forgot_time or '09:00' }}" size="5" placeholder="09:00"></label>
       <label class="check"><input type="checkbox" name="forgot_cc_manager" value="true" {{ 'checked' if s.forgot_cc_manager }}>

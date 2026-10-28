@@ -15,7 +15,7 @@
   <div class="card-head"><div><h2>{{ title }}</h2><p class="muted small">Classés du plus fort au plus faible absentéisme.</p></div></div>
   <div class="table-wrap"><table class="report-table">
     <thead><tr><th>{{ first_col }}</th><th class="right">Employés</th><th>Présence</th><th>Absentéisme</th><th class="right">Ponctualité</th>
-      <th class="right">Retards</th><th class="right">Oublis de badge</th>{% if std %}<th class="right" title="Durée standard moyenne par jour de présence au bureau">Moy. / jour au bureau</th>{% endif %}</tr></thead>
+      <th class="right">Retards</th><th class="right">Pointages partiels</th>{% if std %}<th class="right" title="Durée standard moyenne par jour de présence au bureau">Moy. / jour au bureau</th>{% endif %}</tr></thead>
     <tbody>{% for s in rows %}
       <tr><td><a href="?{{ request.query_params | with_param(param, s.groupe) }}">{{ s.groupe }}</a></td><td class="right">{{ s.employes }}</td>
         <td class="nowrap"><span class="meter ok"><span style="width:{{ (s.taux_presence or 0) | round(1) }}%"></span></span> {{ pct(s.taux_presence) }}</td>
@@ -94,7 +94,7 @@
     <span class="hint">{{ hhmm(timedelta(minutes=k.retard_min_total | float)) }} cumulées{% if k.retard_min_moyen %} · {{ k.retard_min_moyen | round | int }} min en moyenne{% endif %}</span></div>
   {% if std %}<div class="stat c-teal"><span class="label">Heures standard</span><span class="value">{{ (k.heures_validees or 0) | round | int | num }} h</span>
     <span class="hint">{% if k.heures_moy_bureau %}{{ hhmm(timedelta(hours=k.heures_moy_bureau | float)) }} par jour au bureau{% endif %}</span></div>{% endif %}
-  <div class="stat c-inc"><span class="label">Oublis de badge</span><span class="value">{{ k.incomplets | num }}</span>
+  <div class="stat c-inc"><span class="label">Pointages partiels</span><span class="value">{{ k.incomplets | num }}</span>
     <span class="hint">journées avec un seul pointage</span></div>
 </section>
 <p class="muted small kpi-note">{{ k.employes | num }} employé(s) · {{ k.attendus | num }} journées ouvrées attendues ·
@@ -158,7 +158,7 @@
     <label class="check small">Trier par <select name="tri" form="rfilters">{% for code, label in sorts.items() %}<option value="{{ code }}" {{ 'selected' if sort == code }}>{{ label }}</option>{% endfor %}</select></label></div>
   <div class="table-wrap"><table class="report-table">
     <thead><tr><th>Matricule</th><th>Nom</th><th>Service</th>{% if has_direction %}<th>Direction</th>{% endif %}{% if categories %}<th>Statut</th>{% endif %}<th class="right">Présence</th><th class="right">Absences</th>
-      <th class="right">Retards</th><th class="right">Retard cumulé</th><th class="right">Arrivée moy.</th><th class="right">Oublis</th>
+      <th class="right">Retards</th><th class="right">Retard cumulé</th><th class="right">Arrivée moy.</th><th class="right">Pointages partiels</th>
       <th class="right">Congé</th><th class="right">Télétr.</th>{% if std %}<th class="right">Heures standard</th>{% endif %}</tr></thead>
     <tbody>{% for e in data.employes[:100] %}
       <tr><td class="mono small">{{ e.matricule }}</td>
@@ -199,7 +199,7 @@
 <section class="card">
   <div class="card-head"><div><h2>À suivre</h2>
     <p class="muted small">Situations à examiner avec le responsable : {{ 3 }}+ absences, absences surtout le lundi ou le vendredi,
-      {{ 3 }}+ retards ou 2h de retard cumulé, {{ 3 }}+ oublis de badge.</p></div></div>
+      {{ 3 }}+ retards ou 2h de retard cumulé, {{ 3 }}+ pointages partiels.</p></div></div>
   {% if not data.alertes %}<p class="empty">Rien à signaler sur cette période.</p>{% else %}
   <div class="table-wrap"><table>
     <thead><tr><th>Motif</th><th>Employé</th><th>Service</th><th>Responsable</th><th>Détail</th><th></th></tr></thead>

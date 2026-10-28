@@ -1,4 +1,4 @@
-"""Administration des rappels de pointage envoyés aux employés (arrivée, départ, oubli de la veille)."""
+"""Administration des rappels de pointage envoyés aux employés (arrivée, départ, pointage partiel de la veille)."""
 import json
 
 from fastapi import APIRouter, Depends, Form, Request
@@ -74,7 +74,7 @@ async def save_settings(request: Request, db: Session = Depends(get_db)):
                                 ("alert_time", "Heure de l'alerte du matin", "09:30"),
                                 ("predeparture_time", "Heure de l'avertissement du soir", "16:45"),
                                 ("departure_time", "Heure du rappel de départ", "17:45"),
-                                ("forgot_time", "Heure du rappel des oublis", "09:00")):
+                                ("forgot_time", "Heure du rappel des pointages partiels", "09:00")):
         times[key] = rappels.parse_time(get(key, default))
         if times[key] is None:
             flash(request, f"{label} invalide : format HH:MM (ex. 08:15).", "err")
@@ -122,7 +122,7 @@ async def save_settings(request: Request, db: Session = Depends(get_db)):
                f"alerte du matin {state(s.alert_enabled, f'{s.alert_time}, postes +{s.alert_delay} min')}, "
                f"avertissement du soir {state(s.predeparture_enabled, f'{s.predeparture_time}, postes -{s.predeparture_before} min')}, "
                f"départ non pointé {state(s.departure_enabled, f'{s.departure_time}, postes +{s.departure_delay} min')}, "
-               f"oubli de la veille {state(s.forgot_enabled, s.forgot_time)}, "
+               f"pointage partiel de la veille {state(s.forgot_enabled, s.forgot_time)}, "
                f"destinataires {s.audience}, services {rappels.values(s.services) or 'tous'}, sites {rappels.values(s.sites) or 'tous'}, "
                f"directions {rappels.values(s.directions) or 'toutes'}")
     flash(request, "Paramètres des rappels enregistrés.", "ok")
