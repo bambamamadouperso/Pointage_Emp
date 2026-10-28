@@ -273,6 +273,9 @@ class User(Base):
     personal_password: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True, default=False)
     # Adresse e-mail du compte (notifications) ; à défaut, celle de la fiche employé (matricule).
     email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    # Préférences e-mail (mails de badge, rappels) : l'employé peut-il les changer lui-même (page « Mon compte ») ?
+    # NULL = oui ; l'administrateur peut verrouiller ce choix pour chaque utilisateur.
+    mail_prefs_locked: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True, default=False)
 
     @property
     def role_label(self) -> str:
@@ -351,6 +354,9 @@ class MailSubscriber(Base):
     matricule: Mapped[str] = mapped_column(String(100), default="")
     name: Mapped[str] = mapped_column(String(255), default="")
     email: Mapped[str] = mapped_column(String(255), default="")  # vide : adresse de la fiche employé
+    # Choix de l'employé (page « Mon compte ») ou de l'administrateur : NULL = oui (lignes antérieures).
+    badge_enabled: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True, default=True)      # mails de badge
+    reminders_enabled: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True, default=True)  # rappels de pointage
     added_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     added_by: Mapped[str] = mapped_column(String(100), default="")
 

@@ -162,10 +162,47 @@ def logout(request: Request):
 @app.get("/compte")
 def account(request: Request):
     username = request.session.get("user", "")
+    from . import preferences
+
     with SessionLocal() as db:
         me = db.query(User).filter(User.username == username).one_or_none()
-    return render(request, "account.html", rescue=auth.is_rescue_admin(username), me=me,
+        prefs = preferences.current(db, me)
+    return render(request, "account.html", rescue=auth.is_rescue_admin(username), me=me, prefs=prefs,
                   must_change=bool(me and me.must_change_password))
+
+
+@app.post("/compte/mails")
+def account_mails(request: Request, badge: bool = Form(False), rappels: bool = Form(False)):
+    """Choix de l'employé : recevoir ou non les mails de badge et les rappels de pointage."""
+    from . import pointage, preferences
+    from .routers.suivi import load_config
+    from .sync import make_engine
+
+    username = request.session.get("user", "")
+    with SessionLocal() as db:
+        me = db.query(User).filter(User.username == username).one_or_none()
+        if me is None or not me.emp_matricule:
+            flash(request, "Votre compte n'est rattaché à aucun employé.", "err")
+            return redirect("/compte")
+        if me.mail_prefs_locked:
+            flash(request, "Vos préférences d'e-mail sont définies par l'administrateur.", "warn")
+            return redirect("/compte")
+        cfg, mapping = load_config(db)
+        if mapping is None:
+            flash(request, "Le module de pointage n'est pas configuré.", "err")
+            return redirect("/compte")
+        engine = make_engine(cfg.conn, **pointage.WEB_LIMITS)
+        try:
+            preferences.save(db, engine, mapping, me.emp_matricule, badge=badge, rappels=rappels, actor=username)
+        except ValueError as exc:
+            flash(request, str(exc), "err")
+            return redirect("/compte")
+        finally:
+            engine.dispose()
+    choice = preferences.label({"badge": badge, "rappels": rappels})
+    auth.audit(request, "Préférences e-mail modifiées", f"utilisateur {username}", choice)
+    flash(request, f"Préférences enregistrées : {'aucun e-mail' if choice == 'aucun' else 'mails de ' + choice}.", "ok")
+    return redirect("/compte")
 
 
 @app.post("/compte")

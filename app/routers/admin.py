@@ -1041,7 +1041,20 @@ def _employee_accounts(db: Session) -> dict:
 def users(request: Request, db: Session = Depends(get_db)):
     from .. import staff_access
 
-    return render(request, "admin/users.html", users=db.scalars(select(User).order_by(User.username)).all(),
+    from .. import preferences
+    from ..models import MailSubscriber
+
+    users = db.scalars(select(User).order_by(User.username)).all()
+    # Préférences e-mail de chaque compte rattaché à un employé (abonnés repérés par matricule ou clé).
+    subs = {}
+    for sub in db.scalars(select(MailSubscriber)):
+        subs.setdefault(sub.matricule, sub)
+        subs.setdefault(sub.emp_key, sub)
+    everyone = preferences.reminders_for_all(db)
+    prefs = {u.id: {"badge": preferences.badge_on(subs.get(u.emp_matricule)),
+                    "rappels": preferences.reminders_on(subs.get(u.emp_matricule), everyone),
+                    "locked": bool(u.mail_prefs_locked)} for u in users if u.emp_matricule}
+    return render(request, "admin/users.html", users=users, prefs=prefs,
                   roles=ROLES, rescue=auth.settings.admin_username, accounts=_employee_accounts(db),
                   staff=staff_access.get_settings(db), staff_info=staff_access.overview(db))
 
@@ -1148,6 +1161,10 @@ def user_save(
     scope: str = Form("tous"),
     sick_leave_hr: bool = Form(False),
     email: str = Form(""),
+    mail_form: bool = Form(False),
+    mail_badge: bool = Form(False),
+    mail_rappels: bool = Form(False),
+    mail_locked: bool = Form(False),
     db: Session = Depends(get_db),
 ):
     me = request.session.get("user", "")
@@ -1201,7 +1218,38 @@ def user_save(
     auth.audit(request, "Utilisateur créé" if not user_id else "Utilisateur modifié", user.username,
                f"{before} → {describe(user)}")
     flash(request, f"Utilisateur « {user.username} » enregistré.", "ok")
+    if mail_form and user.emp_matricule:
+        _save_mail_prefs(request, db, user, mail_badge, mail_rappels, mail_locked)
     return redirect("/admin/users")
+
+
+def _save_mail_prefs(request: Request, db: Session, user: User, badge: bool, rappels: bool, locked: bool) -> None:
+    """Mails de badge et rappels d'un utilisateur rattaché à un employé, choisis par l'administrateur ;
+    `locked` : l'employé ne peut plus les modifier lui-même (page « Mon compte »)."""
+    from .. import preferences
+
+    cfg, mapping = _mapping_ready(db)
+    if mapping is None:
+        flash(request, "Préférences e-mail non enregistrées : source des pointages non configurée.", "warn")
+        return
+    before = preferences.current(db, user)
+    if before == {"badge": badge, "rappels": rappels, "locked": locked}:
+        return  # rien de changé : pas de ligne d'abonné créée pour rien
+    engine = make_engine(cfg.conn, **pointage.WEB_LIMITS)
+    try:
+        preferences.save(db, engine, mapping, user.emp_matricule, badge=badge, rappels=rappels,
+                         actor=request.session.get("user", ""))
+    except ValueError as exc:
+        flash(request, f"Préférences e-mail non enregistrées : {exc}", "warn")
+        return
+    finally:
+        engine.dispose()
+    user.mail_prefs_locked = locked
+    db.commit()
+    after = preferences.current(db, user)
+    if before != after:
+        auth.audit(request, "Préférences e-mail (administrateur)", user.username,
+                   f"{preferences.label(before)} → {preferences.label(after)}{', verrouillées' if locked else ''}")
 
 
 @router.post("/users/{user_id}/password")

@@ -171,15 +171,24 @@ def audience(s: ReminderSettings) -> str:
 
 
 def subscribers(db) -> dict[str, str]:
-    """Employés abonnés aux mails de badge : {clé employé: adresse saisie (vide = adresse de la fiche)}."""
-    return {x.emp_key: (x.email or "").strip() for x in db.scalars(select(MailSubscriber))}
+    """Employés abonnés qui acceptent les rappels : {clé employé: adresse saisie (vide = adresse de la fiche)}."""
+    return {x.emp_key: (x.email or "").strip() for x in db.scalars(select(MailSubscriber))
+            if x.reminders_enabled is not False}
+
+
+def declined(db) -> set[str]:
+    """Employés qui ont décoché « rappels de pointage » (Mon compte, ou l'administrateur pour eux)."""
+    return {x.emp_key for x in db.scalars(select(MailSubscriber)) if x.reminders_enabled is False}
 
 
 def for_audience(db, s: ReminderSettings, rows: list[dict]) -> list[dict]:
     """Journées des destinataires choisis : par défaut, seulement les employés cochés dans « Mails de badge →
-    Abonnés », avec l'adresse saisie pour eux si elle existe (comme pour la confirmation de pointage)."""
+    Abonnés », avec l'adresse saisie pour eux si elle existe (comme pour la confirmation de pointage).
+    Public « tous » : tous les employés, sauf ceux qui ont refusé les rappels. Dans les deux cas, le choix de
+    l'employé (page « Mon compte ») est respecté."""
     if audience(s) != "abonnes":
-        return rows
+        refused = declined(db)
+        return [r for r in rows if r["emp_key"] not in refused]
     subs = subscribers(db)
     return [{**r, "email": subs[r["emp_key"]] or r.get("email")} for r in rows if r["emp_key"] in subs]
 

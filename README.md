@@ -201,6 +201,14 @@ paramétrée, mail à une liste de destinataires si un site n'a remonté aucun p
 (lecteur en panne, réseau, synchronisation arrêtée). Sites surveillés au choix (par défaut tous ceux qui ont pointé
 récemment), jours fériés exclus si souhaité, un seul contrôle par jour, bouton « Contrôler maintenant », journal.
 
+**Préférences e-mail des employés** : sur sa page *Mon compte*, chaque employé (compte rattaché à son matricule)
+coche s'il veut recevoir les **mails de badge** (confirmation de chaque pointage) et les **rappels de pointage**.
+L'administrateur fait ce choix pour chaque utilisateur (*Administration → Utilisateurs → Modifier*, rubrique
+« E-mails de l'employé ») et peut le **verrouiller** (l'employé ne peut plus le changer) ; *Mails de badge → Abonnés*
+permet de le faire en masse (colonnes Badge et Rappels). Les envois respectent ces choix : mails de badge pour les
+cases « badge » cochées ; rappels pour les cases « rappels » cochées (public « abonnés ») ou pour tous sauf ceux
+qui les ont refusés (public « tous »).
+
 **Serveur d'envoi des e-mails** (*Mails et relances → Serveur d'envoi des e-mails*, administrateurs) : serveur SMTP,
 sécurité, compte, adresse et nom d'expéditeur, « Répondre à », nom de l'entreprise, mode test / production et
 adresses de test, communs à tous les mails de l'application (badge, rappels, relances, résumés, surveillance des

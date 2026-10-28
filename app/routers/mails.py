@@ -23,7 +23,7 @@ SECURITY = {"starttls": "STARTTLS (port 587)", "ssl": "SSL/TLS (port 465)", "non
 def _context(db: Session, tab: str) -> dict:
     s = mails.get_settings(db)
     counts = {
-        "abonnes": db.scalar(select(func.count(MailSubscriber.id))) or 0,
+        "abonnes": db.scalar(select(func.count(MailSubscriber.id)).where(MailSubscriber.badge_enabled.is_not(False))) or 0,
         "envoyes": db.scalar(select(func.count(MailLog.id)).where(MailLog.status == "sent")) or 0,
         "echecs": db.scalar(select(func.count(MailLog.id)).where(MailLog.status == "failed")) or 0,
     }
@@ -204,8 +204,10 @@ def subscribers_page(request: Request, db: Session = Depends(get_db)):
     ctx = _context(db, "abonnes")
     cfg, mapping = load_config(db)
     ctx.update(employees=[], error=None, services=[], has_email_col=bool(mapping and mapping.email_col))
+    from .. import preferences
+
     subs = {x.emp_key: x for x in db.scalars(select(MailSubscriber))}
-    ctx["subs"] = subs
+    ctx["subs"], ctx["rappels_all"] = subs, preferences.reminders_for_all(db)
     if mapping is None:
         ctx["error"] = "Configurez d'abord la source des pointages."
         return render(request, "admin/mails_abonnes.html", **ctx)
@@ -231,30 +233,43 @@ async def subscribers_save(request: Request, db: Session = Depends(get_db)):
         directory = {e["emp_key"]: e for e in pointage.employee_directory(engine, mapping)}
     finally:
         engine.dispose()
-    wanted = [k for k in form.getlist("sub") if k in directory]
+    from .. import preferences
+
+    everyone = preferences.reminders_for_all(db)
+    wanted, reminders = set(form.getlist("sub")) & set(directory), set(form.getlist("rem")) & set(directory)
     current = {x.emp_key: x for x in db.scalars(select(MailSubscriber))}
-    invalid, added = [], 0
+    invalid, added, removed = [], 0, 0
     user = request.session.get("user", "")
-    for key in wanted:
-        e = directory[key]
+    for key, e in directory.items():
+        badge, rappels = key in wanted, key in reminders
+        sub = current.get(key)
+        # Une ligne garde les choix de l'employé : abonné à l'un des deux, ou rappels refusés (public « tous »).
+        needed = badge or rappels or (everyone and not rappels)
+        if not needed:
+            if sub is not None:
+                db.delete(sub)
+                removed += 1
+            continue
         override = str(form.get(f"email_{key}", "")).strip()
         if override and not mails.valid_email(override):
             invalid.append(f"{e['matricule']} ({override})")
             override = ""
-        sub = current.pop(key, None)
         if sub is None:
             sub = MailSubscriber(emp_key=key, added_by=user)
             db.add(sub)
+            added += badge
+        elif sub.badge_enabled is not False and not badge:
+            removed += 1
+        elif sub.badge_enabled is False and badge:
             added += 1
         sub.matricule, sub.name = e["matricule"] or "", f"{e['prenom'] or ''} {e['nom'] or ''}".strip()
         sub.email = override
-    # Les abonnés décochés (et seulement ceux de la liste affichée) sont retirés.
-    removed = [k for k in current if k in directory]
-    if removed:
-        db.execute(delete(MailSubscriber).where(MailSubscriber.emp_key.in_(removed)))
+        sub.badge_enabled, sub.reminders_enabled = badge, rappels
     db.commit()
-    auth.audit(request, "Mails de badge : abonnés", f"{len(wanted)} abonné(s)", f"+{added} / -{len(removed)}")
-    flash(request, f"{len(wanted)} abonné(s) enregistré(s) ({added} ajouté(s), {len(removed)} retiré(s)).", "ok")
+    auth.audit(request, "Mails de badge : abonnés", f"{len(wanted)} abonné(s), {len(reminders)} aux rappels",
+               f"+{added} / -{removed}")
+    flash(request, f"{len(wanted)} abonné(s) aux mails de badge ({added} ajouté(s), {removed} retiré(s)), "
+                   f"{len(reminders)} aux rappels.", "ok")
     if invalid:
         flash(request, "Adresse(s) ignorée(s), format invalide : " + ", ".join(invalid[:20]), "warn")
     return redirect("/admin/mails/abonnes")

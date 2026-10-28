@@ -714,7 +714,7 @@ def test_badge_mails_test_mode_production_and_no_duplicates(configured, pg, logg
         # Abonnés : Awa (adresse saisie ici) et Moussa (sans adresse).
         r = logged_client.post("/admin/mails/abonnes", data={"sub": ["1", "2"], "email_1": "awa@exemple.com",
                                                                "email_2": ""}, follow_redirects=True)
-        assert "2 abonné(s) enregistré(s)" in r.text
+        assert "2 abonné(s) aux mails de badge" in r.text
         assert "awa@exemple.com" in logged_client.get("/admin/mails/abonnes").text
 
         punch(1, now - timedelta(hours=2))
@@ -2634,4 +2634,76 @@ def test_punch_sites_and_site_monitoring(configured, pg, logged_client, monkeypa
             ms = mails.get_settings(db)
             for k, v in saved_mail.items():
                 setattr(ms, k, v)
+            db.commit()
+
+
+def test_employee_mail_preferences(configured, pg, logged_client):
+    """Chaque employé choisit sur « Mon compte » s'il reçoit les mails de badge et les rappels ; l'administrateur
+    fait ce choix pour chaque utilisateur et peut le verrouiller ; les envois respectent ces choix."""
+    from fastapi.testclient import TestClient
+
+    from app import mails, preferences, rappels
+    from app.main import app
+    from app.models import MailSubscriber, User
+
+    r = logged_client.post("/admin/users/save", data={"username": "pref_moussa", "role": "lecteur",
+                                                      "emp_matricule": "E002", "password": "motdepasse1"},
+                           follow_redirects=True)
+    assert "enregistré" in r.text
+    try:
+        moussa = TestClient(app)
+        moussa.post("/login", data={"username": "pref_moussa", "password": "motdepasse1"})
+        page = moussa.get("/compte").text
+        assert "Mes e-mails" in page and 'name="badge"' in page and 'name="rappels"' in page
+
+        # L'employé coche les mails de badge, pas les rappels.
+        r = moussa.post("/compte/mails", data={"badge": "true"}, follow_redirects=True)
+        assert "Préférences enregistrées : mails de badge" in r.text
+        with SessionLocal() as db:
+            sub = db.query(MailSubscriber).filter_by(matricule="E002").one()
+            assert (sub.badge_enabled, sub.reminders_enabled) == (True, False)
+            assert sub.emp_key in {x.emp_key for x in db.query(MailSubscriber) if x.badge_enabled is not False}
+            assert sub.emp_key not in rappels.subscribers(db)  # public « abonnés » : pas de rappels
+            assert sub.emp_key in rappels.declined(db)  # public « tous » : exclu aussi
+            rows = [{"emp_key": sub.emp_key, "email": "x@exemple.com"}, {"emp_key": "autre", "email": "y@exemple.com"}]
+            s = rappels.get_settings(db)
+            audience_before, s.audience = s.audience, "tous"
+            assert [x["emp_key"] for x in rappels.for_audience(db, s, rows)] == ["autre"]
+            s.audience = audience_before
+            db.commit()
+
+        # Puis les rappels seulement.
+        moussa.post("/compte/mails", data={"rappels": "true"})
+        with SessionLocal() as db:
+            sub = db.query(MailSubscriber).filter_by(matricule="E002").one()
+            assert (sub.badge_enabled, sub.reminders_enabled) == (False, True)
+            assert sub.emp_key in rappels.subscribers(db)
+
+        # Administrateur : choix pour l'utilisateur, verrouillé.
+        page = logged_client.get("/admin/users").text
+        assert "Rappels ✓" in page and 'name="mail_locked"' in page
+        with SessionLocal() as db:
+            uid = db.query(User).filter_by(username="pref_moussa").one().id
+        r = logged_client.post("/admin/users/save", data={"user_id": uid, "role": "lecteur", "active": "true",
+                                                          "emp_matricule": "E002", "mail_form": "true",
+                                                          "mail_badge": "true", "mail_locked": "true"},
+                               follow_redirects=True)
+        assert "enregistré" in r.text and "🔒" in r.text
+        with SessionLocal() as db:
+            sub = db.query(MailSubscriber).filter_by(matricule="E002").one()
+            assert (sub.badge_enabled, sub.reminders_enabled) == (True, False)
+            assert preferences.current(db, db.get(User, uid)) == {"badge": True, "rappels": False, "locked": True}
+        page = moussa.get("/compte").text
+        assert "définis par l&#39;administrateur" in page or "définis par l'administrateur" in page
+        r = moussa.post("/compte/mails", data={"rappels": "true"}, follow_redirects=True)
+        assert "définies par l" in r.text
+        with SessionLocal() as db:
+            assert db.query(MailSubscriber).filter_by(matricule="E002").one().reminders_enabled is False
+
+        # Page des abonnés : deux colonnes (badge, rappels).
+        assert 'name="rem"' in logged_client.get("/admin/mails/abonnes").text
+    finally:
+        with SessionLocal() as db:
+            db.query(MailSubscriber).filter_by(matricule="E002").delete()
+            db.query(User).filter_by(username="pref_moussa").delete()
             db.commit()

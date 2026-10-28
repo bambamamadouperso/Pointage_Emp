@@ -326,7 +326,8 @@ def _process(sender) -> dict:
         if cfg is None or cfg.conn is None or cfg.installed_at is None:
             return {"status": "not_configured"}
         mapping = pointage.Mapping.from_json(cfg.data)
-        subs = {x.emp_key: x for x in db.scalars(select(MailSubscriber))}
+        # Abonnés qui n'ont pas décoché « mails de badge » (Mon compte, Utilisateurs ou Abonnés).
+        subs = {x.emp_key: x for x in db.scalars(select(MailSubscriber)) if x.badge_enabled is not False}
         if not subs:
             return {"status": "no_subscribers"}
         since = max(s.since, datetime.now() - timedelta(days=2))

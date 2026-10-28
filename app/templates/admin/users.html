@@ -86,14 +86,18 @@
   <div class="card-head"><div><h2>Comptes ({{ users | length + 1 }})</h2></div>
     <input type="search" id="user_filter" placeholder="Rechercher (identifiant, nom, matricule)…" aria-label="Rechercher un compte" style="max-width:320px"></div>
   <div class="table-wrap"><table id="users_table">
-    <thead><tr><th>Identifiant</th><th>Nom</th><th>Rôle</th><th>Périmètre du suivi</th><th>État</th><th>Dernière connexion</th><th></th></tr></thead>
+    <thead><tr><th>Identifiant</th><th>Nom</th><th>Rôle</th><th>Périmètre du suivi</th><th>État</th><th title="Mails de badge et rappels de pointage">E-mails</th><th>Dernière connexion</th><th></th></tr></thead>
     <tbody>
-      <tr class="muted"><td class="mono">{{ rescue }}</td><td>Compte de secours (fichier .env)</td><td>Administrateur</td><td>Tout le personnel</td><td>actif</td><td>—</td><td></td></tr>
+      <tr class="muted"><td class="mono">{{ rescue }}</td><td>Compte de secours (fichier .env)</td><td>Administrateur</td><td>Tout le personnel</td><td>actif</td><td>—</td><td>—</td><td></td></tr>
       {% for u in users %}
       <tr class="{{ 'disabled' if not u.active }}">
         <td class="mono">{{ u.username }}</td><td>{{ u.full_name or '—' }}</td><td>{{ u.role_label }}</td>
         <td class="small">{% if u.sick_leave_hr %}<span class="badge st-sick" title="Habilité aux arrêts maladie">RH arrêts</span> {% endif %}{% if u.team_only %}Son équipe ({{ u.emp_matricule }}){% else %}Tout le personnel{% if u.emp_matricule %} · matricule {{ u.emp_matricule }}{% endif %}{% endif %}</td>
         <td>{% if u.active %}<span class="badge ok">actif</span>{% else %}<span class="badge">désactivé</span>{% endif %}</td>
+        <td class="small nowrap">{% set p = prefs.get(u.id) %}{% if p %}
+          <span class="badge {{ 'ok' if p.badge else '' }}" title="Mails de badge {{ 'activés' if p.badge else 'désactivés' }}">Badge {{ '✓' if p.badge else '✗' }}</span>
+          <span class="badge {{ 'ok' if p.rappels else '' }}" title="Rappels {{ 'activés' if p.rappels else 'désactivés' }}">Rappels {{ '✓' if p.rappels else '✗' }}</span>
+          {% if p.locked %}<span title="Choix verrouillé par l'administrateur">🔒</span>{% endif %}{% else %}<span class="muted">—</span>{% endif %}</td>
         <td class="small">{{ u.last_login_at | dt }}</td>
         <td class="actions">
           <details class="edit"><summary class="btn small">Modifier</summary>
@@ -108,6 +112,13 @@
                 <option value="equipe" {{ 'selected' if u.scope == 'equipe' }}>Son équipe (hiérarchie)</option></select></label>
               <label class="check"><input type="checkbox" name="sick_leave_hr" value="true" {{ 'checked' if u.sick_leave_hr }}> Agent RH : arrêts maladie</label>
               <label class="check"><input type="checkbox" name="active" value="true" {{ 'checked' if u.active }}> Compte actif</label>
+              {% set p = prefs.get(u.id) %}{% if p %}
+              <fieldset class="limits mail-prefs"><legend>E-mails de l'employé</legend>
+                <input type="hidden" name="mail_form" value="true">
+                <label class="check"><input type="checkbox" name="mail_badge" value="true" {{ 'checked' if p.badge }}> Mails de badge</label>
+                <label class="check"><input type="checkbox" name="mail_rappels" value="true" {{ 'checked' if p.rappels }}> Rappels de pointage</label>
+                <label class="check"><input type="checkbox" name="mail_locked" value="true" {{ 'checked' if p.locked }}> Verrouiller : l'employé ne peut pas changer ces choix</label>
+              </fieldset>{% endif %}
               <button class="btn small primary">Enregistrer</button>
             </form></details>
           <details class="edit"><summary class="btn small">Mot de passe</summary>
