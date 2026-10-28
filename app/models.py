@@ -439,6 +439,42 @@ class SickLeaveSettings(Base):
     notify: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True, default=False)
 
 
+class SiteAlertSettings(Base):
+    """Surveillance des sites : chaque jour, à l'heure indiquée, mail à une liste de destinataires si un site n'a
+    remonté aucun pointage depuis le début de la journée (une seule ligne)."""
+
+    __tablename__ = "site_alert_settings"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    check_time: Mapped[str] = mapped_column(String(5), default="09:00")
+    weekdays: Mapped[str] = mapped_column(String(20), default="1,2,3,4,5")
+    skip_holidays: Mapped[bool] = mapped_column(Boolean, default=True)       # pas de contrôle les jours fériés
+    sites: Mapped[str] = mapped_column(Text, default="")                    # sites surveillés (vide : tous les sites actifs)
+    lookback_days: Mapped[int] = mapped_column(Integer, default=30)          # « site actif » : pointages sur N jours
+    recipients: Mapped[str] = mapped_column(Text, default="")
+    subject: Mapped[str] = mapped_column(Text, default="")
+    message: Mapped[str] = mapped_column(Text, default="")
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    updated_by: Mapped[str] = mapped_column(String(100), default="")
+
+
+class SiteAlertLog(Base):
+    """Contrôle quotidien des sites : un seul par jour (résultat, sites sans pointage, envoi)."""
+
+    __tablename__ = "site_alert_log"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    jour: Mapped[datetime] = mapped_column(DateTime, unique=True)
+    checked_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    status: Mapped[str] = mapped_column(String(20), default="ok")            # ok, sent, failed, no_site
+    silent: Mapped[str] = mapped_column(Text, default="")                    # sites sans pointage (JSON)
+    checked: Mapped[int] = mapped_column(Integer, default=0)                 # nombre de sites contrôlés
+    recipients: Mapped[str] = mapped_column(Text, default="")
+    mode: Mapped[str] = mapped_column(String(20), default="test")
+    error: Mapped[str] = mapped_column(Text, default="")
+
+
 class MaternityRequest(Base):
     """Demande de congé de maternité ou de période d'allaitement faite par l'employée (circuit de validation
     paramétrable, comme les arrêts maladie). Une fois validée, la période est recopiée dans PostgreSQL

@@ -191,6 +191,21 @@ table Personnel, avec une table de libellés si c'est un code), le suivi journal
 rapports ont une **colonne Direction** dédiée (triable dans le suivi, reprise dans les exports Excel et PDF), en plus
 du **filtre Direction** et du regroupement « Par direction ».
 
+**Site du pointage** (*Administration → Source des pointages*, colonne du lecteur ou du site dans la table des
+pointages, avec une table de libellés facultative, ex. code du terminal → nom du site) : le suivi journalier affiche
+sous l'heure du premier et du dernier pointage le site correspondant (en orange si le départ a lieu sur un autre
+site) ; repris dans le détail des pointages et l'export Excel.
+
+**Surveillance des sites** (*Mails et relances → Surveillance des sites*) : chaque jour de contrôle, à l'heure
+paramétrée, mail à une liste de destinataires si un site n'a remonté aucun pointage depuis le début de la journée
+(lecteur en panne, réseau, synchronisation arrêtée). Sites surveillés au choix (par défaut tous ceux qui ont pointé
+récemment), jours fériés exclus si souhaité, un seul contrôle par jour, bouton « Contrôler maintenant », journal.
+
+**Serveur d'envoi des e-mails** (*Mails et relances → Serveur d'envoi des e-mails*, administrateurs) : serveur SMTP,
+sécurité, compte, adresse et nom d'expéditeur, « Répondre à », nom de l'entreprise, mode test / production et
+adresses de test, communs à tous les mails de l'application (badge, rappels, relances, résumés, surveillance des
+sites, notifications) ; mail d'essai et état de chaque envoi.
+
 **Aide** (menu *Aide → Indicateurs et calculs*, accessible à tous) : définition de chaque indicateur (statuts,
 retard, durées, suivi, rapports, alertes, couleurs, filtres) avec sa méthode et sa formule de calcul, illustrées par
 les paramètres horaires en vigueur.

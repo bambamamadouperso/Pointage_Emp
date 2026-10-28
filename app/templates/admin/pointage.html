@@ -54,6 +54,18 @@
       <label>Colonne heure séparée <span class="muted small">(si la date et l'heure sont dans 2 colonnes)</span>
         {{ colselect('punch_time_col', punch_cols, m.punch_time_col, True) }}</label>
     </div>
+    <div class="row" id="site-pointage">
+      <label>Site du pointage <span class="muted small">(lecteur, pointeuse, site… : affiché sous les heures du suivi,
+        surveillance des sites)</span> {{ colselect('punch_site_col', punch_cols, m.punch_site_col, True) }}</label>
+      <label>Table des sites <span class="muted small">(si la colonne contient un code de lecteur)</span>
+        {{ tableselect('punch_site_table', m.punch_site_table, True) }}</label>
+    </div>
+    {% if m.punch_site_table %}
+    <div class="row">
+      <label>Code dans {{ m.punch_site_table }} {{ colselect('punch_site_key_col', punch_site_cols, m.punch_site_key_col) }}</label>
+      <label>Nom du site {{ colselect('punch_site_label_col', punch_site_cols, m.punch_site_label_col) }}</label>
+    </div>
+    {% endif %}
   </fieldset>
 
   <fieldset class="limits"><legend>Employés</legend>

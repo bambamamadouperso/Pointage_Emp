@@ -150,6 +150,10 @@ def start() -> None:
 
     scheduler.add_job(rappels.run_due, IntervalTrigger(minutes=5), id="rappels", replace_existing=True,
                       next_run_time=datetime.now() + timedelta(minutes=2))
+    from . import sites  # surveillance des sites : alerte si un site n'a remonté aucun pointage à l'heure dite
+
+    scheduler.add_job(sites.run_due, IntervalTrigger(minutes=5), id="sites", replace_existing=True,
+                      next_run_time=datetime.now() + timedelta(minutes=2))
     write_log("INFO", f"Planificateur démarré ({sum(j.enabled for j in jobs)} job(s) actif(s)).")
 
 

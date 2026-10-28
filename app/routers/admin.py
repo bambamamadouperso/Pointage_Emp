@@ -82,6 +82,7 @@ def pointage_config(request: Request, db: Session = Depends(get_db)):
     schemas, tables, punch_cols, emp_cols, service_cols, error, installed = [], [], {}, {}, {}, None, False
     person_cols, hier_cols, leave_cols, tw_cols, diag, stale = {}, {}, {}, {}, None, False
     cat_cols, cat_values, mission_cols, mission_match = {}, [], {}, None
+    punch_site_cols = {}
     dims = [{"name": name, "prefix": prefix, "label": label, "cols": {}, "values": [],
              "hint": "ex. Usine, Plateau" if name == "site" else "colonne « direction » du personnel"}
             for name, (prefix, label) in pointage.DIMENSIONS.items()]
@@ -104,6 +105,10 @@ def pointage_config(request: Request, db: Session = Depends(get_db)):
             tw_cols = pointage.column_types(engine, mapping.schema, mapping.tw_table)
             mission_cols = pointage.column_types(engine, mapping.schema, mapping.mission_table)
             cat_cols = pointage.column_types(engine, mapping.schema, mapping.cat_table)
+            punch_site_cols = pointage.column_types(engine, mapping.schema, mapping.punch_site_table)
+            for key in ("punch_site_key_col", "punch_site_label_col"):
+                if punch_site_cols and not getattr(mapping, key):
+                    setattr(mapping, key, pointage.guess(key, list(punch_site_cols)))
             for d in dims:  # direction, site : colonnes de la table des libellés proposées
                 d["cols"] = pointage.column_types(engine, mapping.schema, getattr(mapping, f"{d['prefix']}_table"))
                 for key in (f"{d['prefix']}_key_col", f"{d['prefix']}_label_col"):
@@ -200,6 +205,7 @@ def pointage_config(request: Request, db: Session = Depends(get_db)):
     return render(
         request, "admin/pointage.html", cfg=cfg, m=mapping, conn=conn, connections=connections, schemas=schemas,
         tables=tables, punch_cols=punch_cols, emp_cols=emp_cols, service_cols=service_cols, error=error,
+        punch_site_cols=punch_site_cols,
         person_cols=person_cols, hier_cols=hier_cols, leave_cols=leave_cols, diag=diag, stale=stale,
         leave_guess=pointage.guess("leave_table", tables) if not mapping.leave_table else "",
         tw_cols=tw_cols, cat_cols=cat_cols, cat_values=cat_values, tw_guess=pointage.guess("tw_table", tables) if not mapping.tw_table else "",

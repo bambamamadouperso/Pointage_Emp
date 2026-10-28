@@ -962,3 +962,14 @@ details.hors-liste .table-wrap { margin-top: .7rem; }
   font-size: .86em; white-space: normal; }
 .help code.formula { display: inline-block; margin: 2px 0; color: var(--primary, #1b4f8a); font-weight: 600; }
 @media (max-width: 760px) { .help-defs { grid-template-columns: 1fr; } .help-toc ol { columns: 1; } .help-table td:first-child { white-space: normal; } }
+
+/* Suivi : site (lecteur) du premier et du dernier pointage, sous l'heure. */
+.punch-site { display: inline-block; margin-top: 2px; font-size: .72rem; color: var(--muted, #64748b); white-space: nowrap; }
+.punch-site::before { content: "⌖ "; opacity: .7; }
+.punch-site.other { color: #b45309; font-weight: 600; }
+
+/* Surveillance des sites : liste des sites à cocher. */
+.site-checks { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 4px 0 10px; }
+.site-checks label.check { flex: 0 0 auto; }
+.inline-field { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 4px 0 0; }
+.inline-field input[type=number] { width: 80px; }

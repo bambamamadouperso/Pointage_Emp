@@ -65,7 +65,7 @@ CONGES = ("CONGE_ANNUEL", "CONGE_EXCEP", "CONGE_MATERNITE")
 MATERNITY_KINDS = {"maternite": "Congé de maternité", "allaitement": "Période d'allaitement"}
 ALLAITEMENT_HOURS = ("01:00", "02:00", "03:00")
 # Version des objets PostgreSQL : si elle change, ils sont réinstallés automatiquement.
-SQL_VERSION = 20
+SQL_VERSION = 21
 # Taille maximale des fichiers importés (planning, agents terrain).
 MAX_IMPORT_MB = 50
 # Limites des requêtes lancées depuis les pages web : une attente de verrou ou une requête lente ne doit jamais
@@ -131,6 +131,12 @@ class Mapping:
     punch_emp_col: str = ""           # identifiant de l'employé dans les pointages
     punch_ts_col: str = ""            # date/heure du pointage (ou date seule si punch_time_col)
     punch_time_col: str = ""          # heure du pointage si elle est dans une colonne séparée
+    # Facultatif : site du pointage (lecteur, pointeuse, site…) dans la table des pointages, avec une table de
+    # libellés si la colonne contient un code (ex. numéro de terminal → nom du site).
+    punch_site_col: str = ""
+    punch_site_table: str = ""
+    punch_site_key_col: str = ""
+    punch_site_label_col: str = ""
     emp_table: str = ""               # table des employés
     emp_key_col: str = ""             # colonne qui correspond à punch_emp_col
     emp_matricule_col: str = ""       # matricule affiché (vide = emp_key_col)
@@ -248,6 +254,8 @@ class Mapping:
         for prefix, label in DIMENSIONS.values():
             if getattr(self, f"{prefix}_table") and not all(getattr(self, f"{prefix}_{k}") for k in ("col", "key_col", "label_col")):
                 out.append(f"colonnes de la table des libellés ({label.lower()})")
+        if self.punch_site_table and not (self.punch_site_col and self.punch_site_key_col and self.punch_site_label_col):
+            out.append("colonnes de la table des sites de pointage")
         if self.cat_table and not (self.cat_col and self.cat_key_col and self.cat_label_col):
             out.append("colonnes de la table des catégories")
         if self.hier_table and not (self.hier_emp_col and self.hier_manager_col):
@@ -330,6 +338,8 @@ _GUESSES = {
                  r"^usine"],
     "site_key_col": [r"^id", r"code", r"site"],
     "site_label_col": [r"libell", r"^nom", r"label", r"d[ée]sign", r"intitul", r"site"],
+    "punch_site_key_col": [r"^id", r"code", r"terminal", r"lecteur", r"site"],
+    "punch_site_label_col": [r"site", r"libell", r"^nom", r"label", r"d[ée]sign", r"intitul", r"lieu"],
     "cat_col": [r"^statut$", r"^statut_?(salari|employ|pers|agent|cadre)", r"cat[ée]gor", r"coll[èe]ge", r"^cadre",
                 r"qualif", r"^statut"],
     "cat_key_col": [r"^id", r"code", r"statut", r"cat[ée]gor"],
@@ -417,6 +427,18 @@ def _time_expr(expr: str, dtype: str) -> str:
         return (f"(CASE WHEN {t} ~ '^\\d{{3,8}}$' THEN make_time(substr({digits}, 1, 2)::int, "
                 f"substr({digits}, 3, 2)::int, substr({digits}, 5, 2)::int) ELSE {t}::time END)")
     return f"{expr}::time"
+
+
+def punch_site_expr(m: Mapping, alias: str = "p") -> str:
+    """Site d'un pointage (colonne de la table des pointages, libellé de la table des sites si elle est choisie)."""
+    if not m.punch_site_col:
+        return "NULL::text"
+    raw = f"nullif(btrim({alias}.{qi(m.punch_site_col)}::text), '')"
+    if not m.punch_site_table:
+        return raw
+    return (f"COALESCE((SELECT nullif(btrim(ps.{qi(m.punch_site_label_col)}::text), '') "
+            f"FROM {qt(m.schema, m.punch_site_table)} ps "
+            f"WHERE btrim(ps.{qi(m.punch_site_key_col)}::text) = btrim({alias}.{qi(m.punch_site_col)}::text) LIMIT 1), {raw})")
 
 
 def _ts_expr(m: Mapping, types: dict[str, str]) -> str:
@@ -648,6 +670,7 @@ $fn$"""
                 f"{lit(PARAM_DEFAULTS[key])}){cast}")
 
     labels = " ".join(f"WHEN {lit(code)} THEN {lit(label)}" for code, (label, _) in STATUTS.items())
+    psite = punch_site_expr(m)
     raw = _raw_day_col(m, punch_types)
     # Seules les lignes de la période (± 1 jour) sont lues : indispensable sur une grosse table de pointages.
     raw_filter = f"\n    WHERE {raw} >= p_du - 1 AND {raw} < p_au + 2" if raw else ""
@@ -659,7 +682,7 @@ RETURNS TABLE (
     statut text, statut_libelle text, debut_valide time, fin_validee time, pause_deduite interval,
     duree_validee interval, duree_effective interval, duree_validee_min numeric, duree_effective_min numeric,
     hors_liste boolean, terrain boolean, retard_min numeric, categorie text, poste text, direction text, site text,
-    allaitement interval
+    allaitement interval, site_premier text, site_dernier text
 )
 LANGUAGE sql STABLE
 -- La compilation JIT coûte plus d'une seconde par appel, pour aucun gain sur ce type de requête.
@@ -675,7 +698,7 @@ WITH emp AS (
     FROM {S}.v_pointage_employes v
 ),
 pl AS (
-    SELECT {pkey} AS emp_key, {ts} AS ts FROM {punch} p{raw_filter}
+    SELECT {pkey} AS emp_key, {ts} AS ts, {psite} AS site FROM {punch} p{raw_filter}
 ),
 plan AS (  -- horaires postés : poste planifié de l'employé ce jour-là (import du planning, table pointage_planning)
     SELECT DISTINCT ON (e.emp_key, pp.jour) e.emp_key, pp.jour, po.code, po.type, po.libelle,
@@ -701,7 +724,9 @@ rattache AS (  -- pointage autour d'un poste planifié (ex. nuit 18h-6h) : ratta
 ),
 agg AS (
     SELECT pl.emp_key, COALESCE(r.jour, pl.ts::date) AS jour, min(pl.ts) AS p1, max(pl.ts) AS p2,
-           count(DISTINCT pl.ts)::int AS n
+           count(DISTINCT pl.ts)::int AS n,
+           -- Site (lecteur) du premier et du dernier pointage de la journée.
+           (array_agg(pl.site ORDER BY pl.ts))[1] AS site_p1, (array_agg(pl.site ORDER BY pl.ts DESC))[1] AS site_p2
     FROM pl LEFT JOIN rattache r ON r.emp_key = pl.emp_key AND r.ts = pl.ts
     WHERE pl.emp_key IS NOT NULL AND COALESCE(r.jour, pl.ts::date) BETWEEN p_du AND p_au
     GROUP BY 1, 2
@@ -768,7 +793,7 @@ base AS (
 g AS (
     SELECT b.emp_key, b.jour, e.matricule, e.nom, e.prenom, e.service, e.responsable_key, e.responsable, e.categorie,
            e.direction, e.site,
-           a.p1, a.p2, a.n, (e.emp_key IS NULL) AS hors_liste,
+           a.p1, a.p2, a.n, a.site_p1, a.site_p2, (e.emp_key IS NULL) AS hors_liste,
            p.debut_journee, p.debut_pause, p.fin_pause, p.fin_journee, p.seuil_retard, p.duree_pause,
            p.duree_conge, p.duree_teletravail, p.duree_terrain, p.duree_maladie, p.duree_repos, p.duree_mission, k.statut AS conge, t.statut AS tele,
            (mal.emp_key IS NOT NULL) AS maladie, (mi.emp_key IS NOT NULL) AS mission,
@@ -851,7 +876,7 @@ SELECT c.emp_key, COALESCE(c.matricule, c.emp_key), COALESCE(c.nom, 'Hors liste'
        CASE WHEN c.poste_type = 'travail'
                  THEN c.poste_code || ' · ' || to_char(c.s_debut, 'HH24"h"MI') || '–' || to_char(c.s_fin, 'HH24"h"MI')
             WHEN c.poste_code IS NOT NULL THEN c.poste_code || ' · ' || c.poste_libelle END,
-       c.direction, c.site, c.allaitement
+       c.direction, c.site, c.allaitement, c.site_p1, c.site_p2
 FROM c
 CROSS JOIN LATERAL (
     SELECT CASE WHEN c.poste_type = 'travail' AND c.statut IN ('A_L_HEURE', 'RETARD') THEN c.hv_poste
@@ -957,7 +982,7 @@ $fn$"""
         "view": f"""CREATE VIEW {S}.v_pointage_journalier AS
 SELECT * FROM {S}.f_pointage_journalier(COALESCE({first_day}, current_date), current_date)""",
         "raw_view": f"""CREATE VIEW {S}.v_pointage_brut AS
-SELECT {pkey} AS emp_key, {ts} AS horodatage, ({ts})::date AS jour FROM {punch} p""",
+SELECT {pkey} AS emp_key, {ts} AS horodatage, ({ts})::date AS jour, {psite} AS site FROM {punch} p""",
         "comment": f"COMMENT ON VIEW {S}.v_pointage_journalier IS "
                    f"{lit('Suivi journalier des pointages (1er/dernier pointage, statut, durée standard, durée effective).')}",
     }
@@ -2071,7 +2096,8 @@ def detail(engine: Engine, m: Mapping, emp_key: str, day: date) -> tuple[list[st
     punch_types = column_types(engine, m.schema, m.punch_table)
     ts = _ts_expr(m, punch_types)
     pkey = _as_text(f"p.{qi(m.punch_emp_col)}", punch_types.get(m.punch_emp_col, ""))
-    sql = text(f"SELECT {ts} AS horodatage, p.* FROM {qt(m.schema, m.punch_table)} p "
+    site = f"{punch_site_expr(m)} AS site_du_pointage, " if m.punch_site_col else ""
+    sql = text(f"SELECT {ts} AS horodatage, {site}p.* FROM {qt(m.schema, m.punch_table)} p "
                f"WHERE {pkey} = :k AND {ts} >= :d AND {ts} < :d2 ORDER BY 1")
     start, end = datetime.combine(day, time()), datetime.combine(day + timedelta(days=1), time())
     try:  # poste planifié (ex. de nuit) : ses pointages peuvent déborder sur le lendemain

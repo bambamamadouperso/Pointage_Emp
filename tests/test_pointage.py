@@ -2516,3 +2516,122 @@ def test_help_page(configured, logged_client):
         with SessionLocal() as db:
             db.query(User).filter_by(username="lect_aide").delete()
             db.commit()
+
+
+def test_punch_sites_and_site_monitoring(configured, pg, logged_client, monkeypatch):
+    """Site du pointage (lecteur → site) : sous les heures du suivi, détail, export ; surveillance quotidienne des
+    sites (mail si un site n'a pas pointé à l'heure dite, un contrôle par jour, jours fériés) ; serveur d'envoi."""
+    import io
+
+    from openpyxl import load_workbook
+
+    from app import mails, sites
+    from app.models import SiteAlertLog, SiteAlertSettings
+
+    with pg.begin() as c:
+        c.execute(text(f"DROP TABLE IF EXISTS {SCHEMA}.lecteurs"))
+        c.execute(text(f"CREATE TABLE {SCHEMA}.lecteurs (code text, nom_site text)"))
+        c.execute(text(f"INSERT INTO {SCHEMA}.lecteurs VALUES ('T1', 'Usine'), ('T2', 'Siège')"))
+        c.execute(text(f"UPDATE {SCHEMA}.punchlog SET terminal = 'T2' WHERE employe_id = 1 AND date_pointage = :d "
+                       f"AND heure_pointage = '171000'"), {"d": MON})
+    with SessionLocal() as db:
+        cfg = db.query(PointageConfig).one()
+        original, conn_id = cfg.data, cfg.conn_id
+        ms = mails.get_settings(db)
+        saved_mail = {k: getattr(ms, k) for k in ("smtp_host", "from_email", "mode", "test_recipients", "from_name")}
+    delivered = []
+
+    class FakeSMTP:
+        def __init__(self, host, port, timeout=None): pass
+        def ehlo(self): pass
+        def starttls(self, context=None): pass
+        def login(self, user, pwd): pass
+        def send_message(self, msg): delivered.append(msg)
+        def quit(self): pass
+
+    monkeypatch.setattr(mails.smtplib, "SMTP", FakeSMTP)
+    try:
+        # Configuration : colonne du lecteur dans les pointages et table des sites.
+        page = logged_client.get("/admin/pointage").text
+        assert 'name="punch_site_col"' in page
+        data = {**pointage.Mapping.from_json(original).__dict__, "punch_site_col": "terminal",
+                "punch_site_table": "lecteurs", "punch_site_key_col": "code", "punch_site_label_col": "nom_site",
+                "conn_id": conn_id}
+        assert "installées" in logged_client.post("/admin/pointage", data=data, follow_redirects=True).text
+        r = rows(pg, MON)
+        assert (r[("E001", MON)].site_premier, r[("E001", MON)].site_dernier) == ("Usine", "Siège")
+        assert (r[("E002", MON)].site_premier, r[("E002", MON)].site_dernier) == ("Usine", "Usine")
+        assert r[("E005", MON)].site_premier is None  # absente
+
+        page = logged_client.get(f"/suivi?date={MON.isoformat()}").text
+        assert '<span class="punch-site" title="Site du premier pointage">Usine</span>' in page
+        assert 'class="punch-site other" title="Site du dernier pointage (différent du premier)">Siège</span>' in page
+        assert "site_du_pointage" in logged_client.get(f"/suivi/detail?key=1&jour={MON.isoformat()}").text
+        ws = load_workbook(io.BytesIO(logged_client.get(f"/suivi/export.xlsx?date={MON.isoformat()}").content)).active
+        headers = [c.value for c in ws[1]]
+        line = next(row for row in ws.iter_rows(min_row=2, values_only=True) if row[1] == "E001")
+        assert line[headers.index("Site du 1er pointage")] == "Usine" and line[headers.index("Site du dernier pointage")] == "Siège"
+
+        # Situation des sites à 10h00 le lundi : Usine a pointé ; Siège (seulement à 17h10) et Plateau (jamais) non.
+        with SessionLocal() as db:
+            m = pointage.Mapping.from_json(db.query(PointageConfig).one().data)
+        ten = datetime(MON.year, MON.month, MON.day, 10, 0)
+        activity = sites.site_activity(pg, m, ten)
+        assert [(a["site"], a["aujourdhui"]) for a in activity] == [("Usine", 6)]  # 6 pointages avant 10h
+        checked, silent = sites.evaluate(activity, ["Usine", "Siège", "Plateau"])
+        assert [x["site"] for x in silent] == ["Siège", "Plateau"]
+
+        # Paramètres : destinataires obligatoires pour activer ; heure valide.
+        r = logged_client.post("/admin/sites", data={"enabled": "1", "check_time": "09:00", "weekdays": ["1"]},
+                               follow_redirects=True)
+        assert "au moins un destinataire" in r.text
+        assert "Heure de contrôle invalide" in logged_client.post("/admin/sites", data={"check_time": "25:00"},
+                                                                   follow_redirects=True).text
+        r = logged_client.post("/admin/sites", data={
+            "enabled": "1", "check_time": "09:00", "weekdays": ["1", "2", "3", "4", "5"], "skip_holidays": "1",
+            "recipients": "securite@exemple.com, it@exemple.com", "sites": ["Usine", "Siège", "Plateau"],
+            "lookback_days": "30", "message": "Astreinte : 77 000 00 00"}, follow_redirects=True)
+        assert "Surveillance des sites enregistrée" in r.text
+
+        # Serveur d'envoi (page dédiée) : mode test vers l'adresse de test.
+        page = logged_client.get("/admin/envoi").text
+        assert "Mails qui utilisent ce serveur" in page and "Surveillance des sites" in page
+        r = logged_client.post("/admin/envoi", data={"smtp_host": "smtp.test", "smtp_port": "587",
+                                                     "smtp_security": "starttls", "from_email": "pointage@exemple.com",
+                                                     "from_name": "Pointage Holcim", "mode": "production",
+                                                     "test_recipients": "qa@exemple.com"}, follow_redirects=True)
+        assert "cochez la confirmation" in r.text
+        r = logged_client.post("/admin/envoi", data={"smtp_host": "smtp.test", "smtp_port": "587",
+                                                     "smtp_security": "starttls", "from_email": "pointage@exemple.com",
+                                                     "from_name": "Pointage Holcim", "mode": "test",
+                                                     "test_recipients": "qa@exemple.com"}, follow_redirects=True)
+        assert "Serveur d&#39;envoi enregistré" in r.text
+        assert "modifier le serveur d'envoi des e-mails" in logged_client.get("/admin/mails").text
+
+        # Contrôle quotidien : avant l'heure → rien ; à 10h → une alerte (mode test : vers l'adresse de test) ; une seule par jour.
+        assert sites.run_due(datetime(MON.year, MON.month, MON.day, 8, 55)) == {"status": "idle"}
+        result = sites.run_due(ten)
+        assert result["status"] == "sent" and result["silent"] == ["Siège", "Plateau"], result
+        assert len(delivered) == 2 and delivered[0]["To"] == "qa@exemple.com"
+        assert delivered[0]["Subject"].startswith("[TEST] Pointages : aucun pointage reçu de 2 site(s)")
+        assert delivered[0]["From"] == "Pointage Holcim <pointage@exemple.com>"
+        html_part = delivered[0].get_body(("html",)).get_content()
+        assert "Siège" in html_part and "Plateau" in html_part and "Astreinte" in html_part
+        assert sites.run_due(datetime(MON.year, MON.month, MON.day, 11, 0)) == {"status": "idle"}
+        # Mercredi férié : pas de contrôle.
+        assert sites.run_due(datetime(WED.year, WED.month, WED.day, 10, 0))["status"] == "idle"
+        page = logged_client.get("/admin/sites").text
+        assert "Journal des contrôles" in page and "Alerte envoyée" in page
+    finally:
+        restore = {**pointage.Mapping.from_json(original).__dict__, "conn_id": conn_id}
+        assert "installées" in logged_client.post("/admin/pointage", data=restore, follow_redirects=True).text
+        with pg.begin() as c:
+            c.execute(text(f"UPDATE {SCHEMA}.punchlog SET terminal = 'T1' WHERE terminal = 'T2'"))
+            c.execute(text(f"DROP TABLE IF EXISTS {SCHEMA}.lecteurs"))
+        with SessionLocal() as db:
+            db.query(SiteAlertLog).delete()
+            db.query(SiteAlertSettings).delete()
+            ms = mails.get_settings(db)
+            for k, v in saved_mail.items():
+                setattr(ms, k, v)
+            db.commit()

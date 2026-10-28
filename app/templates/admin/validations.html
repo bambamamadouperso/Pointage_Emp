@@ -19,7 +19,7 @@
 <section class="card rules">
   <h2>Envoi</h2>
   <ul class="rule-list">
-    <li>Serveur SMTP des {% if can(role, 'admin') %}<a href="/admin/mails">Mails de badge</a>{% else %}Mails de badge{% endif %} :
+    <li>{% if can(role, 'admin') %}<a href="/admin/envoi">Serveur d'envoi des e-mails</a>{% else %}Serveur d'envoi des e-mails{% endif %} :
       {% if mail.smtp_host and mail.from_email %}<strong>{{ mail.smtp_host }}</strong>, expéditeur {{ mail.from_email }}
       {% else %}<span class="warn-text">non configuré — aucune relance ne partira</span>{% endif %}.</li>
     <li>Mode : {% if mail.mode == 'production' %}<span class="badge ok">Production</span> — chaque relance part vers le validateur.

@@ -348,7 +348,8 @@ def export(request: Request, db: Session = Depends(get_db)):
     ws.title = "Suivi journalier"
     headers = ["Date", "Matricule", "Nom", "Prénom", "Service", "Statut du personnel", "1er pointage", "Statut", "Dernier pointage",
                "Nb pointages", "Durée standard", "Durée effective", "Durée standard (min)", "Durée effective (min)",
-               "Responsable", "Dans la liste des employés", "Poste planifié", "Direction", "Site", "Allaitement"]
+               "Responsable", "Dans la liste des employés", "Poste planifié", "Direction", "Site", "Allaitement",
+               "Site du 1er pointage", "Site du dernier pointage"]
     ws.append(headers)
     fills = {"A_L_HEURE": "DCFCE7", "RETARD": "FFEDD5", "ABSENT": "FEE2E2", "INCOMPLET": "E5E7EB", "NON_OUVRE": "E0F2FE",
              "CONGE_ANNUEL": "E4F5D3", "CONGE_EXCEP": "E4F5D3", "CONGE_MATERNITE": "FCE7F3",
@@ -364,7 +365,7 @@ def export(request: Request, db: Session = Depends(get_db)):
             float(r["duree_validee_min"]) if r["duree_validee_min"] is not None else None,
             float(r["duree_effective_min"]) if r["duree_effective_min"] is not None else None,
             r["responsable"], "Non" if r["hors_liste"] else "Oui", r.get("poste"), r.get("direction"), r.get("site"),
-            r.get("allaitement"),
+            r.get("allaitement"), r.get("site_premier"), r.get("site_dernier") if r["nb_pointages"] > 1 else None,
         ])
         row = ws.max_row
         ws.cell(row, 1).number_format = "DD/MM/YYYY"

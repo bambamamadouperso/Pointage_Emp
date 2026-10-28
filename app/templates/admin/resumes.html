@@ -12,7 +12,7 @@
 <section class="card rules">
   <h2>Envoi</h2>
   <ul class="rule-list">
-    <li>Serveur SMTP des <a href="/admin/mails">Mails de badge</a> :
+    <li><a href="/admin/envoi">Serveur d'envoi des e-mails</a> :
       {% if mail.smtp_host and mail.from_email %}<strong>{{ mail.smtp_host }}</strong>, expéditeur {{ mail.from_email }}
       {% else %}<span class="warn-text">non configuré — aucun résumé ne partira</span>{% endif %}.</li>
     <li>Mode : {% if mail.mode == 'production' %}<span class="badge ok">Production</span> — chaque résumé part vers le responsable.

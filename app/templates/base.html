@@ -83,11 +83,13 @@
     {{ nav('/admin/arrets', 'sick', 'Circuit arrêts maladie', path.startswith('/admin/arrets')) }}
     {{ nav('/admin/verifier', 'user', 'Vérifier un employé', path.startswith('/admin/verifier')) }}
     {% endcall %}
-    {% call group('mails', 'Mails et relances', path.startswith(('/admin/mails', '/admin/resumes', '/admin/rappels', '/admin/validations'))) %}
+    {% call group('mails', 'Mails et relances', path.startswith(('/admin/mails', '/admin/resumes', '/admin/rappels', '/admin/validations', '/admin/sites', '/admin/envoi'))) %}
     {{ nav('/admin/validations', 'mail', 'Relances des validations', path.startswith('/admin/validations')) }}
     {{ nav('/admin/rappels', 'bell', 'Rappels de pointage', path.startswith('/admin/rappels')) }}
     {{ nav('/admin/resumes', 'chart', 'Résumés par mail', path.startswith('/admin/resumes')) }}
-    {% if is_admin %}{{ nav('/admin/mails', 'mail', 'Mails de badge', path.startswith('/admin/mails')) }}{% endif %}
+    {{ nav('/admin/sites', 'pin', 'Surveillance des sites', path.startswith('/admin/sites')) }}
+    {% if is_admin %}{{ nav('/admin/mails', 'mail', 'Mails de badge', path.startswith('/admin/mails')) }}
+    {{ nav('/admin/envoi', 'sliders', "Serveur d'envoi des e-mails", path.startswith('/admin/envoi')) }}{% endif %}
     {% endcall %}
     {% if is_admin %}
     {% call group('systeme', 'Administration', path.startswith(('/admin/pointage', '/admin/users', '/admin/audit'))) %}

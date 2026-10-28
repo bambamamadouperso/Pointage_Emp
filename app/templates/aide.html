@@ -32,6 +32,8 @@
   <dl class="help-defs">
     <dt>P1 — premier pointage</dt><dd>Heure du premier passage du badge dans la journée.</dd>
     <dt>P2 — dernier pointage</dt><dd>Heure du dernier passage du badge (au moins deux pointages ; poste de nuit : le lendemain matin est rattaché au poste).</dd>
+    <dt>Site du pointage</dt><dd>Site (lecteur, pointeuse) d'où provient le pointage : affiché sous P1 et P2 dans le suivi
+      (en orange quand le dernier pointage vient d'un autre site que le premier).</dd>
     <dt>Jour ouvré</dt><dd>Jour de la semaine travaillé [{{ p.jours_ouvres }}], hors jours fériés. Pour un agent en horaires postés,
       c'est le planning qui décide (poste de travail, congé ou formation = jour attendu ; repos ou férié = non attendu).</dd>
     <dt>Horaire de bureau</dt><dd>Début [{{ p.debut_journee }}], seuil de retard [{{ p.seuil_retard }}], pause de [{{ p.debut_pause }}] à
@@ -133,6 +135,9 @@
       <tr><td><strong>Selon le jour de la semaine</strong></td><td>Absentéisme et part des retards (<code>retards ÷ (à l'heure + retards)</code>) pour chaque jour de la semaine.</td></tr>
       <tr><td><strong>Heures d'arrivée au bureau</strong></td><td>Nombre de premiers pointages par quart d'heure (journées À l'heure et En retard, hors horaires postés).</td></tr>
       <tr><td><strong>Par service, statut du personnel, direction, site</strong></td><td>Mêmes indicateurs calculés pour chaque groupe ; classés du plus fort au plus faible absentéisme.</td></tr>
+      <tr><td><strong>Surveillance des sites</strong></td><td>Chaque jour de contrôle, à l'heure paramétrée : un site surveillé
+        sans aucun pointage depuis minuit déclenche un mail aux destinataires paramétrés. Sites surveillés : ceux cochés, sinon
+        tous ceux qui ont pointé au cours des N derniers jours.</td></tr>
       <tr><td><strong>Résumés par mail</strong> (quotidien, hebdomadaire)</td><td>Mêmes formules, limitées à l'équipe du responsable (N-1 ou toute la hiérarchie) ;
         moyennes par jour de présence au bureau = moyenne des durées des journées À l'heure et En retard.</td></tr>
     </tbody>

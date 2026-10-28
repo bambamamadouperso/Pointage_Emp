@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block title %}Surveillance des sites{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Surveillance des sites</h1>
+    <p class="muted">Chaque jour, à l'heure indiquée, contrôle que chaque site a remonté au moins un pointage depuis le début
+      de la journée. Sinon, un mail part vers les destinataires ci-dessous (lecteur en panne, coupure réseau, synchronisation arrêtée…).</p></div>
+</div>
+
+{% if not configured %}
+  <div class="flash warn">Configurez d'abord la source des pointages.</div>
+{% elif not site_col %}
+  <div class="flash warn">Indiquez la colonne du <strong>site du pointage</strong> (lecteur, pointeuse…) dans
+    {% if can(role, 'admin') %}<a href="/admin/pointage#site-pointage">Administration → Source des pointages</a>{% else %}Administration → Source des pointages (administrateur){% endif %} :
+    elle permet de savoir de quel site provient chaque pointage.</div>
+{% endif %}
+{% if error %}<div class="flash err">{{ error }}</div>{% endif %}
+
+{% if site_col %}
+<section class="card">
+  <div class="card-head"><div><h2>Situation du jour</h2>
+    <p class="muted small">Pointages reçus aujourd'hui jusqu'à {{ now.strftime('%Hh%M') }} ;
+      sites ayant pointé au cours des {{ s.lookback_days or 30 }} derniers jours{% if chosen %} et sites surveillés{% endif %}.</p></div>
+    <form method="post" action="/admin/sites/controler" data-confirm="Contrôler les sites maintenant ? Un mail partira vers les destinataires si un site n'a pas pointé.">
+      <button class="btn">Contrôler maintenant</button></form></div>
+  {% if not checked %}<p class="empty">Aucun site trouvé dans les pointages récents.</p>{% else %}
+  <div class="table-wrap"><table>
+    <thead><tr><th>Site</th><th class="right">Pointages aujourd'hui</th><th>Dernier pointage reçu</th><th>État</th></tr></thead>
+    <tbody>{% for x in checked %}
+      <tr><td><strong>{{ x.site }}</strong></td><td class="right">{{ x.aujourdhui | num }}</td>
+        <td class="small">{{ x.dernier | dt if x.dernier else '—' }}</td>
+        <td>{% if x.site in silent %}<span class="badge err">Aucun pointage aujourd'hui</span>{% else %}<span class="badge ok">Actif</span>{% endif %}</td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+  {% endif %}
+</section>
+{% endif %}
+
+<form method="post" action="/admin/sites" class="card form" style="max-width:920px">
+  <h2>Paramètres</h2>
+  <label class="check switch"><input type="checkbox" name="enabled" value="1" {{ 'checked' if s.enabled }}>
+    <span><strong>Activer le contrôle quotidien</strong></span></label>
+  <div class="row">
+    <label class="narrow-l">Heure du contrôle <input name="check_time" value="{{ s.check_time }}" placeholder="09:00" required></label>
+    <div class="weekday-checks"><span class="muted small">Jours de contrôle</span><br>
+      {% for n, label in weekdays %}<label class="check"><input type="checkbox" name="weekdays" value="{{ n }}" {{ 'checked' if n in days }}> {{ label }}</label>{% endfor %}</div>
+    <label class="check"><input type="checkbox" name="skip_holidays" value="1" {{ 'checked' if s.skip_holidays }}> Pas de contrôle les jours fériés</label>
+  </div>
+  <label>Destinataires <span class="muted small">(adresses séparées par des virgules)</span>
+    <input name="recipients" value="{{ s.recipients }}" placeholder="securite@exemple.com, informatique@exemple.com, rh@exemple.com"></label>
+  <fieldset class="limits"><legend>Sites surveillés</legend>
+    <p class="muted small">Aucun site coché : tous les sites ayant pointé au cours des derniers jours sont surveillés
+      (un nouveau site est pris en compte automatiquement). Cochez des sites pour n'en surveiller que certains.</p>
+    {% set names = (activity | map(attribute='site') | list) %}
+    <div class="site-checks">
+      {% for name in names + (chosen | reject('in', names) | list) %}
+      <label class="check"><input type="checkbox" name="sites" value="{{ name }}" {{ 'checked' if name in chosen }}> {{ name }}</label>
+      {% else %}<span class="muted small">Aucun site trouvé pour l'instant.</span>{% endfor %}
+    </div>
+    <p class="inline-field small">Sites actifs : ceux qui ont pointé au cours des
+      <input type="number" name="lookback_days" min="1" max="365" value="{{ s.lookback_days or 30 }}" aria-label="Nombre de jours"> derniers jours.</p>
+  </fieldset>
+  <fieldset class="limits"><legend>Message</legend>
+    <label>Objet <span class="muted small">(variables : {nb}, {heure}, {date})</span>
+      <input name="subject" value="{{ s.subject }}" placeholder="{{ default_subject }}"></label>
+    <label>Texte ajouté au mail <span class="muted small">(facultatif, ex. consignes ou numéro d'astreinte)</span>
+      <textarea name="message" rows="2" class="plain">{{ s.message }}</textarea></label>
+  </fieldset>
+  <ul class="rule-list small">
+    <li>Envoi avec le {% if can(role, 'admin') %}<a href="/admin/envoi">serveur d'envoi des e-mails</a>{% else %}serveur d'envoi des e-mails{% endif %} :
+      {% if mail.smtp_host and mail.from_email %}<strong>{{ mail.smtp_host }}</strong>, expéditeur {{ mail.from_email }}
+      {% else %}<span class="warn-text">non configuré — aucun mail ne partira</span>{% endif %} ;
+      mode {% if mail.mode == 'production' %}<span class="badge ok">Production</span>{% else %}<span class="badge warn">Test</span> (vers les adresses de test){% endif %}.</li>
+    <li>Un seul contrôle par jour, à partir de l'heure indiquée (rattrapé au redémarrage de l'application le même jour).</li>
+  </ul>
+  <div class="form-actions"><button class="btn primary">Enregistrer</button></div>
+</form>
+
+<section class="card">
+  <h2>Envoyer une alerte d'essai</h2>
+  <form method="post" action="/admin/sites/essai" class="inline">
+    <input type="email" name="to" required placeholder="votre.adresse@exemple.com" aria-label="Adresse d'essai">
+    <button class="btn">Envoyer l'essai</button></form>
+</section>
+
+<section class="card" id="journal">
+  <h2>Journal des contrôles</h2>
+  {% if not logs %}<p class="empty">Aucun contrôle pour l'instant.</p>{% else %}
+  <div class="table-wrap"><table>
+    <thead><tr><th>Jour</th><th>Contrôlé à</th><th class="right">Sites</th><th>Sans pointage</th><th>Résultat</th><th>Destinataires</th></tr></thead>
+    <tbody>{% for log in logs %}
+      <tr><td class="nowrap">{{ log.jour | jour_fr }}</td><td class="small">{{ log.checked_at | dt }}</td><td class="right">{{ log.checked }}</td>
+        <td>{{ log.silent_list | join(', ') or '—' }}</td>
+        <td><span class="badge {{ {'ok': 'ok', 'sent': 'warn', 'failed': 'err', 'no_recipient': 'err'}.get(log.status, '') }}">{{ status_labels.get(log.status, log.status) }}</span>
+          {% if log.status == 'sent' and log.mode != 'production' %}<span class="muted small">(mode test)</span>{% endif %}
+          {% if log.error %}<br><span class="muted small">{{ log.error }}</span>{% endif %}</td>
+        <td class="small">{{ log.recipients or '—' }}</td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+  {% endif %}
+</section>
+{% endblock %}
