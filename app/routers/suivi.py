@@ -440,7 +440,7 @@ def export_pdf(request: Request, db: Session = Depends(get_db)):
                  if k not in ("Du", "Au", "Lignes", "Exporté par") and v not in ("—", "Tous", "Toutes", "toutes")])
     _, mapping = load_config(db)
     has_dir = bool(mapping and mapping.dir_col)  # colonne Direction quand elle est configurée
-    headers = ["Date", "Matricule", "Nom", "Service", *(["Direction"] if has_dir else []), "Statut du personnel",
+    headers = ["Date", "Matricule", "Nom", *(["Direction"] if has_dir else []), "Service", "Statut du personnel",
                "1er pointage", "Statut", "Dernier", "Nb", *(["Durée standard"] if with_validee else []), "Durée effective",
                "Responsable"]
     widths = [17, 16, 38, 28, *([28] if has_dir else []), 20, 15, 31, 15, 8, *([17] if with_validee else []), 17, 32]
@@ -463,7 +463,7 @@ def export_pdf(request: Request, db: Session = Depends(get_db)):
     for i, r in enumerate(rows[:PDF_MAX_ROWS]):
         colors[(i, 1)] = colors[(i, len(headers) - 1)] = pdf.MUTED
         body.append([r["jour"].strftime("%d/%m/%Y"), r["matricule"], " ".join(filter(None, [r["nom"], r["prenom"]])),
-                     r["service"], *([r.get("direction")] if has_dir else []), r["categorie"],
+                     *([r.get("direction")] if has_dir else []), r["service"], r["categorie"],
                      hhmm(r["premier_pointage"]) if r["premier_pointage"] else "",
                      r["statut_libelle"] + (" (allaitement)" if r.get("allaitement") else ""),
                      hhmm(r["dernier_pointage"]) if r["dernier_pointage"] else "", r["nb_pointages"] or "",

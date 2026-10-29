@@ -305,15 +305,15 @@ def export_pdf(request: Request, db: Session = Depends(get_db)):
             colors[(i, 10)] = pdf.RED
         if e["retards"]:
             colors[(i, 7)] = pdf.ORANGE
-    # Colonne Direction (si configurée) après le service : les numéros de colonnes colorées sont décalés d'autant.
+    # Colonne Direction (si configurée) avant le service : les numéros de colonnes colorées sont décalés d'autant.
     if has_dir:
-        pills = {(i, j + (j >= 3)): v for (i, j), v in pills.items()}
-        colors = {(i, j + (j >= 3)): v for (i, j), v in colors.items()}
-    doc.table(["Matricule", "Nom", "Service", *(["Direction"] if has_dir else []), "Statut du personnel", "Attendus",
+        pills = {(i, j + (j >= 2)): v for (i, j), v in pills.items()}
+        colors = {(i, j + (j >= 2)): v for (i, j), v in colors.items()}
+    doc.table(["Matricule", "Nom", *(["Direction"] if has_dir else []), "Service", "Statut du personnel", "Attendus",
                "Présences", "Présence", "Retards", "Min. de retard", "Ponctualité", "Absences", "Pointages partiels", "Congés",
                "Heures standard"][:cut],
-              [[e["matricule"], " ".join(filter(None, [e["nom"], e["prenom"]])), e["service"],
-                *([e.get("direction")] if has_dir else []), e["categorie"], num(e["attendus"]),
+              [[e["matricule"], " ".join(filter(None, [e["nom"], e["prenom"]])),
+                *([e.get("direction")] if has_dir else []), e["service"], e["categorie"], num(e["attendus"]),
                 num(e["presents"]), pct(e["taux_presence"]), num(e["retards"]), num(e["retard_min_total"]),
                 pct(e["taux_ponctualite"]), num(e["absences"]), num(e["incomplets"]), num(e["conges"]),
                 hours(e["heures_validees"])][:cut] for e in data["employes"]],

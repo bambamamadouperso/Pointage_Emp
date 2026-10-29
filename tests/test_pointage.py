@@ -1642,6 +1642,7 @@ def test_direction_filter_and_reports(configured, pg, logged_client):
         # Colonne « Direction » dédiée (écran triable, PDF) une fois la colonne configurée.
         head = both.split("<thead>")[1].split("</thead>")[0]
         assert ">Direction</a>" in head and "sort=direction" in head
+        assert head.index(">Direction</a>") < head.index(">Service</a>") < head.index(">Responsable</a>")
         assert '<td class="small">Direction Industrielle</td>' in both
         assert "Direction Industrielle" in logged_client.get(f"/suivi?date={MON.isoformat()}&sort=direction&dir=desc").text
         body = _pdf_text(logged_client.get(f"/suivi/export.pdf?date={MON.isoformat()}&pop=liste").content)

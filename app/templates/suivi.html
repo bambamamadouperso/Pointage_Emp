@@ -216,7 +216,7 @@
   <div class="table-wrap"><table class="suivi">
     <thead><tr>
       {% if not single_day %}{{ th('jour', 'Date') }}{% endif %}
-      {{ th('matricule', 'Matricule') }}{{ th('nom', 'Nom') }}{{ th('service', 'Service') }}{% if has_direction %}{{ th('direction', 'Direction') }}{% endif %}
+      {{ th('matricule', 'Matricule') }}{{ th('nom', 'Nom') }}{% if has_direction %}{{ th('direction', 'Direction') }}{% endif %}{{ th('service', 'Service') }}
       {% if has_hierarchy %}{{ th('responsable', 'Responsable') }}{% endif %}
       {{ th('premier', '1er pointage') }}{{ th('statut', 'Statut') }}{{ th('dernier', 'Dernier pointage') }}
       {% if show_validee %}{{ th('validee', 'Durée standard', 'right') }}{% endif %}{{ th('effective', 'Durée effective', 'right') }}
@@ -229,8 +229,8 @@
         {% if not single_day %}<td class="nowrap">{{ r.jour | jour_fr(True) }}</td>{% endif %}
         <td class="mono">{{ r.matricule }}</td>
         <td class="nom-cell">{% if r.hors_liste %}<span class="badge st-out" title="A pointé mais n'est pas dans la table des employés">Hors liste</span>{% else %}{{ r.nom }} {{ r.prenom or '' }}{% endif %}</td>
-        <td>{{ r.service or '—' }}{% if r.site %}<br><span class="muted small" title="Site">{{ r.site }}</span>{% endif %}</td>
         {% if has_direction %}<td class="small">{{ r.direction or '—' }}</td>{% endif %}
+        <td>{{ r.service or '—' }}{% if r.site %}<br><span class="muted small" title="Site">{{ r.site }}</span>{% endif %}</td>
         {% if has_hierarchy %}<td class="small">{{ r.responsable or '—' }}</td>{% endif %}
         <td>{{ hhmm(r.premier_pointage) }}{% if r.site_premier %}<br><span class="punch-site" title="Site du premier pointage">{{ r.site_premier }}</span>{% endif %}</td>
         <td class="statut-cell"><span class="badge {{ cls }}">{{ label }}</span>{% if not r.jour_ouvre and r.statut not in ('NON_OUVRE', 'REPOS') %} <span class="muted small" title="Jour non ouvré ou férié">(non ouvré)</span>{% endif %}
