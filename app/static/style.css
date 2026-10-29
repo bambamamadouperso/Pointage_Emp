@@ -973,3 +973,16 @@ details.hors-liste .table-wrap { margin-top: .7rem; }
 .site-checks label.check { flex: 0 0 auto; }
 .inline-field { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 4px 0 0; }
 .inline-field input[type=number] { width: 80px; }
+
+/* Suivi journalier : tout le tableau tient dans la largeur de la page (colonnes compactes, textes longs renvoyés
+   à la ligne au lieu d'élargir la colonne). */
+table.suivi th, table.suivi td { padding: .5rem .42rem; }
+table.suivi td { font-size: .86rem; }
+table.suivi th { font-size: .66rem; letter-spacing: .04em; }
+table.suivi td.nom-cell { min-width: 7.5rem; }
+table.suivi td.statut-cell { min-width: 7.5rem; max-width: 12rem; }
+table.suivi td.statut-cell .badge { white-space: nowrap; }
+table.suivi .pending-tag, table.suivi .allait-tag, table.suivi .poste-tag { white-space: normal; border-radius: 8px; line-height: 1.3; }
+table.suivi td.right { white-space: nowrap; }
+table.suivi td.small { max-width: 11rem; }
+@media (max-width: 1400px) { table.suivi td { font-size: .82rem; } }

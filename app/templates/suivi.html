@@ -228,12 +228,12 @@
           title="Cliquer pour voir tous les pointages de la journée">
         {% if not single_day %}<td class="nowrap">{{ r.jour | jour_fr(True) }}</td>{% endif %}
         <td class="mono">{{ r.matricule }}</td>
-        <td class="nowrap">{% if r.hors_liste %}<span class="badge st-out" title="A pointé mais n'est pas dans la table des employés">Hors liste</span>{% else %}{{ r.nom }} {{ r.prenom or '' }}{% endif %}</td>
+        <td class="nom-cell">{% if r.hors_liste %}<span class="badge st-out" title="A pointé mais n'est pas dans la table des employés">Hors liste</span>{% else %}{{ r.nom }} {{ r.prenom or '' }}{% endif %}</td>
         <td>{{ r.service or '—' }}{% if r.site %}<br><span class="muted small" title="Site">{{ r.site }}</span>{% endif %}</td>
         {% if has_direction %}<td class="small">{{ r.direction or '—' }}</td>{% endif %}
         {% if has_hierarchy %}<td class="small">{{ r.responsable or '—' }}</td>{% endif %}
         <td>{{ hhmm(r.premier_pointage) }}{% if r.site_premier %}<br><span class="punch-site" title="Site du premier pointage">{{ r.site_premier }}</span>{% endif %}</td>
-        <td class="nowrap"><span class="badge {{ cls }}">{{ label }}</span>{% if not r.jour_ouvre and r.statut not in ('NON_OUVRE', 'REPOS') %} <span class="muted small" title="Jour non ouvré ou férié">(non ouvré)</span>{% endif %}
+        <td class="statut-cell"><span class="badge {{ cls }}">{{ label }}</span>{% if not r.jour_ouvre and r.statut not in ('NON_OUVRE', 'REPOS') %} <span class="muted small" title="Jour non ouvré ou férié">(non ouvré)</span>{% endif %}
           {% if r.poste %}<br><span class="poste-tag" title="Poste planifié (horaires postés)">{{ r.poste }}</span>{% endif %}
           {% set attente = pending.get((r.emp_key, r.jour)) if r.statut == 'ABSENT' else none %}
           {% if attente %}<br><span class="pending-tag" title="Tant que la demande n'est pas validée, la journée reste comptée absente">⏳ {{ attente }}</span>{% endif %}
