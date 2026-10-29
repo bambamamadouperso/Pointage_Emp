@@ -213,16 +213,14 @@ def export(request: Request, db: Session = Depends(get_db)):
                     headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
 
-@router.get("/export.pdf")
-def export_pdf(request: Request, db: Session = Depends(get_db)):
+def _report_content(request: Request, db: Session, f: pointage.Filters, data: dict) -> dict:
+    """Contenu du rapport commun aux exports PDF et PowerPoint : indicateurs, tableaux, couleurs des cellules.
+    Respecte les droits : durée standard (RH, administrateurs), employés à suivre (administrateurs)."""
     from .. import pdf
 
-    result = _export_data(request, db)
-    if isinstance(result, Response):
-        return result
-    f, data = result
     k = data["kpi"]
-    std = validee_allowed(db, request.session.get("role"))
+    role = request.session.get("role")
+    std, admin = validee_allowed(db, role), auth.has_role(role, "admin")
     _, mapping = load_config(db)
     has_dir = bool(mapping and mapping.dir_col)
     cut = None if std else -1  # durée standard (dernières colonnes) réservée aux RH et aux administrateurs
@@ -236,15 +234,14 @@ def export_pdf(request: Request, db: Session = Depends(get_db)):
     def num(v):
         return f"{int(v or 0):,}".replace(",", " ")
 
-    doc = pdf.Document("Rapport de présence", f"du {f.du:%d/%m/%Y} au {f.au:%d/%m/%Y} · employés de la liste",
-                       request.session.get("user", ""))
-    doc.filters([(label, value) for label, value in _filter_items(request, f)
-                 if label not in ("Du", "Au", "Exporté par") and value not in ("Tous", "Toutes")])
-    if not k.get("attendus"):
-        doc.section("Aucune journée à analyser sur cette période avec ces filtres.")
-        return Response(doc.output_bytes(), media_type="application/pdf",
-                        headers={"Content-Disposition": f'attachment; filename="rapport_{f.du:%Y%m%d}_{f.au:%Y%m%d}.pdf"'})
-    doc.kpis([
+    out = {"title": "Rapport de présence", "subtitle": f"du {f.du:%d/%m/%Y} au {f.au:%d/%m/%Y} · employés de la liste",
+           "user": request.session.get("user", ""), "empty": not k.get("attendus"), "admin": admin, "std": std,
+           "filters": [(label, value) for label, value in _filter_items(request, f)
+                       if label not in ("Du", "Au", "Exporté par") and value not in ("Tous", "Toutes")],
+           "tables": [], "name": f"rapport_{f.du:%Y%m%d}_{f.au:%Y%m%d}"}
+    if out["empty"]:
+        return out
+    out["kpis"] = [
         ("Taux de présence", pct(k["taux_presence"]), f"{num(k['presents'])} journées sur {num(k['disponibles'])} (hors congés)", pdf.GREEN),
         ("Taux d'absentéisme", pct(k["taux_absence"]), f"{num(k['absences'])} journée(s) d'absence", pdf.RED),
         ("Taux de ponctualité", pct(k["taux_ponctualite"]), "à l'heure / (à l'heure + retards)", pdf.BLUE),
@@ -253,10 +250,11 @@ def export_pdf(request: Request, db: Session = Depends(get_db)):
          f"{hours(k['heures_moy_bureau'])} par jour au bureau" if k.get("heures_moy_bureau") else "", pdf.TEAL) if std else
         ("Journées attendues", num(k["attendus"]), f"{num(k['employes'])} employé(s)", pdf.TEAL),
         ("Pointages partiels", num(k["incomplets"]), "journées avec un seul pointage", pdf.GREY),
-    ])
-    doc.filters([("Employés", num(k["employes"])), ("Journées attendues", num(k["attendus"])), ("En congé", num(k["conges"])),
-                 ("Arrêt maladie", num(k["maladies"])), ("Télétravail", num(k["teletravail"])),
-                 ("Sur le terrain", num(k["terrain"])), *([("En mission", num(k["missions"]))] if k.get("missions") else [])])
+    ]
+    out["volumes"] = [("Employés", num(k["employes"])), ("Journées attendues", num(k["attendus"])),
+                      ("En congé", num(k["conges"])), ("Arrêt maladie", num(k["maladies"])),
+                      ("Télétravail", num(k["teletravail"])), ("Sur le terrain", num(k["terrain"])),
+                      *([("En mission", num(k["missions"]))] if k.get("missions") else [])]
 
     def rates(row, i, cols, pills):
         """Pastilles des taux : présence et ponctualité (plus haut = mieux), absentéisme (plus bas = mieux)."""
@@ -275,28 +273,31 @@ def export_pdf(request: Request, db: Session = Depends(get_db)):
         groups = data.get(key) or []
         if not groups:
             continue
-        doc.section(title, f"{len(groups)} groupe(s), du plus fort au plus faible absentéisme")
         pills, colors = {}, {}
         for i, g in enumerate(groups):
             rates(g, i, ((2, "taux_presence", 95, 85, True), (3, "taux_absence", 95, 90, False),
                          (4, "taux_ponctualite", 95, 85, True)), pills)
             if g["absences"]:
                 colors[(i, 7)] = pdf.RED
-        doc.table([title[4:].capitalize()] + group_headers,
-                  [[g[field], num(g["employes"]), pct(g["taux_presence"]), pct(g["taux_absence"]), pct(g["taux_ponctualite"]),
-                    num(g["retards"]), num(g["retard_min_total"]), num(g["absences"]), num(g["incomplets"]),
-                    hours(g["heures_validees"]), hours(g["heures_moy_bureau"])][:None if std else -2] for g in groups],
-                  [50] + group_widths, ["L"] + ["R"] * len(group_headers), pills, colors)
+        out["tables"].append({
+            "title": title, "note": f"{len(groups)} groupe(s), du plus fort au plus faible absentéisme",
+            "headers": [title[4:].capitalize()] + group_headers,
+            "rows": [[g[field], num(g["employes"]), pct(g["taux_presence"]), pct(g["taux_absence"]),
+                      pct(g["taux_ponctualite"]), num(g["retards"]), num(g["retard_min_total"]), num(g["absences"]),
+                      num(g["incomplets"]), hours(g["heures_validees"]), hours(g["heures_moy_bureau"])][:None if std else -2]
+                     for g in groups],
+            "widths": [50] + group_widths, "align": ["L"] + ["R"] * len(group_headers), "pills": pills, "colors": colors})
 
-    if data["alertes"] and auth.has_role(request.session.get("role"), "admin"):  # réservé aux administrateurs
-        doc.section("Employés à suivre", f"{len(data['alertes'])} alerte(s)")
-        pills = {(i, 0): pdf.BAD if a["gravite"] >= 3 else pdf.WARN if a["gravite"] == 2 else pdf.STATUS_PILLS["INCOMPLET"] for i, a in enumerate(data["alertes"])}
-        doc.table(["Motif", "Matricule", "Nom", "Service", "Responsable", "Détail"],
-                  [[a["motif"], a["matricule"], a["nom"], a["service"], a["responsable"], a["detail"]] for a in data["alertes"]],
-                  [50, 18, 44, 36, 40, 80], pills=pills, colors={(i, 1): pdf.MUTED for i in range(len(data["alertes"]))})
+    if data["alertes"] and admin:  # réservé aux administrateurs
+        out["tables"].append({
+            "title": "Employés à suivre", "note": f"{len(data['alertes'])} alerte(s)",
+            "headers": ["Motif", "Matricule", "Nom", "Service", "Responsable", "Détail"],
+            "rows": [[a["motif"], a["matricule"], a["nom"], a["service"], a["responsable"], a["detail"]] for a in data["alertes"]],
+            "widths": [50, 18, 44, 36, 40, 80], "align": None,
+            "pills": {(i, 0): pdf.BAD if a["gravite"] >= 3 else pdf.WARN if a["gravite"] == 2 else pdf.STATUS_PILLS["INCOMPLET"]
+                      for i, a in enumerate(data["alertes"])},
+            "colors": {(i, 1): pdf.MUTED for i in range(len(data["alertes"]))}})
 
-    doc.section("Par employé", f"{len(data['employes'])} employé(s), tri : "
-                               f"{_sorts(std).get(request.query_params.get('tri', 'absences'), SORTS['absences']).lower()}")
     pills, colors = {}, {}
     for i, e in enumerate(data["employes"]):
         rates(e, i, ((6, "taux_presence", 95, 85, True), (9, "taux_ponctualite", 95, 85, True)), pills)
@@ -309,15 +310,82 @@ def export_pdf(request: Request, db: Session = Depends(get_db)):
     if has_dir:
         pills = {(i, j + (j >= 2)): v for (i, j), v in pills.items()}
         colors = {(i, j + (j >= 2)): v for (i, j), v in colors.items()}
-    doc.table(["Matricule", "Nom", *(["Direction"] if has_dir else []), "Service", "Statut du personnel", "Attendus",
-               "Présences", "Présence", "Retards", "Min. de retard", "Ponctualité", "Absences", "Pointages partiels", "Congés",
-               "Heures standard"][:cut],
-              [[e["matricule"], " ".join(filter(None, [e["nom"], e["prenom"]])),
-                *([e.get("direction")] if has_dir else []), e["service"], e["categorie"], num(e["attendus"]),
-                num(e["presents"]), pct(e["taux_presence"]), num(e["retards"]), num(e["retard_min_total"]),
-                pct(e["taux_ponctualite"]), num(e["absences"]), num(e["incomplets"]), num(e["conges"]),
-                hours(e["heures_validees"])][:cut] for e in data["employes"]],
-              [18, 40, 30, *([28] if has_dir else []), 22, 16, 17, 18, 15, 18, 19, 16, 14, 14, 19][:cut],
-              (["L"] * (4 + has_dir) + ["R"] * 10)[:cut], pills, colors)
+    out["tables"].append({
+        "title": "Par employé", "employees": True,
+        "note": f"{len(data['employes'])} employé(s), tri : "
+                f"{_sorts(std).get(request.query_params.get('tri', 'absences'), SORTS['absences']).lower()}",
+        "headers": ["Matricule", "Nom", *(["Direction"] if has_dir else []), "Service", "Statut du personnel", "Attendus",
+                    "Présences", "Présence", "Retards", "Min. de retard", "Ponctualité", "Absences", "Pointages partiels",
+                    "Congés", "Heures standard"][:cut],
+        "rows": [[e["matricule"], " ".join(filter(None, [e["nom"], e["prenom"]])),
+                  *([e.get("direction")] if has_dir else []), e["service"], e["categorie"], num(e["attendus"]),
+                  num(e["presents"]), pct(e["taux_presence"]), num(e["retards"]), num(e["retard_min_total"]),
+                  pct(e["taux_ponctualite"]), num(e["absences"]), num(e["incomplets"]), num(e["conges"]),
+                  hours(e["heures_validees"])][:cut] for e in data["employes"]],
+        "widths": [18, 40, 30, *([28] if has_dir else []), 22, 16, 17, 18, 15, 18, 19, 16, 14, 14, 19][:cut],
+        "align": (["L"] * (4 + has_dir) + ["R"] * 10)[:cut], "pills": pills, "colors": colors})
+    return out
+
+
+@router.get("/export.pdf")
+def export_pdf(request: Request, db: Session = Depends(get_db)):
+    from .. import pdf
+
+    result = _export_data(request, db)
+    if isinstance(result, Response):
+        return result
+    f, data = result
+    c = _report_content(request, db, f, data)
+    doc = pdf.Document(c["title"], c["subtitle"], c["user"])
+    doc.filters(c["filters"])
+    if c["empty"]:
+        doc.section("Aucune journée à analyser sur cette période avec ces filtres.")
+    else:
+        doc.kpis(c["kpis"])
+        doc.filters(c["volumes"])
+        for t in c["tables"]:
+            doc.section(t["title"], t["note"])
+            doc.table(t["headers"], t["rows"], t["widths"], t["align"], t["pills"], t["colors"])
     return Response(doc.output_bytes(), media_type="application/pdf",
-                    headers={"Content-Disposition": f'attachment; filename="rapport_{f.du:%Y%m%d}_{f.au:%Y%m%d}.pdf"'})
+                    headers={"Content-Disposition": f'attachment; filename="{c["name"]}.pdf"'})
+
+
+@router.get("/export.pptx")
+def export_pptx(request: Request, db: Session = Depends(get_db)):
+    from .. import ppt
+
+    result = _export_data(request, db)
+    if isinstance(result, Response):
+        return result
+    f, data = result
+    c = _report_content(request, db, f, data)
+    deck = ppt.Deck(c["title"], c["subtitle"], c["user"], c["filters"])
+    if c["empty"]:
+        deck.message("Aucune journée à analyser sur cette période avec ces filtres.")
+    else:
+        deck.kpis("Indicateurs clés", c["kpis"], c["volumes"])
+        # Graphiques natifs PowerPoint (modifiables) : répartition des statuts dans le temps, jour de la semaine.
+        if data["jours"]:
+            fmt = (lambda d: f"{d:%d/%m}") if data["granularite"] == "jour" else (lambda d: f"sem. {d:%d/%m}")
+            deck.chart(f"Présence {'par jour' if data['granularite'] == 'jour' else 'par semaine'}",
+                       "Répartition des journées-employé par statut.",
+                       [fmt(j["jour"]) for j in data["jours"]],
+                       [(label, [j[key] for j in data["jours"]], color) for key, label, color in rapports.SERIES],
+                       kind="stacked")
+        if data["semaine"]:
+            deck.chart("Selon le jour de la semaine", "Taux de présence, d'absentéisme et de retard (%).",
+                       [w["jour"] for w in data["semaine"]],
+                       [("Taux de présence", [round(w["taux_presence"] or 0, 1) for w in data["semaine"]], "#10b981"),
+                        ("Taux d'absentéisme", [round(w["taux_absence"] or 0, 1) for w in data["semaine"]], "#e11d48"),
+                        ("Taux de retard", [round(w["taux_retard"] or 0, 1) for w in data["semaine"]], "#f97316")],
+                       kind="bars", percent=True)
+        if c["admin"] and data.get("arrivees"):
+            arr = [a for a in data["arrivees"] if a["n"]]
+            deck.chart("Heures d'arrivée au bureau", "Premiers pointages par quart d'heure (réservé à l'administrateur).",
+                       [f"{a['minute'] // 60:02d}h{a['minute'] % 60:02d}" for a in arr],
+                       [("Arrivées", [a["n"] for a in arr], "#10b981")], kind="columns")
+        for t in c["tables"]:
+            deck.table(t["title"], t["note"], t["headers"], t["rows"], t["widths"], t["align"], t["pills"], t["colors"],
+                       max_rows=ppt.EMPLOYEE_MAX_ROWS if t.get("employees") else None)
+    return Response(deck.output_bytes(), media_type=ppt.MEDIA_TYPE,
+                    headers={"Content-Disposition": f'attachment; filename="{c["name"]}.pptx"'})

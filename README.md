@@ -223,6 +223,13 @@ sites, notifications) ; mail d'essai et état de chaque envoi.
 retard, durées, suivi, rapports, alertes, couleurs, filtres) avec sa méthode et sa formule de calcul, illustrées par
 les paramètres horaires en vigueur.
 
+**Export PowerPoint** (bouton « ⬇ PowerPoint » du suivi journalier et des rapports) : présentation 16:9 aux couleurs
+de l'application — page de titre avec les filtres, cartes d'indicateurs, **graphiques natifs modifiables** dans
+PowerPoint (présence par jour ou par semaine, selon le jour de la semaine, heures d'arrivée pour l'administrateur),
+tableaux paginés (par service, statut du personnel, direction, site, employés à suivre pour l'administrateur, par
+employé) avec statuts et taux en couleur. Suivi : 300 premières lignes (au-delà, export Excel ou PDF). Mêmes droits
+que l'écran (durée standard, analyses réservées).
+
 **Rapports — analyses réservées à l'administrateur** : le graphique « Heures d'arrivée au bureau » et le tableau
 « À suivre » (employés à suivre) ne sont affichés qu'aux administrateurs, dans une partie dédiée en bas de la page ;
 la feuille « Alertes » de l'export Excel et la section « Employés à suivre » du PDF leur sont aussi réservées.

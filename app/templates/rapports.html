@@ -35,7 +35,8 @@
       {%- if scope_label %} · équipe de {{ scope_label }}{% endif %}</p>
   </div>
   {% if data %}<div class="actions"><a class="btn" href="/rapports/export.xlsx?{{ request.query_params }}">⬇ Export Excel</a>
-    <a class="btn" href="/rapports/export.pdf?{{ request.query_params }}">⬇ Export PDF</a></div>{% endif %}
+    <a class="btn" href="/rapports/export.pdf?{{ request.query_params }}">⬇ Export PDF</a>
+    <a class="btn" href="/rapports/export.pptx?{{ request.query_params }}" title="Présentation PowerPoint avec graphiques modifiables">⬇ PowerPoint</a></div>{% endif %}
 </div>
 
 {% if not configured %}

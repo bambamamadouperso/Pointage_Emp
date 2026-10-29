@@ -2803,3 +2803,62 @@ def test_direction_codes_with_label_table(configured, pg, logged_client):
         with pg.begin() as c:
             c.execute(text(f'ALTER TABLE {SCHEMA}."Personnel" DROP COLUMN IF EXISTS "IdDirection"'))
             c.execute(text(f"DROP TABLE IF EXISTS {SCHEMA}.directions"))
+
+
+def test_pptx_exports(configured, logged_client):
+    """Exports PowerPoint du suivi et des rapports : page de titre, indicateurs, graphiques natifs, tableaux paginés ;
+    analyses réservées à l'administrateur absentes pour un manager."""
+    from fastapi.testclient import TestClient
+    from pptx import Presentation
+
+    from app import auth
+    from app.main import app
+    from app.models import User
+
+    def texts(content):
+        prs = Presentation(io.BytesIO(content))
+        out = []
+        for slide in prs.slides:
+            parts = []
+            for shape in slide.shapes:
+                if shape.has_text_frame:
+                    parts.append(shape.text_frame.text)
+                if shape.has_table:
+                    parts += [c.text for row in shape.table.rows for c in row.cells]
+            out.append(" | ".join(parts))
+        return prs, out
+
+    r = logged_client.get(f"/suivi/export.pptx?date={MON.isoformat()}&statut=RETARD&statut=ABSENT")
+    assert r.status_code == 200 and r.headers["content-type"].startswith("application/vnd.openxmlformats-officedocument.presentationml")
+    assert f"suivi_{MON:%Y%m%d}.pptx" in r.headers["content-disposition"]
+    prs, slides = texts(r.content)
+    assert "Suivi journalier des pointages" in slides[0] and "Statuts : En retard, Absent" in slides[0]
+    assert "Indicateurs du suivi" in slides[1] and "EN RETARD" in slides[1]
+    assert "Détail des journées" in slides[2] and "Ba Khady" in slides[2] and "Moyenne" in slides[2]
+    assert "⬇ PowerPoint" in logged_client.get(f"/suivi?date={MON.isoformat()}").text
+
+    q = f"p=perso&du={MON.isoformat()}&au={(MON + timedelta(days=4)).isoformat()}"
+    assert "⬇ PowerPoint" in logged_client.get("/rapports?" + q).text
+    prs, slides = texts(logged_client.get("/rapports/export.pptx?" + q).content)
+    joined = "\n".join(slides)
+    for part in ("Rapport de présence", "Indicateurs clés", "TAUX DE PRÉSENCE", "Présence par jour", "Selon le jour de la semaine",
+                 "Heures d'arrivée au bureau", "Par service", "Employés à suivre", "Par employé", "Ba Khady"):
+        assert part in joined, part
+    charts = [sh for s in prs.slides for sh in s.shapes if sh.has_chart]
+    assert len(charts) == 3 and charts[1].chart.plots[0].categories[0] == "Lundi"
+
+    with SessionLocal() as db:
+        db.query(User).filter_by(username="mgr_ppt").delete()
+        db.add(User(username="mgr_ppt", role="manager", password_hash=auth.hash_password("motdepasse7")))
+        db.commit()
+    try:
+        mgr = TestClient(app)
+        mgr.post("/login", data={"username": "mgr_ppt", "password": "motdepasse7"})
+        _, slides = texts(mgr.get("/rapports/export.pptx?" + q).content)
+        joined = "\n".join(slides)
+        assert "Par employé" in joined and "Employés à suivre" not in joined and "Heures d'arrivée" not in joined
+        assert "HEURES STANDARD" not in joined
+    finally:
+        with SessionLocal() as db:
+            db.query(User).filter_by(username="mgr_ppt").delete()
+            db.commit()

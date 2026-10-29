@@ -425,31 +425,28 @@ def export(request: Request, db: Session = Depends(get_db)):
 PDF_MAX_ROWS = 5000
 
 
-@router.get("/export.pdf")
-def export_pdf(request: Request, db: Session = Depends(get_db)):
+PPTX_MAX_ROWS = 300  # PowerPoint : au-delà, l'export Excel ou PDF
+
+
+def _suivi_content(request: Request, db: Session, data: tuple, max_rows: int) -> dict:
+    """Contenu commun aux exports PDF et PowerPoint du suivi : indicateurs et tableau (statuts et durées en couleur)."""
     from .. import pdf
 
-    data = _export_data(request, db)
-    if isinstance(data, Response):
-        return data
     f, rows, objectif, with_validee = data
     hhmm = pointage.hhmm
     period = f"du {f.du:%d/%m/%Y}" + ("" if f.du == f.au else f" au {f.au:%d/%m/%Y}")
-    doc = pdf.Document("Suivi journalier des pointages", f"{period} · {len(rows)} ligne(s)", request.session.get("user", ""))
-    doc.filters([(k, v) for k, v in _filter_items(request, f, objectif, with_validee, len(rows))
-                 if k not in ("Du", "Au", "Lignes", "Exporté par") and v not in ("—", "Tous", "Toutes", "toutes")])
     _, mapping = load_config(db)
     has_dir = bool(mapping and mapping.dir_col)  # colonne Direction quand elle est configurée
     headers = ["Date", "Matricule", "Nom", *(["Direction"] if has_dir else []), "Service", "Statut du personnel",
                "1er pointage", "Statut", "Dernier", "Nb", *(["Durée standard"] if with_validee else []), "Durée effective",
                "Responsable"]
-    widths = [17, 16, 38, 28, *([28] if has_dir else []), 20, 15, 31, 15, 8, *([17] if with_validee else []), 17, 32]
+    widths = [21, 16, 34, 28, *([28] if has_dir else []), 20, 15, 31, 15, 8, *([17] if with_validee else []), 17, 30]
     align = ["C", "L", "L", "L", *(["L"] if has_dir else []), "L", "C", "L", "C", "C", *(["C"] if with_validee else []),
              "C", "L"]
     status_col, first_duration = 6 + has_dir, 9 + has_dir
     count = lambda *codes: sum(1 for r in rows if r["statut"] in codes)  # noqa: E731
     moy = _averages(rows)
-    doc.kpis([
+    kpis = [
         ("À l'heure", count("A_L_HEURE"), "journées", pdf.GREEN),
         ("En retard", count("RETARD"), "journées", pdf.ORANGE),
         ("Absents", count("ABSENT"), "sans justificatif", pdf.RED),
@@ -458,9 +455,9 @@ def export_pdf(request: Request, db: Session = Depends(get_db)):
          "congés, télétravail, terrain, missions...", pdf.BLUE),
         ("Durée effective moyenne", hhmm(moy["effective"]) if moy["effective"] else "—",
          f"objectif {objectif // 60}h{objectif % 60:02d} · présents au bureau", pdf.TEAL),
-    ])
+    ]
     body, pills, colors = [], {}, {}
-    for i, r in enumerate(rows[:PDF_MAX_ROWS]):
+    for i, r in enumerate(rows[:max_rows]):
         colors[(i, 1)] = colors[(i, len(headers) - 1)] = pdf.MUTED
         body.append([r["jour"].strftime("%d/%m/%Y"), r["matricule"], " ".join(filter(None, [r["nom"], r["prenom"]])),
                      *([r.get("direction")] if has_dir else []), r["service"], r["categorie"],
@@ -479,9 +476,45 @@ def export_pdf(request: Request, db: Session = Depends(get_db)):
                  hhmm(moy["dernier"]) if moy["dernier"] else "", "",
                  *([hhmm(moy["validee"]) if moy["validee"] else ""] if with_validee else []),
                  hhmm(moy["effective"]) if moy["effective"] else "", ""])
-    doc.table(headers, body, widths, align, pills, colors, bold_last=True)
-    if len(rows) > PDF_MAX_ROWS:
-        doc.section("Export tronqué", f"{len(rows) - PDF_MAX_ROWS} ligne(s) au-delà des {PDF_MAX_ROWS} premières ne figurent pas "
+    return {"title": "Suivi journalier des pointages", "subtitle": f"{period} · {len(rows)} ligne(s)",
+            "user": request.session.get("user", ""),
+            "filters": [(k, v) for k, v in _filter_items(request, f, objectif, with_validee, len(rows))
+                        if k not in ("Du", "Au", "Lignes", "Exporté par") and v not in ("—", "Tous", "Toutes", "toutes")],
+            "kpis": kpis, "headers": headers, "rows": body, "widths": widths, "align": align, "pills": pills,
+            "colors": colors, "hidden": max(len(rows) - max_rows, 0), "f": f}
+
+
+@router.get("/export.pdf")
+def export_pdf(request: Request, db: Session = Depends(get_db)):
+    from .. import pdf
+
+    data = _export_data(request, db)
+    if isinstance(data, Response):
+        return data
+    c = _suivi_content(request, db, data, PDF_MAX_ROWS)
+    doc = pdf.Document(c["title"], c["subtitle"], c["user"])
+    doc.filters(c["filters"])
+    doc.kpis(c["kpis"])
+    doc.table(c["headers"], c["rows"], c["widths"], c["align"], c["pills"], c["colors"], bold_last=True)
+    if c["hidden"]:
+        doc.section("Export tronqué", f"{c['hidden']} ligne(s) au-delà des {PDF_MAX_ROWS} premières ne figurent pas "
                                       "dans le PDF : affinez les filtres ou utilisez l'export Excel.")
     return Response(doc.output_bytes(), media_type="application/pdf",
-                    headers={"Content-Disposition": f'attachment; filename="{_export_name(f, "pdf")}"'})
+                    headers={"Content-Disposition": f'attachment; filename="{_export_name(c["f"], "pdf")}"'})
+
+
+@router.get("/export.pptx")
+def export_pptx(request: Request, db: Session = Depends(get_db)):
+    from .. import ppt
+
+    data = _export_data(request, db)
+    if isinstance(data, Response):
+        return data
+    c = _suivi_content(request, db, data, PPTX_MAX_ROWS)
+    deck = ppt.Deck(c["title"], c["subtitle"], c["user"], c["filters"])
+    deck.kpis("Indicateurs du suivi", c["kpis"])
+    note = c["subtitle"] + (f" — {PPTX_MAX_ROWS} premières lignes ; {c['hidden']} de plus dans l'export Excel ou PDF"
+                            if c["hidden"] else "")
+    deck.table("Détail des journées", note, c["headers"], c["rows"], c["widths"], c["align"], c["pills"], c["colors"])
+    return Response(deck.output_bytes(), media_type=ppt.MEDIA_TYPE,
+                    headers={"Content-Disposition": f'attachment; filename="{_export_name(c["f"], "pptx")}"'})

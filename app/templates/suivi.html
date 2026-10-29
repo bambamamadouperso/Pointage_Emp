@@ -15,6 +15,7 @@
     {% if can(role, 'admin') %}<a class="btn ghost" href="/admin/verifier{% if f.q %}?q={{ f.q | urlencode }}{% endif %}" title="Pourquoi un employé n'apparaît pas absent ?">Vérifier un employé</a>{% endif %}
     <a class="btn" href="/suivi/export.xlsx?{{ request.query_params }}">⬇ Export Excel ({{ data.total | num }} lignes)</a>
     <a class="btn" href="/suivi/export.pdf?{{ request.query_params }}">⬇ Export PDF</a>
+    <a class="btn" href="/suivi/export.pptx?{{ request.query_params }}" title="Présentation PowerPoint (indicateurs et détail des journées)">⬇ PowerPoint</a>
   </div>
   {% endif %}
 </div>
