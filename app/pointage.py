@@ -79,7 +79,7 @@ CONGES = ("CONGE_ANNUEL", "CONGE_EXCEP", "CONGE_MATERNITE")
 MATERNITY_KINDS = {"maternite": "Congé de maternité", "allaitement": "Période d'allaitement"}
 ALLAITEMENT_HOURS = ("01:00", "02:00", "03:00")
 # Version des objets PostgreSQL : si elle change, ils sont réinstallés automatiquement.
-SQL_VERSION = 22
+SQL_VERSION = 23
 # Taille maximale des fichiers importés (planning, agents terrain).
 MAX_IMPORT_MB = 50
 # Limites des requêtes lancées depuis les pages web : une attente de verrou ou une requête lente ne doit jamais
@@ -449,6 +449,11 @@ def _time_expr(expr: str, dtype: str) -> str:
     return f"{expr}::time"
 
 
+def _code_key(expr: str) -> str:
+    """Code normalisé pour relier une colonne à sa table de libellés : sans espaces, casse ni « .0 » final."""
+    return f"regexp_replace(lower(btrim({expr}::text)), '\\.0+$', '')"
+
+
 def punch_site_expr(m: Mapping, alias: str = "p") -> str:
     """Site d'un pointage (colonne de la table des pointages, libellé de la table des sites si elle est choisie)."""
     if not m.punch_site_col:
@@ -598,21 +603,26 @@ def build_sql(m: Mapping, punch_types: dict[str, str], emp_types: dict[str, str]
     else:
         categorie = "NULL::text"
     # Dimensions d'organisation (direction, site) : colonne de la table des noms ou des employés, libellé éventuel.
-    dims_join, dims = "", {}
+    dims_join, dims, codes = "", {}, {}
     for name, (prefix, _) in DIMENSIONS.items():
         col = getattr(m, f"{prefix}_col")
         if not col:
-            dims[name] = "NULL::text"
+            dims[name] = codes[name] = "NULL::text"
             continue
         src = "pe" if getattr(m, f"{prefix}_in") == "person" and m.person_table else "e"
+        codes[name] = f"nullif(btrim({src}.{qi(col)}::text), '')"
         if getattr(m, f"{prefix}_table"):
             alias = f"dim_{prefix}"
-            dims[name] = f"nullif(btrim({alias}.{qi(getattr(m, f'{prefix}_label_col'))}::text), '')"
+            # Libellé de la table ; code brut si aucun libellé ne correspond (plutôt que « sans direction »).
+            # Codes comparés sans tenir compte des espaces, de la casse ni d'un « .0 » final (3 = 3.0, issu de HFSQL).
+            dims[name] = f"COALESCE(nullif(btrim({alias}.{qi(getattr(m, f'{prefix}_label_col'))}::text), ''), {codes[name]})"
+            key = f"{alias}.{qi(getattr(m, f'{prefix}_key_col'))}"
             dims_join += (f" LEFT JOIN {qt(m.schema, getattr(m, f'{prefix}_table'))} {alias} ON "
-                          f"btrim({alias}.{qi(getattr(m, f'{prefix}_key_col'))}::text) = btrim({src}.{qi(col)}::text)")
+                          f"{_code_key(key)} = {_code_key(f'{src}.{qi(col)}')}")
         else:
-            dims[name] = f"nullif(btrim({src}.{qi(col)}::text), '')"
-    dims_select = "".join(f", {expr} AS {name}" for name, expr in dims.items())
+            dims[name] = codes[name]
+    dims_select = "".join(f", {expr} AS {name}" for name, expr in dims.items()) + \
+        "".join(f", {expr} AS {name}_code" for name, expr in codes.items())
     if m.email_col:
         email_src = "pe" if m.email_in == "person" and m.person_table else "e"
         email = f"nullif(lower(btrim({email_src}.{qi(m.email_col)}::text)), '')"
@@ -666,7 +676,7 @@ WITH base AS (
     ORDER BY 1, 6 DESC  -- plusieurs fiches pour une même personne : la fiche active l'emporte
 ){hier_cte}
 SELECT b.emp_key, b.matricule, b.nom, b.prenom, b.service, b.actif, {hier_select}, b.actif_valeur, b.person_ref,
-       b.categorie, b.email, b.direction, b.site
+       b.categorie, b.email, b.direction, b.site, b.direction_code, b.site_code
 FROM base b
 {hier_join}"""
     team_function = f"""
@@ -1956,6 +1966,25 @@ def dimension_values(engine: Engine, m: Mapping, name: str, scope_root: Optional
         return [s for s in c.execute(text(
             f"SELECT DISTINCT {name} FROM {S}.v_pointage_employes WHERE nullif(btrim({name}), '') IS NOT NULL"
             f"{_scope_sql(S, scope_root)} ORDER BY 1"), {"root": scope_root}).scalars()]
+
+
+def dimension_check(engine: Engine, m: Mapping, name: str) -> dict:
+    """Contrôle d'une dimension (direction, site) sur les employés actifs : combien ont une valeur, combien ont un
+    libellé trouvé dans la table des libellés, et exemples de codes sans libellé."""
+    prefix = DIMENSIONS[name][0]
+    S = qi(m.objs)
+    with engine.connect() as c:
+        out = dict(c.execute(text(
+            f"SELECT count(*) AS total, count({name}_code) AS avec_code, "
+            f"count(*) FILTER (WHERE {name} IS DISTINCT FROM {name}_code AND {name} IS NOT NULL) AS avec_libelle "
+            f"FROM {S}.v_pointage_employes WHERE actif")).mappings().one())
+        out["sans_libelle"] = []
+        if getattr(m, f"{prefix}_table"):
+            out["sans_libelle"] = list(c.execute(text(
+                f"SELECT DISTINCT {name}_code FROM {S}.v_pointage_employes "
+                f"WHERE actif AND {name}_code IS NOT NULL AND {name} = {name}_code ORDER BY 1 LIMIT 10")).scalars())
+    out["table"] = bool(getattr(m, f"{prefix}_table"))
+    return out
 
 
 def directions(engine: Engine, m: Mapping, scope_root: Optional[str] = None) -> list[str]:

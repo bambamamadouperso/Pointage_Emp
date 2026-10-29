@@ -149,7 +149,12 @@
 </section>
 
 {% if data.sites %}{{ group_table('Par site', data.sites, 'site', 'Site') }}{% endif %}
-{% if data.directions %}{{ group_table('Par direction', data.directions, 'direction', 'Direction') }}{% endif %}
+{% if data.directions %}
+{% if data.directions | length == 1 and data.directions[0].groupe == '(sans direction)' %}
+<div class="flash warn">Aucun employé n'a de direction : la colonne « Direction » configurée est vide ou ne correspond pas
+  à la table des libellés.{% if can(role, 'admin') %} Voir le diagnostic dans <a href="/admin/pointage#direction">Administration → Source des pointages → Direction</a>.{% endif %}</div>
+{% endif %}
+{{ group_table('Par direction', data.directions, 'direction', 'Direction') }}{% endif %}
 {% if data.categories %}{{ group_table('Par statut du personnel', data.categories, 'categorie', 'Statut du personnel') }}{% endif %}
 {{ group_table('Par service', data.services, 'service', 'Service') }}
 

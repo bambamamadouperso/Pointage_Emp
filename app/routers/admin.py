@@ -182,6 +182,7 @@ def pointage_config(request: Request, db: Session = Depends(get_db)):
                 if installed and getattr(mapping, f"{d['prefix']}_col"):
                     try:
                         d["values"] = pointage.dimension_values(engine, mapping, d["name"])[:20]
+                        d["check"] = pointage.dimension_check(engine, mapping, d["name"])
                     except Exception:
                         d["values"] = []
             if installed and mapping.cat_col:

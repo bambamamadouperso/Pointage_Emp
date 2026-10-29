@@ -129,6 +129,19 @@
     </div>
     {% endif %}
     {% if d['values'] %}<p class="muted small">Valeurs trouvées : {% for v in d['values'] %}<code>{{ v }}</code>{{ ', ' if not loop.last }}{% endfor %}</p>{% endif %}
+    {% set ck = d.get('check') %}{% if ck %}
+    {% if not ck.avec_code %}
+      <div class="flash warn">Aucun employé actif n'a de valeur dans la colonne « {{ m[px ~ '_col'] }} »
+        ({{ 'table ' ~ (m.person_table if in_person else m.emp_table) }}) : vérifiez la colonne choisie, la table
+        (« dans {{ m.person_table or 'la table des noms' }} » ou « dans {{ m.emp_table }} »), et que le job de synchronisation
+        copie bien cette colonne. Résultat actuel : tous les employés en « (sans {{ d.label | lower }}) ».</div>
+    {% else %}
+      <p class="muted small">{{ ck.avec_code }} employé(s) actif(s) sur {{ ck.total }} ont une valeur{% if ck.table %},
+        dont {{ ck.avec_libelle }} avec un libellé trouvé dans {{ m[px ~ '_table'] }}{% endif %}.</p>
+      {% if ck.sans_libelle %}<div class="flash warn">Codes sans libellé dans {{ m[px ~ '_table'] }} (affichés tels quels) :
+        {% for v in ck.sans_libelle %}<code>{{ v }}</code>{{ ', ' if not loop.last }}{% endfor %} — vérifiez les colonnes « Code » et « Libellé »
+        de la table des libellés.</div>{% endif %}
+    {% endif %}{% endif %}
   </fieldset>
   {% endfor %}
 

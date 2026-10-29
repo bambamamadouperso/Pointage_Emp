@@ -2767,3 +2767,38 @@ def test_employee_mail_preferences(configured, pg, logged_client):
             db.query(MailSubscriber).filter_by(matricule="E002").delete()
             db.query(User).filter_by(username="pref_moussa").delete()
             db.commit()
+
+
+def test_direction_codes_with_label_table(configured, pg, logged_client):
+    """Direction codée (ex. 3.0 venu de HFSQL) avec une table de libellés : codes rapprochés malgré « .0 », espaces
+    et casse ; code sans libellé affiché tel quel ; diagnostic dans la configuration."""
+    with pg.begin() as c:
+        c.execute(text(f'ALTER TABLE {SCHEMA}."Personnel" ADD COLUMN IF NOT EXISTS "IdDirection" text'))
+        c.execute(text(f"""UPDATE {SCHEMA}."Personnel" SET "IdDirection" = CASE WHEN "IDPersonnel" IN (101, 102) THEN '3.0'
+                          WHEN "IDPersonnel" = 103 THEN ' ab ' WHEN "IDPersonnel" = 104 THEN '9' END"""))
+        c.execute(text(f"DROP TABLE IF EXISTS {SCHEMA}.directions"))
+        c.execute(text(f"CREATE TABLE {SCHEMA}.directions (code text, libelle text)"))
+        c.execute(text(f"INSERT INTO {SCHEMA}.directions VALUES ('3', 'Direction Industrielle'), ('AB', 'Direction RH')"))
+    with SessionLocal() as db:
+        cfg = db.query(PointageConfig).one()
+        original, conn_id = cfg.data, cfg.conn_id
+    try:
+        data = {**pointage.Mapping.from_json(original).__dict__, "dir_col": "IdDirection", "dir_in": "person",
+                "dir_table": "directions", "dir_key_col": "code", "dir_label_col": "libelle", "conn_id": conn_id}
+        assert "installées" in logged_client.post("/admin/pointage", data=data, follow_redirects=True).text
+        r = rows(pg, MON)
+        assert r[("E001", MON)].direction == "Direction Industrielle" and r[("E002", MON)].direction == "Direction Industrielle"
+        assert r[("E003", MON)].direction == "Direction RH"
+        assert r[("E004", MON)].direction == "9" and r[("E005", MON)].direction is None
+        with SessionLocal() as db:
+            m = pointage.Mapping.from_json(db.query(PointageConfig).one().data)
+        check = pointage.dimension_check(pg, m, "direction")
+        assert (check["avec_code"], check["avec_libelle"], check["sans_libelle"]) == (4, 3, ["9"])
+        page = logged_client.get("/admin/pointage").text
+        assert "Codes sans libellé dans directions" in page and "<code>9</code>" in page
+    finally:
+        restore = {**pointage.Mapping.from_json(original).__dict__, "conn_id": conn_id}
+        assert "installées" in logged_client.post("/admin/pointage", data=restore, follow_redirects=True).text
+        with pg.begin() as c:
+            c.execute(text(f'ALTER TABLE {SCHEMA}."Personnel" DROP COLUMN IF EXISTS "IdDirection"'))
+            c.execute(text(f"DROP TABLE IF EXISTS {SCHEMA}.directions"))
