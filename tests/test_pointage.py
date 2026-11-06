@@ -3111,3 +3111,25 @@ def test_late_justifications(configured, pg, logged_client):
             db.query(LateSettings).delete()
             db.query(User).filter(User.username.in_(["late_moussa", "late_awa"])).delete()
             db.commit()
+
+
+def test_suivi_after_1630_column(configured, pg, logged_client):
+    """Colonne « Après 16h30 » : durée entre 16h30 (ou le 1er pointage s'il est plus tard) et le dernier pointage."""
+    import io as _io
+
+    from openpyxl import load_workbook
+
+    page = logged_client.get(f"/suivi?date={MON.isoformat()}&sort=apres&dir=desc").text
+    assert "Après 16h30" in page
+    body = page.split("table class=\"suivi\"")[1].split("</tbody>")[0]
+    assert body.index("Diallo Awa") < body.index("Ndiaye Moussa")  # 0h40 avant 0h15
+    awa = body.split("Diallo Awa")[1].split("</tr>")[0]
+    moussa = body.split("Ndiaye Moussa")[1].split("</tr>")[0]
+    assert ">0h40</span>" in awa and ">0h15</span>" in moussa
+    ws = load_workbook(_io.BytesIO(logged_client.get(f"/suivi/export.xlsx?date={MON.isoformat()}").content)).active
+    headers = [c.value for c in ws[1]]
+    col = headers.index("Après 16h30")
+    values = {r[1]: r[col] for r in ws.iter_rows(min_row=2, values_only=True)}
+    assert values["E001"] == timedelta(minutes=40) and values["E002"] == timedelta(minutes=15)
+    assert values["E005"] is None  # absente
+    assert logged_client.get(f"/suivi/export.pdf?date={MON.isoformat()}").status_code == 200

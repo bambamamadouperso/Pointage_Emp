@@ -92,8 +92,14 @@ SORTABLE = {
     "direction": "direction",
     "responsable": "responsable",
     "premier": "premier_pointage", "dernier": "dernier_pointage", "statut": "statut",
-    "validee": "duree_validee", "effective": "duree_effective",
+    "validee": "duree_validee", "effective": "duree_effective", "apres": "apres_1630",
 }
+
+# Durée travaillée après 16h30 : du plus tard entre 16h30 et le 1er pointage jusqu'au dernier pointage (au moins deux
+# pointages ; les horaires postés ne sont pas concernés).
+APRES_HEURE = "16:30"
+APRES_SQL = (f"CASE WHEN nb_pointages > 1 AND poste IS NULL AND dernier_pointage > jour + time '{APRES_HEURE}' "
+             f"THEN dernier_pointage - greatest(premier_pointage, jour + time '{APRES_HEURE}') END AS apres_1630")
 
 
 # Dimensions d'organisation : nom de la colonne calculée → (préfixe des champs de configuration, libellé).
@@ -1941,8 +1947,9 @@ def _order(f: Filters) -> str:
 def daily(engine: Engine, m: Mapping, f: Filters, page: int = 1, size: int = 100) -> dict:
     S = qi(m.objs)
     where, params, binds = _where(f, S)
-    source = f"(SELECT * FROM {S}.f_pointage_journalier(:du, :au)) t"
+    source = f"(SELECT *, {APRES_SQL} FROM {S}.f_pointage_journalier(:du, :au)) t"
     kpi_sql = text(f"""SELECT count(*) AS lignes,
+        avg(apres_1630) FILTER (WHERE apres_1630 > interval '0') AS moy_apres,
         count(*) FILTER (WHERE statut IN ('A_L_HEURE', 'RETARD', 'INCOMPLET')) AS presents,
         count(*) FILTER (WHERE statut = 'A_L_HEURE') AS a_l_heure,
         count(*) FILTER (WHERE statut = 'RETARD') AS retards,
@@ -1981,7 +1988,7 @@ def daily(engine: Engine, m: Mapping, f: Filters, page: int = 1, size: int = 100
 def export_rows(engine: Engine, m: Mapping, f: Filters, limit: int = 200_000):
     S = qi(m.objs)
     where, params, binds = _where(f, S)
-    sql = text(f"SELECT * FROM (SELECT * FROM {S}.f_pointage_journalier(:du, :au)) t{where}{_order(f)} "
+    sql = text(f"SELECT * FROM (SELECT *, {APRES_SQL} FROM {S}.f_pointage_journalier(:du, :au)) t{where}{_order(f)} "
                f"LIMIT :lim").bindparams(*binds)
     with engine.connect() as c:
         return c.execute(sql, {**params, "lim": limit}).mappings().all()

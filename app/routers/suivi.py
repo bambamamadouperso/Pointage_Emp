@@ -374,7 +374,7 @@ def export(request: Request, db: Session = Depends(get_db)):
     headers = ["Date", "Matricule", "Nom", "Prénom", "Service", "Statut du personnel", "1er pointage", "Statut", "Dernier pointage",
                "Nb pointages", "Durée standard", "Durée effective", "Durée standard (min)", "Durée effective (min)",
                "Responsable", "Dans la liste des employés", "Poste planifié", "Direction", "Site", "Allaitement",
-               "Site du 1er pointage", "Site du dernier pointage"]
+               "Site du 1er pointage", "Site du dernier pointage", "Après 16h30"]
     ws.append(headers)
     fills = {"A_L_HEURE": "DCFCE7", "RETARD": "FFEDD5", "ABSENT": "FEE2E2", "INCOMPLET": "E5E7EB", "NON_OUVRE": "E0F2FE",
              "CONGE_ANNUEL": "E4F5D3", "CONGE_EXCEP": "E4F5D3", "CONGE_MATERNITE": "FCE7F3",
@@ -391,12 +391,13 @@ def export(request: Request, db: Session = Depends(get_db)):
             float(r["duree_effective_min"]) if r["duree_effective_min"] is not None else None,
             r["responsable"], "Non" if r["hors_liste"] else "Oui", r.get("poste"), r.get("direction"), r.get("site"),
             r.get("allaitement"), r.get("site_premier"), r.get("site_dernier") if r["nb_pointages"] > 1 else None,
+            r.get("apres_1630"),
         ])
         row = ws.max_row
         ws.cell(row, 1).number_format = "DD/MM/YYYY"
         for col in (7, 9):
             ws.cell(row, col).number_format = "HH:MM"
-        for col in (11, 12, 20):
+        for col in (11, 12, 20, 23):
             ws.cell(row, col).number_format = "[H]:MM"
         ws.cell(row, 8).fill = PatternFill("solid", fgColor=fills.get(r["statut"], "FFFFFF"))
         for col, key in ((11, "duree_validee_min"), (12, "duree_effective_min")):  # objectif : vert atteint, rouge sinon
@@ -463,12 +464,12 @@ def _suivi_content(request: Request, db: Session, data: tuple, max_rows: int) ->
     _, mapping = load_config(db)
     has_dir = bool(mapping and mapping.dir_col)  # colonne Direction quand elle est configurée
     headers = ["Date", "Matricule", "Nom", *(["Direction"] if has_dir else []), "Service", "Statut du personnel",
-               "1er pointage", "Statut", "Dernier", "Nb", *(["Durée standard"] if with_validee else []), "Durée effective",
+               "1er pointage", "Statut", "Dernier", "Nb", "Après 16h30", *(["Durée standard"] if with_validee else []), "Durée effective",
                "Responsable"]
-    widths = [21, 16, 34, 28, *([28] if has_dir else []), 20, 15, 31, 15, 8, *([17] if with_validee else []), 17, 30]
-    align = ["C", "L", "L", "L", *(["L"] if has_dir else []), "L", "C", "L", "C", "C", *(["C"] if with_validee else []),
+    widths = [19, 16, 30, 26, *([28] if has_dir else []), 18, 15, 29, 15, 8, 14, *([17] if with_validee else []), 17, 26]
+    align = ["C", "L", "L", "L", *(["L"] if has_dir else []), "L", "C", "L", "C", "C", "C", *(["C"] if with_validee else []),
              "C", "L"]
-    status_col, first_duration = 6 + has_dir, 9 + has_dir
+    status_col, first_duration = 6 + has_dir, 10 + has_dir
     count = lambda *codes: sum(1 for r in rows if r["statut"] in codes)  # noqa: E731
     moy = _averages(rows)
     kpis = [
@@ -489,6 +490,7 @@ def _suivi_content(request: Request, db: Session, data: tuple, max_rows: int) ->
                      hhmm(r["premier_pointage"]) if r["premier_pointage"] else "",
                      r["statut_libelle"] + (" (allaitement)" if r.get("allaitement") else ""),
                      hhmm(r["dernier_pointage"]) if r["dernier_pointage"] else "", r["nb_pointages"] or "",
+                     hhmm(r["apres_1630"]) if r.get("apres_1630") else "",
                      *([hhmm(r["duree_validee"]) if r["duree_validee"] is not None else ""] if with_validee else []),
                      hhmm(r["duree_effective"]) if r["duree_effective"] is not None else "", r["responsable"]])
         pills[(i, status_col)] = pdf.STATUS_PILLS.get(r["statut"], pdf.STATUS_PILLS["INCOMPLET"])
@@ -498,7 +500,7 @@ def _suivi_content(request: Request, db: Session, data: tuple, max_rows: int) ->
                 pills[(i, col)] = pdf.GOOD if float(r[key]) >= objectif else pdf.BAD
     body.append(["Moyenne", "", "présents au bureau", "", *([""] if has_dir else []), "",
                  hhmm(moy["premier"]) if moy["premier"] else "", "",
-                 hhmm(moy["dernier"]) if moy["dernier"] else "", "",
+                 hhmm(moy["dernier"]) if moy["dernier"] else "", "", "",
                  *([hhmm(moy["validee"]) if moy["validee"] else ""] if with_validee else []),
                  hhmm(moy["effective"]) if moy["effective"] else "", ""])
     return {"title": "Suivi journalier des pointages", "subtitle": f"{period} · {len(rows)} ligne(s)",
