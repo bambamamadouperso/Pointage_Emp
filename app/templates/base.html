@@ -220,5 +220,33 @@
 })();
 </script>
 {% block scripts %}{% endblock %}
+<script>
+// Onglets d'une page (résumés, rappels…) : <nav class="tabs" data-tabs> + blocs [data-tab-panel]. L'onglet affiché suit
+// l'ancre de l'adresse (#journal, #abonnes…), y compris l'ancre d'un élément placé dans un onglet.
+(function () {
+  const nav = document.querySelector('nav.tabs[data-tabs]');
+  if (!nav) return;
+  const panels = [...document.querySelectorAll('[data-tab-panel]')];
+  const links = [...nav.querySelectorAll('a[data-tab]')];
+  function show(name, scroll) {
+    if (!panels.some(p => p.dataset.tabPanel === name)) name = panels[0] && panels[0].dataset.tabPanel;
+    panels.forEach(p => { p.hidden = p.dataset.tabPanel !== name; });
+    links.forEach(a => a.classList.toggle('active', a.dataset.tab === name));
+    if (scroll) window.scrollTo({top: 0});
+  }
+  function fromHash() {
+    const id = decodeURIComponent(location.hash.slice(1));
+    if (!id) return show(null);
+    const direct = panels.find(p => p.dataset.tabPanel === id);
+    const holder = direct || (document.getElementById(id) || {}).closest?.('[data-tab-panel]');
+    show(holder ? holder.dataset.tabPanel : null);
+  }
+  links.forEach(a => a.addEventListener('click', e => {
+    e.preventDefault(); history.replaceState(null, '', '#' + a.dataset.tab); show(a.dataset.tab, true);
+  }));
+  window.addEventListener('hashchange', fromHash);
+  fromHash();
+})();
+</script>
 </body>
 </html>

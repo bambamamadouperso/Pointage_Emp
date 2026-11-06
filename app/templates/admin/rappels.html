@@ -35,6 +35,13 @@
 {% if not email_configured and not error and audience == 'tous' %}<div class="flash warn">Aucune colonne « Adresse e-mail » n'est configurée pour les employés
   (Source des pointages → Liste des employés) : les rappels ne pourront partir vers personne.</div>{% endif %}
 
+<nav class="tabs" data-tabs aria-label="Rappels de pointage">
+  <a href="#parametres" data-tab="parametres" class="active">Paramètres</a>
+  {% if state %}<a href="#jour" data-tab="jour">Situation du jour</a>{% endif %}
+  <a href="#apercu" data-tab="apercu">Aperçu et essai</a>
+  <a href="#historique" data-tab="historique">Journal</a>
+</nav>
+<div data-tab-panel="parametres">
 <section class="card rules">
   <h2>Envoi</h2>
   <ul class="rule-list">
@@ -138,7 +145,9 @@
   <p class="muted small">0 = sans contrôle. Évite d'envoyer un rappel à quelqu'un qui a badgé mais dont le pointage n'est pas encore arrivé.</p>
   <div class="form-actions"><button class="btn primary">Enregistrer</button></div>
 </form>
+</div>
 
+<div data-tab-panel="jour">
 {% if state %}
 <section class="card" id="situation">
   <div class="card-head"><div><h2>Situation du jour</h2>
@@ -169,7 +178,9 @@
   {% endfor %}
 </section>
 {% endif %}
+</div>
 
+<div data-tab-panel="apercu">
 <section class="card">
   <h2>Aperçu et essai</h2>
   <form method="get" action="/admin/rappels/apercu" target="apercu" class="inline" id="preview_form">
@@ -183,7 +194,9 @@
     <button class="btn">Envoyer un essai</button>
   </form>
 </section>
+</div>
 
+<div data-tab-panel="historique">
 <section class="card" id="journal">
   <div class="card-head"><div><h2>Journal des rappels</h2></div>
     <form method="post" action="/admin/rappels/envoyer" data-confirm="Envoyer maintenant les rappels dus (heure prévue atteinte, pas encore envoyés) ?">
@@ -202,6 +215,8 @@
   </table></div>
   {% endif %}
 </section>
+</div>
+
 {% endblock %}
 {% block scripts %}
 <script>

@@ -9,6 +9,13 @@
 </div>
 {% if error %}<div class="flash warn">{{ error }}</div>{% endif %}
 
+<nav class="tabs" data-tabs aria-label="Résumés par mail">
+  <a href="#parametres" data-tab="parametres" class="active">Paramètres</a>
+  <a href="#destinataires" data-tab="destinataires">Responsables destinataires <span class="count">{{ subs | length }}</span></a>
+  <a href="#apercu" data-tab="apercu">Aperçu et essai</a>
+  <a href="#historique" data-tab="historique">Journal</a>
+</nav>
+<div data-tab-panel="parametres">
 <section class="card rules">
   <h2>Envoi</h2>
   <ul class="rule-list">
@@ -52,7 +59,9 @@
     Ne rien envoyer quand personne de l'équipe n'était attendu (week-end, jour férié, équipe en repos ou en congé)</label>
   <div class="form-actions"><button class="btn primary">Enregistrer</button></div>
 </form>
+</div>
 
+<div data-tab-panel="destinataires">
 <form method="post" action="/admin/resumes/abonnes" class="card form" id="abonnes">
   <div class="card-head"><div><h2>Responsables destinataires</h2>
     <p class="muted small">Responsables qui ont au moins un collaborateur actif dans la hiérarchie. Adresse : celle de la fiche employé,
@@ -78,6 +87,9 @@
 </form>
 
 {% if managers %}
+</div>
+
+<div data-tab-panel="apercu">
 <section class="card">
   <h2>Aperçu et essai</h2>
   <form method="get" action="/admin/resumes/apercu" target="apercu" class="inline" id="preview_form">
@@ -93,7 +105,9 @@
   </form>
 </section>
 {% endif %}
+</div>
 
+<div data-tab-panel="historique">
 <section class="card" id="journal">
   <div class="card-head"><div><h2>Journal des envois</h2></div>
     <form method="post" action="/admin/resumes/envoyer" data-confirm="Envoyer maintenant les résumés dus (heure d'envoi passée, pas encore envoyés) ?">
@@ -112,6 +126,8 @@
   </table></div>
   {% endif %}
 </section>
+</div>
+
 {% endblock %}
 {% block scripts %}
 <script>
