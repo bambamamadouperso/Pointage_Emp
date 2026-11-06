@@ -715,6 +715,9 @@ def test_category_filter(configured, pg, logged_client):
     page = logged_client.get(f"/suivi?date={MON.isoformat()}&categorie=Cadre").text
     assert 'name="categorie"' in page and "Statut du personnel : Cadre" in page
     assert "Diallo" in page and "Sow" in page and "Ndiaye" not in page
+    head = page.split("<thead>")[2].split("</thead>")[0] if page.count("<thead>") > 1 else page.split("<thead>")[1].split("</thead>")[0]
+    assert ">Statut du personnel</a>" in head and "sort=categorie" in head  # colonne du tableau
+    assert '<td class="small">Cadre</td>' in page
     xlsx = load_workbook(io.BytesIO(logged_client.get(f"/suivi/export.xlsx?date={MON.isoformat()}&categorie=Cadre").content))
     ws = xlsx.active
     assert ws.cell(1, 6).value == "Statut du personnel" and {row[5] for row in ws.iter_rows(min_row=2, values_only=True) if row[0] not in (None, "Moyenne")} == {"Cadre"}

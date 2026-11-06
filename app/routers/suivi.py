@@ -207,7 +207,7 @@ def suivi(request: Request, db: Session = Depends(get_db)):
     size = size if size in PAGE_SIZES else 100
     context = dict(f=f, warning=warning, today=date.today(), statuts=pointage.STATUTS, page=page, size=size, page_sizes=PAGE_SIZES,
                    hhmm=pointage.hhmm, configured=mapping is not None, data=None, error=None, services=[],
-                   managers=[], categories=[], directions=[], dims=dimension_filters(mapping), has_direction=bool(mapping and mapping.dir_col), objectif_min=480, scope_label=None, population=None, last_punch=None, stale=False, has_hierarchy=bool(mapping and mapping.hier_table),
+                   managers=[], categories=[], directions=[], dims=dimension_filters(mapping), has_direction=bool(mapping and mapping.dir_col), has_categorie=bool(mapping and mapping.cat_col), objectif_min=480, scope_label=None, population=None, last_punch=None, stale=False, has_hierarchy=bool(mapping and mapping.hier_table),
                    single_day=f.du == f.au, mode="jour" if f.du == f.au else "periode",
                    validee_ok=validee_ok, show_validee=validee_shown, horaires=pointage.HORAIRES, pending={}, outings_pending={}, hors_liste=[])
     if mapping is None:
