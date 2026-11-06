@@ -996,3 +996,16 @@ table.suivi tr.st-outing td { background: color-mix(in srgb, #e0e7ff 35%, transp
 .outing-tag { display: inline-block; margin-top: .2rem; padding: .05rem .45rem; border-radius: 8px; font-size: .72rem;
   font-weight: 600; background: #e0e7ff; color: #4338ca; white-space: normal; line-height: 1.3; }
 @media (prefers-color-scheme: dark) { .badge.st-outing, .outing-tag { background: #23264a; color: #a5b4fc; } }
+
+/* Justification des retards : mention sous « En retard » (suivi, pages Retards) */
+.late-mark { display: inline-block; margin-top: .2rem; padding: .05rem .45rem; border-radius: 8px; font-size: .72rem;
+  font-weight: 600; white-space: normal; line-height: 1.3; }
+.late-mark.ok { background: #dcfce7; color: #15803d; }
+.late-mark.wait { background: #fef3c7; color: #a16207; }
+.late-mark.ko { background: #fee2e2; color: #b91c1c; }
+.btn.tiny.late-btn { margin-top: .25rem; min-height: 22px; padding: .05rem .5rem; font-size: .72rem; border-radius: 6px; }
+@media (prefers-color-scheme: dark) {
+  .late-mark.ok { background: #14341f; color: #86efac; }
+  .late-mark.wait { background: #3a2a10; color: #fbbf24; }
+  .late-mark.ko { background: #3b1414; color: #fca5a5; }
+}

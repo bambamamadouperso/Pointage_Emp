@@ -3011,3 +3011,103 @@ def test_outings_external_activities(configured, pg, logged_client):
             db.query(OutingSettings).delete()
             db.query(User).filter(User.username.in_(["act_moussa", "act_awa", "act_rh"])).delete()
             db.commit()
+
+
+def test_late_justifications(configured, pg, logged_client):
+    """Justification des retards : l'employé justifie (motif, pièce jointe) ; le N+1 approuve ; le suivi affiche
+    « Justification non approuvée » puis « Justifié » sous « En retard » ; refus ; droits ; export."""
+    import io as _io
+
+    from fastapi.testclient import TestClient
+    from openpyxl import load_workbook
+
+    from app.main import app
+    from app.models import LateAction, LateJustification, LateSettings, User
+
+    for data in ({"username": "late_moussa", "role": "lecteur", "emp_matricule": "E002"},
+                 {"username": "late_awa", "role": "manager", "emp_matricule": "E001"}):
+        r = logged_client.post("/admin/users/save", data={**data, "password": "motdepasse1"}, follow_redirects=True)
+        assert "enregistré" in r.text, r.text[:300]
+
+    def client(name):
+        c = TestClient(app)
+        c.post("/login", data={"username": name, "password": "motdepasse1"})
+        return c
+
+    def justify(c, **data):
+        files = data.pop("files", None)
+        return c.post("/retards", data={"jour": MON.isoformat(), "motif": "Raison médicale", **data}, files=files,
+                      follow_redirects=True)
+
+    suivi = f"/suivi?date={MON.isoformat()}&q=E002"
+    try:
+        page = logged_client.get("/admin/retards").text
+        assert "Justification des retards : paramètres" in page and "Responsable N+1" in page
+        r = logged_client.post("/admin/retards", data={"reasons": "Transport, Raison médicale, Autre", "retro_days": "365"},
+                               follow_redirects=True)
+        assert "enregistrés" in r.text
+        moussa, awa = client("late_moussa"), client("late_awa")
+        assert rows(pg, MON)[("E002", MON)].statut == "RETARD"
+
+        # Pas encore justifié : seulement « En retard » et le bouton « Justifier » pour l'intéressé.
+        page = moussa.get(suivi).text
+        assert "late-mark" not in page.split("<tbody>")[1] and f"/retards?jour={MON.isoformat()}#justifier" in page
+        assert f"/retards?jour={MON.isoformat()}#justifier" not in awa.get(suivi).text
+        mine = moussa.get("/retards").text
+        assert "Mes retards" in mine and f'href="?jour={MON.isoformat()}#justifier"' in mine
+
+        # Contrôles : motif hors liste, jour sans retard.
+        assert "Choisissez le motif" in justify(moussa, motif="N'importe quoi").text
+        assert "Aucun retard enregistré" in justify(moussa, jour=SAT.isoformat()).text
+
+        # Justification avec pièce jointe → en attente du N+1.
+        r = justify(moussa, commentaire="Rendez-vous chez le médecin",
+                    files={"justificatif": ("certificat.pdf", _io.BytesIO(b"%PDF-1.4 test"), "application/pdf")})
+        assert "Justification envoyée : elle attend" in r.text
+        with SessionLocal() as db:
+            req = db.query(LateJustification).one()
+            assert (req.matricule, req.status, req.reason, req.manager_matricule) == ("E002", "en_attente", "Raison médicale", "E001")
+            assert req.file_name == "certificat.pdf" and req.late_min > 0
+            rid = req.id
+        assert "déjà justifié" in justify(moussa).text
+        cell = moussa.get(suivi).text.split("<tbody>")[1]
+        assert "Justification non approuvée" in cell and "#justifier" not in cell
+        assert moussa.get(f"/retards/{rid}/justificatif").content.startswith(b"%PDF")
+
+        # Le N+1 voit la justification à approuver ; l'employé ne peut pas l'approuver lui-même.
+        page = awa.get("/retards").text
+        assert "À approuver" in page and 'title="1 justification(s) à approuver"' in page
+        assert "ne pouvez pas valider" in moussa.post(f"/retards/{rid}/decision", data={"decision": "valider"},
+                                                        follow_redirects=True).text
+        assert "Indiquez le motif du refus" in awa.post(f"/retards/{rid}/decision", data={"decision": "refuser"},
+                                                         follow_redirects=True).text
+        r = awa.post(f"/retards/{rid}/decision", data={"decision": "valider"}, follow_redirects=True)
+        assert "le retard apparaît comme justifié" in r.text
+        cell = logged_client.get(suivi).text.split("<tbody>")[1]
+        assert "✓ Justifié" in cell and "En retard" in cell
+        assert rows(pg, MON)[("E002", MON)].statut == "RETARD"  # le retard reste compté
+
+        # Export Excel : « En retard — Justifié ».
+        ws = load_workbook(_io.BytesIO(logged_client.get(f"/suivi/export.xlsx?date={MON.isoformat()}&q=E002").content)).active
+        assert any(c.value == "En retard — Justifié" for c in ws["H"])
+
+        # Annulation par les RH, nouvelle justification refusée par le N+1 → « Justification refusée » (et
+        # l'employé peut de nouveau justifier).
+        assert "Justification annulée" in logged_client.post(f"/retards/{rid}/annuler", follow_redirects=True).text
+        justify(moussa, motif="Transport")
+        with SessionLocal() as db:
+            rid2 = db.query(LateJustification).filter_by(status="en_attente").one().id
+        awa.post(f"/retards/{rid2}/decision", data={"decision": "refuser", "commentaire": "Non recevable"})
+        cell = moussa.get(suivi).text.split("<tbody>")[1]
+        assert "Justification refusée" in cell and "#justifier" in cell
+
+        # Pièce jointe obligatoire (paramètre).
+        logged_client.post("/admin/retards", data={"reasons": "Transport, Autre", "retro_days": "365", "file_required": "1"})
+        assert "Joignez une pièce justificative" in justify(moussa, motif="Transport").text
+    finally:
+        with SessionLocal() as db:
+            db.query(LateAction).delete()
+            db.query(LateJustification).delete()
+            db.query(LateSettings).delete()
+            db.query(User).filter(User.username.in_(["late_moussa", "late_awa"])).delete()
+            db.commit()

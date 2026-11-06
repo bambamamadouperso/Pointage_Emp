@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block title %}Retard du {{ req.day.strftime('%d/%m/%Y') }} · {{ req.name }}{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Retard du {{ req.day | jour_fr }} · {{ req.name }}
+      <span class="badge {{ {'valide': 'ok', 'refuse': 'err', 'annule': '', 'en_attente': 'warn'}[req.status] }}">{{ req.status_label }}</span></h1>
+    <p class="muted">Matricule {{ req.matricule }}{% if req.arrival %} · arrivée {{ req.arrival.replace(':', 'h') }}{% endif %} · {{ req.late_label }} de retard</p></div>
+  <a href="/retards" class="muted">← Justification des retards</a>
+</div>
+
+<div class="sick-grid">
+  <section class="card">
+    <h2>Approbation</h2>
+    {% if not timeline %}
+      <p class="muted small">{{ {'rh': "Saisie par un agent RH : validée d'office.", 'responsable': "Saisie par le responsable : validée d'office."}.get(req.source, "Validée dès l'envoi (aucune étape paramétrée).") }}
+        ({{ req.created_by }}, {{ req.created_at | dt }})</p>
+    {% else %}
+    <ol class="steps">
+      <li class="done"><span class="step-dot"></span><div><strong>Justification</strong><span class="muted small">par {{ req.created_by }} · {{ req.created_at | dt }}</span></div></li>
+      {% for st in timeline %}
+      <li class="{{ {'faite': 'done', 'en_cours': 'current', 'refusee': 'refused', 'a_venir': 'todo'}[st.state] }}">
+        <span class="step-dot"></span><div><strong>{{ st.label }}</strong>
+          <span class="muted small">{{ {'faite': 'Approuvé', 'en_cours': 'En attente', 'refusee': 'Refusé', 'a_venir': 'À venir'}[st.state] }}</span></div></li>
+      {% endfor %}
+    </ol>
+    {% endif %}
+    <p class="small">Dans le suivi : <span class="badge st-late">En retard</span>{% set x = req.status %}{% include "_late_mark.html" %}</p>
+    {% if can_act %}
+    <form method="post" action="/retards/{{ req.id }}/decision" class="form decision">
+      <label>Commentaire <span class="muted small">(obligatoire en cas de refus)</span><textarea name="commentaire" rows="2" class="plain"></textarea></label>
+      <div class="form-actions">
+        <button class="btn primary" name="decision" value="valider">Approuver</button>
+        <button class="btn danger" name="decision" value="refuser" data-confirm="Refuser cette justification ?">Refuser</button>
+      </div>
+    </form>
+    {% endif %}
+  </section>
+
+  <section class="card">
+    <h2>Justification</h2>
+    <dl class="help-defs">
+      <dt>Motif</dt><dd>{{ req.reason }}</dd>
+      <dt>Explication</dt><dd>{{ req.comment or '—' }}</dd>
+      <dt>Envoyée par</dt><dd>{{ req.created_by }} ({{ sources.get(req.source, req.source) | lower }})</dd>
+      {% if req.manager_name %}<dt>Responsable (N+1)</dt><dd>{{ req.manager_name }}</dd>{% endif %}
+    </dl>
+    {% if req.file_path %}<p><a class="btn" href="/retards/{{ req.id }}/justificatif" target="_blank" rel="noopener">Ouvrir « {{ req.file_name }} »</a></p>
+    {% else %}<p class="muted small">Aucune pièce jointe.</p>{% endif %}
+    {% if can_cancel %}
+    <details class="cancel-box"><summary class="btn small ghost">Annuler la justification…</summary>
+      <form method="post" action="/retards/{{ req.id }}/annuler" class="form" data-confirm="Annuler cette justification ?">
+        <label>Motif <textarea name="commentaire" rows="2" class="plain"></textarea></label>
+        <button class="btn small danger">Confirmer l'annulation</button>
+      </form></details>
+    {% endif %}
+  </section>
+</div>
+
+<section class="card">
+  <h2>Historique</h2>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Date</th><th>Par</th><th>Action</th><th>Étape</th><th>Commentaire</th></tr></thead>
+    <tbody>{% for h in history %}
+      <tr><td class="small nowrap">{{ h.at | dt }}</td><td>{{ h.actor }}</td><td>{{ actions.get(h.action, h.action) }}</td>
+        <td class="small">{{ h.step_label or '—' }}</td><td class="small">{{ h.comment or '—' }}</td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+</section>
+{% endblock %}

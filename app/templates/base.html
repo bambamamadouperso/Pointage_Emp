@@ -52,9 +52,12 @@
     {# Groupes repliables (état mémorisé dans le navigateur) ; celui de la page affichée est toujours ouvert. #}
     {% macro group(key, label, active) %}<details class="nav-sec" data-nav-key="{{ key }}" open {% if active %}data-active{% endif %}>
       <summary class="nav-group">{{ label }}<span class="nav-caret" aria-hidden="true">▾</span></summary>{{ caller() }}</details>{% endmacro %}
-    {% call group('suivi', 'Suivi', path.startswith(('/suivi', '/rapports', '/arrets', '/maternite', '/activites'))) %}
+    {% call group('suivi', 'Suivi', path.startswith(('/suivi', '/rapports', '/arrets', '/maternite', '/activites', '/retards'))) %}
     {{ nav('/suivi', 'clock', 'Suivi journalier', path.startswith('/suivi')) }}
     {{ nav('/rapports', 'chart', 'Rapports', path.startswith('/rapports')) }}
+    {% set late_n = late_pending_count(user, role) %}
+    <a href="/retards" class="{{ 'active' if path.startswith('/retards') }}" {% if path.startswith('/retards') %}aria-current="page"{% endif %}>
+      <svg class="ico"><use href="#i-clock"/></svg><span>Justification des retards</span>{% if late_n %}<span class="nav-badge" title="{{ late_n }} justification(s) à approuver">{{ late_n }}</span>{% endif %}</a>
     {% set sick_n = sick_pending_count(user, role) %}
     <a href="/arrets" class="{{ 'active' if path.startswith('/arrets') }}" {% if path.startswith('/arrets') %}aria-current="page"{% endif %}>
       <svg class="ico"><use href="#i-sick"/></svg><span>Arrêts maladie</span>{% if sick_n %}<span class="nav-badge" title="{{ sick_n }} arrêt(s) à valider">{{ sick_n }}</span>{% endif %}</a>
@@ -77,7 +80,7 @@
     {% endif %}
     {% if can(role, 'rh') %}
     {% set is_admin = can(role, 'admin') %}
-    {% call group('rh', 'Ressources humaines', path == '/admin' or path.startswith(('/admin/parametres', '/admin/terrain', '/admin/planning', '/admin/maternite', '/admin/arrets', '/admin/verifier', '/admin/activites'))) %}
+    {% call group('rh', 'Ressources humaines', path == '/admin' or path.startswith(('/admin/parametres', '/admin/terrain', '/admin/planning', '/admin/maternite', '/admin/arrets', '/admin/verifier', '/admin/activites', '/admin/retards'))) %}
     {{ nav('/admin', 'grid', "Vue d'ensemble", path == '/admin') }}
     {{ nav('/admin/parametres', 'sliders', 'Paramètres horaires', path.startswith('/admin/parametres')) }}
     {{ nav('/admin/terrain', 'pin', 'Agents terrain', path.startswith('/admin/terrain')) }}
@@ -85,6 +88,7 @@
     {{ nav('/admin/maternite', 'user', 'Maternité : périodes et circuit', path.startswith('/admin/maternite')) }}
     {{ nav('/admin/arrets', 'sick', 'Circuit arrêts maladie', path.startswith('/admin/arrets')) }}
     {{ nav('/admin/activites', 'pin', 'Activités extérieures', path.startswith('/admin/activites')) }}
+    {{ nav('/admin/retards', 'clock', 'Justification des retards', path.startswith('/admin/retards')) }}
     {{ nav('/admin/verifier', 'user', 'Vérifier un employé', path.startswith('/admin/verifier')) }}
     {% endcall %}
     {% call group('mails', 'Mails et relances', path.startswith(('/admin/mails', '/admin/resumes', '/admin/rappels', '/admin/validations', '/admin/sites', '/admin/envoi'))) %}

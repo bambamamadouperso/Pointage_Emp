@@ -209,7 +209,7 @@ def suivi(request: Request, db: Session = Depends(get_db)):
                    hhmm=pointage.hhmm, configured=mapping is not None, data=None, error=None, services=[],
                    managers=[], categories=[], directions=[], dims=dimension_filters(mapping), has_direction=bool(mapping and mapping.dir_col), has_categorie=bool(mapping and mapping.cat_col), objectif_min=480, scope_label=None, population=None, last_punch=None, stale=False, has_hierarchy=bool(mapping and mapping.hier_table),
                    single_day=f.du == f.au, mode="jour" if f.du == f.au else "periode",
-                   validee_ok=validee_ok, show_validee=validee_shown, horaires=pointage.HORAIRES, pending={}, outings_pending={}, hors_liste=[])
+                   validee_ok=validee_ok, show_validee=validee_shown, horaires=pointage.HORAIRES, pending={}, outings_pending={}, late={}, late_me="", late_hr=False, hors_liste=[])
     if mapping is None:
         return render(request, "suivi.html", **context)
     engine = make_engine(cfg.conn, **pointage.WEB_LIMITS)
@@ -220,6 +220,13 @@ def suivi(request: Request, db: Session = Depends(get_db)):
         from .. import activites
 
         context["outings_pending"] = activites.pending_by_day(db, f.du, f.au)
+        from .. import retards
+
+        context["late"] = retards.by_day(db, f.du, f.au)
+        username = request.session.get("user", "")
+        me = retards.get_user(db, username)
+        context["late_me"] = (me.emp_matricule or "") if me else ""
+        context["late_hr"] = retards.is_hr(me, request.session.get("role"), username)
         # Badges sans fiche : pas pour un compte limité à son équipe, ni quand on cherche un employé ou les seuls
         # employés de la liste.
         if context["scope_label"] is None and not f.q and f.population != "liste":
@@ -273,6 +280,21 @@ def detail(request: Request, key: str, jour: str, db: Session = Depends(get_db))
     return render(request, "_suivi_detail.html", columns=columns, rows=rows, error=error, day=day, key=key)
 
 
+def _late_marks(db: Session, rows, f) -> list:
+    """Exports : « En retard — Justifié » / « — Justification non approuvée » / « — Justification refusée »."""
+    from .. import retards
+
+    marks = retards.by_day(db, f.du, f.au)
+    out = []
+    for r in rows:
+        r = dict(r)
+        mark = retards.MARKS.get(marks.get((r.get("emp_key"), r["jour"]))) if r["statut"] == "RETARD" else None
+        if mark:
+            r["statut_libelle"] = f"{r['statut_libelle']} — {mark}"
+        out.append(r)
+    return out
+
+
 def _export_data(request: Request, db: Session):
     """Lignes et contexte communs aux exports Excel et PDF (ou une réponse d'erreur)."""
     cfg, mapping = load_config(db)
@@ -283,7 +305,7 @@ def _export_data(request: Request, db: Session):
     engine = make_engine(cfg.conn, **pointage.WEB_LIMITS)
     try:
         apply_scope(request, db, engine, mapping, f)
-        rows = pointage.export_rows(engine, mapping, f)
+        rows = _late_marks(db, pointage.export_rows(engine, mapping, f), f)
         objectif = objectif_minutes(engine, mapping, f.au)
     except ScopeError as exc:
         return Response(str(exc), status_code=403, media_type="text/plain; charset=utf-8")

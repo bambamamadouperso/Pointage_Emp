@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Justification des retards · paramètres{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Justification des retards : paramètres</h1>
+    <p class="muted">Les employés justifient leurs retards (motif, pièce jointe) ; le responsable N+1 approuve.</p></div>
+  <a href="/retards" class="muted">Justifications →</a>
+</div>
+
+<form method="post" action="/admin/retards" class="card form" style="max-width:920px">
+  <h2>Règles</h2>
+  <label>Motifs proposés <span class="muted small">(séparés par des virgules)</span>
+    <input name="reasons" value="{{ s.reasons }}" required></label>
+  <label class="check"><input type="checkbox" name="file_required" value="1" {{ 'checked' if s.file_required }}>
+    <span><strong>Pièce jointe obligatoire</strong> pour l'employé (PDF, JPG ou PNG, 10 Mo maximum). Décochée : facultative.</span></label>
+  <label class="narrow-l">Justification possible jusqu'à <input type="number" name="retro_days" min="0" max="365" value="{{ s.retro_days }}"> jour(s) après le retard</label>
+  <p class="muted small">Une justification saisie par le responsable pour son équipe, ou par un agent RH, est validée d'office.
+    Le retard reste compté dans les indicateurs ; le suivi journalier indique s'il est justifié.</p>
+  <div class="form-actions"><button class="btn primary">Enregistrer</button></div>
+</form>
+
+<h2 class="section-title" id="circuit">Circuit de validation</h2>
+{% set wf_action, wf_object = "/admin/retards/circuit", "les justifications" %}
+{% include "_workflow_editor.html" %}
+
+<form method="post" action="/admin/retards/notifications" class="card form" style="max-width:860px">
+  <h2>Notifications par e-mail</h2>
+  <label class="check"><input type="checkbox" name="notify" value="true" {{ 'checked' if notify }}>
+    <span><strong>Prévenir par e-mail</strong> le valideur de l'étape en cours (le N+1), puis l'employé quand la justification est validée ou refusée.</span></label>
+  <p class="muted small">Envoi avec le serveur d'envoi des e-mails : {% if mail.smtp_host and mail.from_email %}<strong>{{ mail.smtp_host }}</strong>{% else %}<span class="warn-text">non configuré</span>{% endif %}
+    · mode {{ 'production' if mail.mode == 'production' else 'test' }}.</p>
+  <div class="form-actions"><button class="btn primary">Enregistrer</button></div>
+</form>
+{% endblock %}

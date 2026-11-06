@@ -237,6 +237,8 @@
         {% if has_hierarchy %}<td class="small">{{ r.responsable or '—' }}</td>{% endif %}
         <td>{{ hhmm(r.premier_pointage) }}{% if r.site_premier %}<br><span class="punch-site" title="Site du premier pointage">{{ r.site_premier }}</span>{% endif %}</td>
         <td class="statut-cell"><span class="badge {{ cls }}">{{ label }}</span>{% if not r.jour_ouvre and r.statut not in ('NON_OUVRE', 'REPOS') %} <span class="muted small" title="Jour non ouvré ou férié">(non ouvré)</span>{% endif %}
+          {% if r.statut == 'RETARD' %}{% set x = late.get((r.emp_key, r.jour)) %}{% include "_late_mark.html" %}
+            {% if x in (none, 'refuse') and (late_hr or (late_me and late_me == r.matricule)) %}<br><a class="btn tiny late-btn" href="/retards?jour={{ r.jour.isoformat() }}{% if late_hr and late_me != r.matricule %}&matricule={{ r.matricule }}{% endif %}#justifier" title="Justifier ce retard (motif, pièce jointe)">Justifier</a>{% endif %}{% endif %}
           {% if r.poste %}<br><span class="poste-tag" title="Poste planifié (horaires postés)">{{ r.poste }}</span>{% endif %}
           {% if r.activite %}<br><span class="outing-tag" title="Activité extérieure validée">🎓 {{ r.activite }}</span>{% endif %}
           {% set sortie = outings_pending.get((r.emp_key, r.jour)) %}{% if sortie %}<br><span class="pending-tag" title="Tant que l'activité n'est pas validée, elle n'est pas prise en compte">⏳ {{ sortie }}</span>{% endif %}
@@ -304,7 +306,7 @@
     tr.firstElementChild.innerHTML = await res.text();
   }
   document.querySelectorAll('tr.st-row').forEach(row => {
-    row.addEventListener('click', () => toggle(row));
+    row.addEventListener('click', e => { if (!e.target.closest('a, button')) toggle(row); });
     row.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(row); } });
   });
 </script>

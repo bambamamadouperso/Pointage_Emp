@@ -529,6 +529,77 @@ class OutingSettings(Base):
     updated_by: Mapped[str] = mapped_column(String(100), default="")
 
 
+LATE_REASONS_DEFAULT = "Transport / embouteillage, Raison médicale, Raison familiale, Rendez-vous administratif, Autre"
+
+
+class LateJustification(Base):
+    """Justification d'un retard par l'employé : motif, commentaire et pièce jointe facultative, validée par le
+    responsable (N+1) selon le circuit paramétré. Le retard reste compté : le suivi affiche s'il est justifié."""
+
+    __tablename__ = "late_justifications"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    emp_key: Mapped[str] = mapped_column(String(100), index=True)
+    matricule: Mapped[str] = mapped_column(String(100), default="")
+    name: Mapped[str] = mapped_column(String(255), default="")
+    day: Mapped[datetime] = mapped_column(DateTime, index=True)
+    arrival: Mapped[str] = mapped_column(String(5), default="")               # heure du 1er pointage (HH:MM)
+    late_min: Mapped[int] = mapped_column(Integer, default=0)
+    reason: Mapped[str] = mapped_column(String(100), default="")              # motif choisi dans la liste paramétrée
+    comment: Mapped[str] = mapped_column(Text, default="")
+    source: Mapped[str] = mapped_column(String(20), default="employe")        # employe, responsable, rh
+    status: Mapped[str] = mapped_column(String(20), default="en_attente")     # voir SICK_STATUS
+    step: Mapped[int] = mapped_column(Integer, default=0)
+    workflow: Mapped[str] = mapped_column(Text, default="[]")
+    manager_matricule: Mapped[str] = mapped_column(String(100), default="")
+    manager_name: Mapped[str] = mapped_column(String(255), default="")
+    file_name: Mapped[str] = mapped_column(String(255), default="")
+    file_path: Mapped[str] = mapped_column(String(255), default="")
+    file_type: Mapped[str] = mapped_column(String(100), default="")
+    created_by: Mapped[str] = mapped_column(String(100), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    decided_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+    @property
+    def status_label(self) -> str:
+        return {"en_attente": "Justification non approuvée", "valide": "Justifié", "refuse": "Justification refusée",
+                "annule": "Annulée"}.get(self.status, self.status)
+
+    @property
+    def late_label(self) -> str:
+        return f"{self.late_min // 60}h{self.late_min % 60:02d}" if self.late_min >= 60 else f"{self.late_min} min"
+
+
+class LateAction(Base):
+    """Historique d'une justification de retard : envoi, validations, refus, annulation."""
+
+    __tablename__ = "late_actions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    request_id: Mapped[int] = mapped_column(ForeignKey("late_justifications.id", ondelete="CASCADE"), index=True)
+    at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    actor: Mapped[str] = mapped_column(String(100), default="")
+    action: Mapped[str] = mapped_column(String(30), default="")
+    step_label: Mapped[str] = mapped_column(String(255), default="")
+    comment: Mapped[str] = mapped_column(Text, default="")
+
+
+class LateSettings(Base):
+    """Paramètres des justifications de retard (une seule ligne) : motifs proposés, pièce jointe obligatoire ou
+    non, délai pour justifier, circuit de validation (par défaut : le responsable N+1) et notifications."""
+
+    __tablename__ = "late_settings"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    reasons: Mapped[str] = mapped_column(Text, default=LATE_REASONS_DEFAULT)
+    file_required: Mapped[bool] = mapped_column(Boolean, default=False)
+    retro_days: Mapped[int] = mapped_column(Integer, default=7)               # justification au plus N jours après
+    workflow: Mapped[str] = mapped_column(Text, default='[{"type": "responsable"}]')
+    notify: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True, default=True)
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    updated_by: Mapped[str] = mapped_column(String(100), default="")
+
+
 class SiteAlertSettings(Base):
     """Surveillance des sites : chaque jour, à l'heure indiquée, mail à une liste de destinataires si un site n'a
     remonté aucun pointage depuis le début de la journée (une seule ligne)."""

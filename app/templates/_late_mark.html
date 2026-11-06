@@ -1,0 +1,4 @@
+{# Mention sous le statut « Retard » : x = statut de la justification (valide, en_attente, refuse) ou none. #}
+{% if x == 'valide' %}<br><span class="late-mark ok" title="Justification approuvée">✓ Justifié</span>
+{% elif x == 'en_attente' %}<br><span class="late-mark wait" title="Justification envoyée, en attente d'approbation">Justification non approuvée</span>
+{% elif x == 'refuse' %}<br><span class="late-mark ko" title="Justification refusée">Justification refusée</span>{% endif %}

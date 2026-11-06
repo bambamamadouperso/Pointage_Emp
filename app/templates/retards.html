@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% block title %}Justification des retards{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Justification des retards</h1>
+    <p class="muted">Justifiez un retard avec un motif et, si besoin, une pièce jointe ; votre responsable (N+1) l'approuve.
+      Le retard apparaît alors comme <span class="late-mark ok">✓ Justifié</span> dans le suivi.</p></div>
+  {% if can(role, 'rh') %}<a href="/admin/retards" class="muted">Paramètres et circuit →</a>{% endif %}
+</div>
+
+{% if pending %}
+<section class="card pending-card">
+  <div class="card-head"><div><h2>À approuver <span class="count-pill">{{ pending | length }}</span></h2>
+    <p class="muted small">Justifications dont l'étape en cours vous revient.</p></div></div>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Employé</th><th>Jour</th><th>Arrivée</th><th>Motif</th><th>Pièce jointe</th><th></th></tr></thead>
+    <tbody>{% for x in pending %}
+      <tr><td><span class="mono small">{{ x.matricule }}</span> {{ x.name }}</td>
+        <td class="nowrap">{{ x.day | jour_fr }}</td>
+        <td class="nowrap">{{ x.arrival.replace(':', 'h') if x.arrival else '—' }} <span class="muted small">({{ x.late_label }})</span></td>
+        <td>{{ x.reason }}{% if x.comment %}<br><span class="muted small">{{ x.comment | truncate(80) }}</span>{% endif %}</td>
+        <td class="small">{{ '📎 oui' if x.file_path else '—' }}</td>
+        <td><a class="btn small primary" href="/retards/{{ x.id }}">Examiner</a></td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+</section>
+{% endif %}
+
+{% if me and me.emp_matricule %}
+<section class="card" id="mes-retards">
+  <div class="card-head"><div><h2>Mes retards</h2>
+    <p class="muted small">Les {{ s.retro_days }} dernier(s) jour(s){% if workflow %} · validation : {{ workflow | join(' → ') }}{% endif %}.</p></div></div>
+  {% if error %}<p class="flash err">Lecture des retards impossible : {{ error }}</p>
+  {% elif not mine %}<p class="empty">Aucun retard sur la période.</p>
+  {% else %}
+  <div class="table-wrap"><table>
+    <thead><tr><th>Jour</th><th>Arrivée</th><th>Retard</th><th>Justification</th><th></th></tr></thead>
+    <tbody>{% for d in mine %}{% set j = d.justification %}
+      <tr><td class="nowrap">{{ d.jour | jour_fr }}</td><td>{{ d.arrivee.replace(':', 'h') if d.arrivee else '—' }}</td>
+        <td><span class="badge st-late">En retard</span> <span class="muted small">{{ d.retard_min }} min</span>{% set x = j.status if j else none %}{% include "_late_mark.html" %}</td>
+        <td class="small">{% if j %}{{ j.reason }}{% else %}—{% endif %}</td>
+        <td>{% if j and j.status != 'refuse' %}<a class="btn small" href="/retards/{{ j.id }}">Détail</a>
+          {% else %}<a class="btn small primary" href="?jour={{ d.jour.isoformat() }}#justifier">Justifier</a>{% endif %}</td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+  {% endif %}
+</section>
+{% endif %}
+
+<section class="card" id="justifier">
+  <div class="card-head"><div><h2>Justifier un retard</h2>
+    <p class="muted small">{% if hr %}Saisie par un agent RH : <strong>validée d'office</strong>.
+      {% elif workflow %}Approbation : {{ workflow | join(' → ') }}. Saisie par le responsable pour son équipe : validée d'office.
+      {% else %}Validée dès l'envoi.{% endif %}
+      {% if not hr %}Possible jusqu'à {{ s.retro_days }} jour(s) après le retard.{% endif %}</p></div></div>
+  {% if not hr and not (me and me.emp_matricule) %}
+    <p class="empty">Votre compte n'est rattaché à aucun employé : demandez à un administrateur d'indiquer votre matricule.</p>
+  {% else %}
+  <form method="post" action="/retards" enctype="multipart/form-data" class="form outing-form">
+    <div class="row">
+      <label>Employé {% if hr %}<span class="muted small">(matricule)</span>{% else %}<span class="muted small">(vous, ou une personne de votre équipe)</span>{% endif %}
+        <input name="matricule" placeholder="{{ me.emp_matricule if me and me.emp_matricule else 'ex. 590394' }}" value="{{ matricule or ('' if hr else (me.emp_matricule if me else '')) }}" autocomplete="off"></label>
+      <label>Jour du retard <input type="date" name="jour" value="{{ jour }}" required></label>
+      <label>Motif <select name="motif" required><option value="">— choisir —</option>{% for k in reasons %}<option value="{{ k }}">{{ k }}</option>{% endfor %}</select></label>
+    </div>
+    <label class="file-drop compact">
+      <input type="file" name="justificatif" accept=".pdf,.jpg,.jpeg,.png" {{ 'required' if s.file_required and not hr }}>
+      <span class="file-drop-text"><strong>Joindre une pièce</strong> ({{ 'obligatoire' if s.file_required and not hr else 'facultatif' }} : attestation, bon de garage, certificat…)<br>
+        <span class="muted small">PDF, JPG ou PNG · 10 Mo maximum</span></span>
+    </label>
+    <label>Explication <span class="muted small">(facultatif)</span><textarea name="commentaire" rows="2" class="plain"></textarea></label>
+    <div class="form-actions"><button class="btn primary">Envoyer la justification</button></div>
+  </form>
+  {% endif %}
+</section>
+
+<section class="card">
+  <div class="card-head"><div><h2>{{ 'Toutes les justifications' if hr else 'Mes justifications et celles de mon équipe' }}</h2></div>
+    <div class="actions">
+      <a class="chip {{ 'selected' if not statut }}" href="/retards">Toutes</a>
+      {% for code, label in statuses.items() %}<a class="chip {{ 'selected' if statut == code }}" href="?statut={{ code }}">{{ label }}</a>{% endfor %}
+    </div></div>
+  {% if not requests %}<p class="empty">Aucune justification.</p>{% else %}
+  <div class="table-wrap"><table>
+    <thead><tr><th>Employé</th><th>Jour</th><th>Arrivée</th><th>Motif</th><th>Origine</th><th>Statut</th><th></th></tr></thead>
+    <tbody>{% for x in requests %}
+      <tr><td><span class="mono small">{{ x.matricule }}</span> {{ x.name }}</td>
+        <td class="nowrap">{{ x.day | jour_fr }}</td>
+        <td class="nowrap">{{ x.arrival.replace(':', 'h') if x.arrival else '—' }} <span class="muted small">({{ x.late_label }})</span></td>
+        <td>{{ x.reason }}{% if x.file_path %} <span title="Pièce jointe">📎</span>{% endif %}</td>
+        <td class="small">{{ sources.get(x.source, x.source) }} · {{ x.created_by }}</td>
+        <td><span class="badge {{ {'valide': 'ok', 'refuse': 'err', 'annule': '', 'en_attente': 'warn'}[x.status] }}">{{ x.status_label }}{% if x.status == 'en_attente' %} · étape {{ x.step + 1 }}{% endif %}</span></td>
+        <td><a class="btn small {{ 'primary' if can_act(x) else '' }}" href="/retards/{{ x.id }}">{{ 'Examiner' if can_act(x) else 'Détail' }}</a></td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+  {% endif %}
+</section>
+{% endblock %}

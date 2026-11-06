@@ -216,6 +216,23 @@ def outing_pending_count(username: str, role: str) -> int:
 templates.env.globals["outing_pending_count"] = outing_pending_count
 
 
+def late_pending_count(username: str, role: str) -> int:
+    """Nombre de justifications de retard dont l'étape d'approbation en cours revient à cet utilisateur."""
+    if not username:
+        return 0
+    try:
+        from . import retards
+        from .database import SessionLocal
+
+        with SessionLocal() as db:
+            return len(retards.pending_for(db, retards.get_user(db, username), role, username))
+    except Exception:  # noqa: BLE001
+        return 0
+
+
+templates.env.globals["late_pending_count"] = late_pending_count
+
+
 def redirect(url: str) -> RedirectResponse:
     return RedirectResponse(url, status_code=303)
 
