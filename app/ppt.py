@@ -13,6 +13,8 @@ from pptx.enum.shapes import MSO_SHAPE
 from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
 from pptx.util import Emu, Inches, Pt
 
+from . import APP_NAME
+
 MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
 ROWS_PER_SLIDE = 14
 EMPLOYEE_MAX_ROWS = 300  # au-delà : export Excel (une présentation de dizaines de diapositives n'est plus lisible)
@@ -73,7 +75,7 @@ class Deck:
         self._rect(slide, 0, Inches(0.95), W, Inches(0.06), TEAL)
         self._text(slide, MARGIN, Inches(0.16), Inches(9), Inches(0.5), title, 24, True, (255, 255, 255))
         self._text(slide, MARGIN, Inches(0.58), Inches(6.8), Inches(0.3), note or self.subtitle, 11, False, (199, 219, 240))
-        self._text(slide, Inches(9.6), Inches(0.22), Inches(3.25), Inches(0.3), "POINTAGE", 11, True, (255, 255, 255),
+        self._text(slide, Inches(9.6), Inches(0.22), Inches(3.25), Inches(0.3), APP_NAME.upper(), 11, True, (255, 255, 255),
                    PP_ALIGN.RIGHT)
         self._text(slide, Inches(7.35), Inches(0.52), Inches(5.5), Inches(0.3), self.subtitle if note else "", 10, False,
                    (199, 219, 240), PP_ALIGN.RIGHT)
@@ -89,7 +91,7 @@ class Deck:
         slide = self.prs.slides.add_slide(self.blank)
         self._rect(slide, 0, 0, W, H, NAVY)
         self._rect(slide, 0, Inches(4.55), W, Inches(0.08), TEAL)
-        self._text(slide, Inches(0.8), Inches(0.7), Inches(6), Inches(0.4), "POINTAGE", 14, True, (199, 219, 240))
+        self._text(slide, Inches(0.8), Inches(0.7), Inches(6), Inches(0.4), APP_NAME.upper(), 14, True, (199, 219, 240))
         self._text(slide, Inches(0.8), Inches(2.2), Inches(11.5), Inches(1.2), self.title, 44, True, (255, 255, 255))
         self._text(slide, Inches(0.8), Inches(3.45), Inches(11.5), Inches(0.6), self.subtitle, 20, False, (199, 219, 240))
         lines = [f"{label} : {value}" for label, value in filters]

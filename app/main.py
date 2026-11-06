@@ -12,7 +12,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import __version__, auth, scheduler
+from . import APP_NAME, __version__, auth, scheduler
 from .config import settings
 from .database import SessionLocal, init_db
 from .joblog import write_log
@@ -36,7 +36,7 @@ async def lifespan(_: FastAPI):
     scheduler.shutdown()
 
 
-app = FastAPI(title="Synchronisation MariaDB → PostgreSQL", lifespan=lifespan, docs_url=None, redoc_url=None)
+app = FastAPI(title=APP_NAME, lifespan=lifespan, docs_url=None, redoc_url=None)
 
 
 @app.middleware("http")

@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}Pointage{% endblock %} · Pointage</title>
+  <title>{% block title %}{{ app_name }}{% endblock %} · {{ app_name }}</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%230e6e70'/%3E%3Cpath d='M16 8v8l5 3' stroke='white' stroke-width='3' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
   <link rel="preload" href="/static/fonts/inter-latin.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/static/style.css?v={{ app_version }}">
@@ -46,7 +46,7 @@
 <aside class="sidebar" id="sidebar">
   <a class="brand" href="{{ '/' if can(role, 'manager') and role != 'rh' else '/suivi' }}">
     <span class="brand-mark"><svg class="ico"><use href="#i-clock"/></svg></span>
-    <span class="brand-text"><strong>Pointage</strong><small>Présences &amp; synchro</small></span>
+    <span class="brand-text"><strong>{{ app_name }}</strong><small>Pointages &amp; synchro</small></span>
   </a>
   <nav class="side-nav" aria-label="Navigation principale">
     {# Groupes repliables (état mémorisé dans le navigateur) ; celui de la page affichée est toujours ouvert. #}
@@ -117,7 +117,7 @@
   {% if user %}
   <header class="mobilebar">
     <button class="icon-btn" id="menu_btn" aria-label="Ouvrir le menu" aria-controls="sidebar" aria-expanded="false"><svg class="ico"><use href="#i-menu"/></svg></button>
-    <span class="brand-mark small"><svg class="ico"><use href="#i-clock"/></svg></span><strong>Pointage</strong>
+    <span class="brand-mark small"><svg class="ico"><use href="#i-clock"/></svg></span><strong>{{ app_name }}</strong>
   </header>
   {% endif %}
   <main class="{% block main_class %}container{% endblock %}">

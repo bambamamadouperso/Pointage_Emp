@@ -4,7 +4,7 @@ from datetime import datetime
 
 from fpdf import FPDF
 
-from . import pointage
+from . import APP_NAME, pointage
 
 # Polices standard PDF (latin-1) : on remplace les quelques caractères typographiques hors latin-1.
 _REPLACE = str.maketrans({"—": "-", "–": "-", "’": "'", "‘": "'", "“": '"', "”": '"', "…": "...", "œ": "oe", "Œ": "OE",
@@ -55,7 +55,7 @@ class Document(FPDF):
         self.doc_title, self.subtitle, self.user = text(title), text(subtitle), text(user)
         self.stamp = datetime.now()
         self.set_title(self.doc_title)
-        self.set_author(self.user or "Pointage")
+        self.set_author(self.user or APP_NAME)
         self.set_auto_page_break(True, margin=14)
         self.set_margins(12, self.BAND + 7, 12)
         self.alias_nb_pages()
@@ -80,7 +80,7 @@ class Document(FPDF):
         self.set_xy(self.l_margin, 6)
         self.set_font("Helvetica", "B", 8)
         self.set_text_color(255, 255, 255)
-        self.cell(0, 4, "POINTAGE", align="R")
+        self.cell(0, 4, text(APP_NAME.upper()), align="R")
         self.set_xy(self.l_margin, 11)
         self.set_font("Helvetica", "", 7.5)
         self.set_text_color(199, 219, 240)

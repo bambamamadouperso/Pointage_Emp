@@ -234,7 +234,7 @@ def build_notification(req: MaternityRequest, event: str, base_url: str, company
         if req.comment:
             rows.append(("Commentaire", req.comment[:300]))
         title, intro, button = (f"{kind} à valider — {req.name}",
-                                "Une demande attend votre validation dans l'application de pointage.", "Examiner la demande")
+                                "Une demande attend votre validation dans l'application Suivi de présence.", "Examiner la demande")
     elif event == "valide":
         title, intro, button = (f"{kind} validé(e) — {req.name}",
                                 "La demande a été validée : la période s'applique désormais au suivi des pointages.",

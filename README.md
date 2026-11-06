@@ -1,4 +1,6 @@
-# Synchro MariaDB / HFSQL / Google Sheets → PostgreSQL
+# Suivi de présence
+
+Suivi des pointages et des présences, avec synchronisation MariaDB / HFSQL / Google Sheets / Smartsheet → PostgreSQL.
 
 Application qui copie des tables de bases **MariaDB/MySQL**, **HFSQL Client/Serveur** (PC SOFT) et des onglets de classeurs **Google Sheets**
 vers des bases **PostgreSQL** à intervalle régulier, administrée depuis un **tableau de bord web**

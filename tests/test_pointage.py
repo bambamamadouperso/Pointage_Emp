@@ -2862,3 +2862,15 @@ def test_pptx_exports(configured, logged_client):
         with SessionLocal() as db:
             db.query(User).filter_by(username="mgr_ppt").delete()
             db.commit()
+
+
+def test_application_name(configured, logged_client):
+    """L'application s'appelle « Suivi de présence » : onglet, menu, page de connexion, exports."""
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    page = logged_client.get(f"/suivi?date={MON.isoformat()}").text
+    assert "· Suivi de présence</title>" in page and "<strong>Suivi de présence</strong>" in page
+    assert "<h1>Suivi de présence</h1>" in TestClient(app).get("/login").text
+    assert "(SUIVI DE PRÉSENCE) Tj" in _pdf_text(logged_client.get(f"/suivi/export.pdf?date={MON.isoformat()}").content)

@@ -333,7 +333,7 @@ class MailSettings(Base):
     smtp_user: Mapped[str] = mapped_column(String(255), default="")
     smtp_password_enc: Mapped[str] = mapped_column(Text, default="")
     from_email: Mapped[str] = mapped_column(String(255), default="")
-    from_name: Mapped[str] = mapped_column(String(255), default="Pointage")
+    from_name: Mapped[str] = mapped_column(String(255), default="Suivi de présence")
     reply_to: Mapped[str] = mapped_column(String(255), default="")
     company: Mapped[str] = mapped_column(String(255), default="")
     max_per_run: Mapped[int] = mapped_column(Integer, default=200)

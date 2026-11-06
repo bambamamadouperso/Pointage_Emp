@@ -57,6 +57,7 @@ templates.env.filters["num"] = fmt_int
 templates.env.globals["status_badge"] = status_badge
 templates.env.globals["tz_name"] = settings.timezone
 templates.env.globals["app_version"] = __import__("app").__version__
+templates.env.globals["app_name"] = __import__("app").APP_NAME
 
 
 # Les messages sont gardés dans le cookie de session (4 Ko au plus pour le navigateur, après encodage JSON puis
