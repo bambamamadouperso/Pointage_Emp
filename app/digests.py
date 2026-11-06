@@ -240,10 +240,9 @@ def _week_row(e: dict, td: str, objectif: int) -> str:
     if e["retards"]:
         late = f' <span style="color:#9aa6b2;">({pointage.hhmm(timedelta(minutes=float(e["retard_min_total"])))})</span>'
     absences = f'<strong style="color:#be123c;">{e["absences"]}</strong>' if e["absences"] else "·"
-    hours = pointage.hhmm(timedelta(hours=float(e["heures_validees"] or 0)))
     return (f"<tr><td {td}><strong>{html.escape(_name(e))}</strong></td><td {td}>{_pct(e['taux_presence'])}</td>"
             f"<td {td}>{e['retards'] or '·'}{late}</td><td {td}>{absences}</td><td {td}>{e['incomplets'] or '·'}</td>"
-            f"<td {td}>{hours}</td><td {td}>{_dur(e.get('validee_moy_min'), objectif)}</td>"
+            f"<td {td}>{_dur(e.get('validee_moy_min'), objectif)}</td>"
             f"<td {td}>{_dur(e.get('effective_moy_min'), objectif)}</td></tr>")
 
 
@@ -278,7 +277,7 @@ def render(data: dict, manager_name: str, company: str = "", app_url: str = "") 
             f"<td {td}>{_dur(r['duree_validee_min'], data['objectif_min'])}</td></tr>" for r in data["rows"])
     else:
         head = (f"<tr><th {th}>Collaborateur</th><th {th}>Présence</th><th {th}>Retards</th><th {th}>Absences</th>"
-                f"<th {th}>Pointages partiels</th><th {th}>Heures standard</th><th {th}>Moy. standard / jour</th>"
+                f"<th {th}>Pointages partiels</th><th {th}>Moy. standard / jour</th>"
                 f"<th {th}>Moy. effective / jour</th></tr>")
         body = "".join(_week_row(e, td, data["objectif_min"])
                        for e in sorted(data["employes"], key=lambda e: _name(e).lower()))

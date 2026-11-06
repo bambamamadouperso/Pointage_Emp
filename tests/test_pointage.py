@@ -1403,6 +1403,7 @@ def test_manager_digests(configured, pg, logged_client, monkeypatch):
     assert "Détail par collaborateur" in body
     # Moyennes par jour de présence au bureau : durée standard et durée effective de chacun.
     assert "Moy. standard / jour" in body and "Moy. effective / jour" in body
+    assert "Heures standard" not in body  # colonne retirée du bilan
     ndiaye = next(e for e in week["employes"] if e["matricule"] == "E002")
     days = [r for r in rows(pg, MON, date(2026, 9, 27)).values()
             if r.matricule == "E002" and r.statut in ("A_L_HEURE", "RETARD")]
