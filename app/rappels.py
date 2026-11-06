@@ -148,7 +148,7 @@ def day_rows(engine, m: pointage.Mapping, du: date, au: date) -> list[dict]:
     S = pointage.qi(m.objs)
     with engine.connect() as c:
         return [dict(r) for r in c.execute(text(f"""
-            SELECT j.emp_key, j.matricule, j.nom, j.prenom, j.service, j.direction, j.site, j.jour, j.statut,
+            SELECT j.emp_key, j.matricule, j.nom, j.prenom, j.service, j.direction, j.site, j.jour, j.statut, j.activite,
                    j.nb_pointages AS nb, j.premier_pointage AS p1, j.dernier_pointage AS p2,
                    e.email, r.email AS resp_email, concat_ws(' ', r.prenom, r.nom) AS resp_nom,
                    s.code AS poste_code, s.type AS poste_type, s.s_debut, s.s_fin
@@ -244,7 +244,7 @@ def candidates(rows: list[dict], s: ReminderSettings, now: datetime, kinds: list
     même si l'heure du rappel n'est pas encore venue (aperçu de l'administration)."""
     out = []
     for row in rows:
-        if not _targeted(row, s):
+        if not _targeted(row, s) or row.get("activite"):  # activité extérieure validée ce jour : pas de rappel
             continue
         for kind in kinds:
             when = due_at(kind, row, s, now.date())

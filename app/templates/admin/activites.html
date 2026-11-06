@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Activités extérieures · paramètres{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Activités extérieures : paramètres</h1>
+    <p class="muted">Formation, réunion à l'extérieur, visite client… déclarées par les employés.</p></div>
+  <a href="/activites" class="muted">Déclarations →</a>
+</div>
+
+<form method="post" action="/admin/activites" class="card form" style="max-width:920px">
+  <h2>Règles</h2>
+  <label>Types d'activité proposés <span class="muted small">(séparés par des virgules)</span>
+    <input name="kinds" value="{{ s.kinds }}" required></label>
+  <fieldset class="limits"><legend>Validation</legend>
+    <label class="check"><input type="checkbox" name="validation_required" value="1" {{ 'checked' if s.validation_required }}>
+      <span><strong>Validation obligatoire</strong> des activités déclarées par l'employé (circuit ci-dessous).
+        Décochée : prises en compte dès la déclaration.</span></label>
+    <label class="check"><input type="checkbox" name="manager_direct" value="1" {{ 'checked' if s.manager_direct }}>
+      <span><strong>Effet immédiat quand c'est le responsable qui déclare</strong> pour une personne de son équipe.
+        Décochée : sa déclaration suit aussi le circuit.</span></label>
+    <p class="muted small">Une saisie par un agent RH est toujours validée d'office.</p>
+  </fieldset>
+  <fieldset class="limits"><legend>Durée créditée</legend>
+    {% for code, label in credit_modes.items() %}
+      <label class="check"><input type="radio" name="credit_mode" value="{{ code }}" {{ 'checked' if s.credit_mode == code }}> {{ label }}</label>
+    {% endfor %}
+    <label class="narrow-l">Durée forfaitaire par jour <input name="forfait" value="{{ s.forfait }}" placeholder="08:00"></label>
+    <p class="muted small">Plage déclarée : temps au bureau + partie de l'activité hors des pointages, jusqu'à l'objectif de durée ;
+      sans aucun pointage : la plage (journée entière : le forfait). Forfait : au moins le forfait pour chaque jour d'activité.</p>
+  </fieldset>
+  <label class="narrow-l">Déclaration après coup : jusqu'à <input type="number" name="retro_days" min="0" max="365" value="{{ s.retro_days }}"> jour(s) après l'activité</label>
+  <div class="form-actions"><button class="btn primary">Enregistrer</button></div>
+</form>
+
+<h2 class="section-title" id="circuit">Circuit de validation</h2>
+{% set wf_action, wf_object = "/admin/activites/circuit", "les activités déclarées par les employés" %}
+{% include "_workflow_editor.html" %}
+
+<form method="post" action="/admin/activites/notifications" class="card form" style="max-width:860px">
+  <h2>Notifications par e-mail</h2>
+  <label class="check"><input type="checkbox" name="notify" value="true" {{ 'checked' if notify }}>
+    <span><strong>Prévenir par e-mail</strong> les valideurs de l'étape en cours, puis l'employé quand l'activité est validée ou refusée.</span></label>
+  <p class="muted small">Envoi avec le serveur d'envoi des e-mails : {% if mail.smtp_host and mail.from_email %}<strong>{{ mail.smtp_host }}</strong>{% else %}<span class="warn-text">non configuré</span>{% endif %}
+    · mode {{ 'production' if mail.mode == 'production' else 'test' }}.</p>
+  <div class="form-actions"><button class="btn primary">Enregistrer</button></div>
+</form>
+{% endblock %}

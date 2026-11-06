@@ -225,6 +225,16 @@ sites, notifications) ; mail d'essai et état de chaque envoi.
 retard, durées, suivi, rapports, alertes, couleurs, filtres) avec sa méthode et sa formule de calcul, illustrées par
 les paramètres horaires en vigueur.
 
+**Activités extérieures** (*Suivi → Activités extérieures* ; paramètres dans *Ressources humaines → Activités
+extérieures*) : formation, réunion à l'extérieur, visite client… déclarée par l'employé (journée entière ou plage
+horaire, un ou plusieurs jours, lieu, objet, justificatif facultatif), par son responsable (toute sa hiérarchie) ou par
+les RH. Options : validation obligatoire (circuit paramétrable et notifications, comme les arrêts maladie), effet
+immédiat quand c'est le responsable qui déclare ; saisie RH toujours validée d'office. Paramètres : types proposés,
+durée créditée (plage déclarée, ou forfait par jour), délai de déclaration après coup. Une activité validée : jour
+sans pointage en « Activité extérieure » (compté présent), pas de retard si l'activité couvre le début de journée,
+pas de pointage partiel, durée standard complétée jusqu'à l'objectif, pas de rappel de pointage ; étiquette
+« 🎓 Formation 14h00–17h00 » dans le suivi, « ⏳ … en attente » tant qu'elle n'est pas validée.
+
 **Export PowerPoint** (bouton « ⬇ PowerPoint » du suivi journalier et des rapports) : présentation 16:9 aux couleurs
 de l'application — page de titre avec les filtres, cartes d'indicateurs, **graphiques natifs modifiables** dans
 PowerPoint (présence par jour ou par semaine, selon le jour de la semaine, heures d'arrivée pour l'administrateur),

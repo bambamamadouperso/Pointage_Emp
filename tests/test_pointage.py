@@ -2882,3 +2882,113 @@ def test_application_name(configured, logged_client):
     assert "· Suivi de présence</title>" in page and "<strong>Suivi de présence</strong>" in page
     assert "<h1>Suivi de présence</h1>" in TestClient(app).get("/login").text
     assert "(SUIVI DE PRÉSENCE) Tj" in _pdf_text(logged_client.get(f"/suivi/export.pdf?date={MON.isoformat()}").content)
+
+
+def test_outings_external_activities(configured, pg, logged_client):
+    """Activités extérieures : déclaration par l'employé (circuit), par le responsable (d'office), par les RH ;
+    effet sur le retard, le pointage partiel et l'absence ; durée créditée (plage ou forfait) ; délai après coup ;
+    chevauchement ; droits ; annulation."""
+    from datetime import timedelta as td
+
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    from app.models import OutingAction, OutingRequest, OutingSettings, User
+
+    for data in ({"username": "act_moussa", "role": "lecteur", "emp_matricule": "E002"},
+                 {"username": "act_awa", "role": "manager", "emp_matricule": "E001"},
+                 {"username": "act_rh", "role": "lecteur", "sick_leave_hr": "true"}):
+        r = logged_client.post("/admin/users/save", data={**data, "password": "motdepasse1"}, follow_redirects=True)
+        assert "enregistré" in r.text, r.text[:300]
+
+    def client(name):
+        c = TestClient(app)
+        c.post("/login", data={"username": name, "password": "motdepasse1"})
+        return c
+
+    def settings(**extra):
+        data = {"kinds": "Formation, Réunion extérieure, Visite client, Autre", "validation_required": "1",
+                "manager_direct": "1", "credit_mode": "plage", "forfait": "08:00", "retro_days": "5", **extra}
+        data = {k: v for k, v in data.items() if v is not None}
+        return logged_client.post("/admin/activites", data=data, follow_redirects=True)
+
+    def declare(c, **data):
+        base = {"type": "Réunion extérieure", "du": MON.isoformat(), "au": "", "debut": "", "fin": ""}
+        return c.post("/activites", data={**base, **data}, follow_redirects=True)
+
+    try:
+        assert "Activités extérieures : paramètres" in logged_client.get("/admin/activites").text
+        logged_client.post("/admin/activites/circuit", data={"type": ["responsable"], "user": [""]})
+        moussa, awa, rh = client("act_moussa"), client("act_awa"), client("act_rh")
+
+        # Délai de déclaration après coup (5 jours) : une activité de septembre est refusée.
+        assert "au plus 5 jour(s) après coup" in declare(moussa, debut="07:30", fin="09:30").text
+        assert "enregistrés" in settings(retro_days="365").text
+
+        # L'employé : réunion le matin (07h30–09h30) → transmise au responsable ; sans effet tant qu'elle attend.
+        r = declare(moussa, debut="07:30", fin="09:30", lieu="Client X", objet="Réunion fournisseur")
+        assert "transmise pour validation" in r.text
+        with SessionLocal() as db:
+            req = db.query(OutingRequest).one()
+            assert (req.matricule, req.source, req.status, req.full_day) == ("E002", "employe", "en_attente", False)
+            rid = req.id
+        assert rows(pg, MON)[("E002", MON)].statut == "RETARD"
+        assert "⏳ Réunion extérieure (07h30–09h30) en attente de validation" in logged_client.get(f"/suivi?date={MON.isoformat()}").text
+        assert "couvre déjà" in declare(moussa, debut="08:00", fin="09:00").text
+        assert "que pour vous-même ou pour une personne de votre équipe" in declare(moussa, matricule="E005", debut="10:00", fin="11:00").text
+
+        # Le responsable valide : plus de retard (arrivée 08h10 avant la fin de la réunion), durée = 6h50 au bureau
+        # + 40 min de réunion hors des pointages = 7h30.
+        page = awa.get("/activites").text
+        assert "À valider" in page and 'title="1 activité(s) à valider"' in page
+        assert "Activité validée" in awa.post(f"/activites/{rid}/decision", data={"decision": "valider"}, follow_redirects=True).text
+        moussa_day = rows(pg, MON)[("E002", MON)]
+        assert moussa_day.statut == "A_L_HEURE" and moussa_day.retard_min is None
+        assert hm(moussa_day.duree_validee) == "7h30" and moussa_day.activite == "Réunion extérieure 07h30–09h30"
+        assert "🎓 Réunion extérieure 07h30–09h30" in logged_client.get(f"/suivi?date={MON.isoformat()}").text
+
+        # Le responsable déclare pour une personne de son équipe (Fall Ibou, sous Sow Fatou) : validée d'office.
+        # Un seul pointage (07h40) puis formation l'après-midi : plus « pointage partiel », 5h20 + 4h → plafonné à 8h.
+        r = declare(awa, type="Formation", matricule="E004", debut="13:00", fin="17:00")
+        assert "enregistrée et validée" in r.text
+        ibou = rows(pg, MON)[("E004", MON)]
+        assert ibou.statut == "A_L_HEURE" and hm(ibou.duree_validee) == "8h00"
+
+        # Les RH : journée entière pour Ba Khady (absente) → « Activité extérieure », forfait 8h.
+        assert "enregistrée et validée" in declare(rh, type="Formation", matricule="E005", journee="true").text
+        khady = rows(pg, MON)[("E005", MON)]
+        assert (khady.statut, hm(khady.duree_validee), hm(khady.duree_effective)) == ("ACTIVITE", "8h00", "8h00")
+
+        # Mode forfait (7h) : Diop Aminata (4h15 au bureau, en retard) avec une visite client l'après-midi → 7h ;
+        # le retard du matin reste (l'activité est l'après-midi).
+        settings(credit_mode="forfait", forfait="07:00", retro_days="365")
+        declare(rh, type="Visite client", matricule="E007", debut="14:00", fin="16:00")
+        aminata = rows(pg, MON)[("E007", MON)]
+        assert aminata.statut == "RETARD" and hm(aminata.duree_validee) == "7h00"
+
+        # Validation non requise : la déclaration de l'employé s'applique tout de suite.
+        settings(validation_required=None, retro_days="365")
+        assert "enregistrée et validée" in declare(moussa, type="Formation", du=TUE.isoformat(), journee="true").text
+        assert rows(pg, TUE)[("E002", TUE)].activite == "Formation"
+
+        # Annulation par les RH : la journée redevient une absence.
+        with SessionLocal() as db:
+            khady_id = db.query(OutingRequest).filter_by(matricule="E005").one().id
+        assert "que par les RH" in moussa.post(f"/activites/{rid}/annuler", follow_redirects=True).text
+        assert "Déclaration annulée" in rh.post(f"/activites/{khady_id}/annuler", follow_redirects=True).text
+        assert rows(pg, MON)[("E005", MON)].statut == "ABSENT"
+
+        # Rapports : l'activité extérieure compte comme une présence.
+        from app import rapports
+        with SessionLocal() as db:
+            m = pointage.Mapping.from_json(db.query(PointageConfig).one().data)
+        assert "ACTIVITE" in rapports._PRESENT
+    finally:
+        with pg.begin() as c:
+            c.execute(text(f"DELETE FROM {SCHEMA}.pointage_activites"))
+        with SessionLocal() as db:
+            db.query(OutingAction).delete()
+            db.query(OutingRequest).delete()
+            db.query(OutingSettings).delete()
+            db.query(User).filter(User.username.in_(["act_moussa", "act_awa", "act_rh"])).delete()
+            db.commit()

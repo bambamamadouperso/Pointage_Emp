@@ -17,7 +17,7 @@ from .config import settings
 from .database import SessionLocal, init_db
 from .joblog import write_log
 from .models import ROLES, User
-from .routers import (admin, aide, arrets, connections, data, jobs, mails, maternite, monitoring, rapports, rappels, resumes, sites,
+from .routers import (activites, admin, aide, arrets, connections, data, jobs, mails, maternite, monitoring, rapports, rappels, resumes, sites,
                       suivi, validations)
 from .web import LoginRequired, back_url, flash, redirect, render
 
@@ -263,6 +263,8 @@ app.include_router(arrets.router)
 app.include_router(arrets.admin_router)
 app.include_router(maternite.router)
 app.include_router(aide.router)
+app.include_router(activites.router)
+app.include_router(activites.admin_router)
 app.include_router(rapports.admin_router)
 app.include_router(sites.router)
 app.include_router(mails.server_router)

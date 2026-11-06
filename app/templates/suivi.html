@@ -157,6 +157,7 @@
       <a class="{{ 'selected' if only == 'TERRAIN' }}" href="?{{ request.query_params | set_statuts(['TERRAIN']) }}" title="Afficher les agents terrain"><span class="dot st-field"></span>Terrain <b>{{ k.terrain | num }}</b></a>
       <a class="{{ 'selected' if only == 'ARRET_MALADIE' }}" href="?{{ request.query_params | set_statuts(['ARRET_MALADIE']) }}" title="Afficher les arrêts maladie"><span class="dot st-sick"></span>Maladie <b>{{ k.maladies | num }}</b></a>
       {% if k.maternites %}<a class="{{ 'selected' if only == 'CONGE_MATERNITE' }}" href="?{{ request.query_params | set_statuts(['CONGE_MATERNITE']) }}" title="Afficher les congés de maternité"><span class="dot st-mater"></span>Maternité <b>{{ k.maternites | num }}</b></a>{% endif %}
+      {% if k.activites %}<a class="{{ 'selected' if only == 'ACTIVITE' }}" href="?{{ request.query_params | set_statuts(['ACTIVITE']) }}" title="Afficher les activités extérieures (formation, réunion…)"><span class="dot st-outing"></span>Activité ext. <b>{{ k.activites | num }}</b></a>{% endif %}
       {% if k.missions %}<a class="{{ 'selected' if only == 'MISSION' }}" href="?{{ request.query_params | set_statuts(['MISSION']) }}" title="Afficher les personnes en mission"><span class="dot st-mission"></span>Mission <b>{{ k.missions | num }}</b></a>{% endif %}
       {% if k.formations %}<a class="{{ 'selected' if only == 'FORMATION' }}" href="?{{ request.query_params | set_statuts(['FORMATION']) }}" title="Afficher les formations (planning)"><span class="dot st-train"></span>Formation <b>{{ k.formations | num }}</b></a>{% endif %}
       {% if k.repos %}<a class="{{ 'selected' if only == 'REPOS' }}" href="?{{ request.query_params | set_statuts(['REPOS']) }}" title="Afficher les repos du planning des horaires postés"><span class="dot st-off"></span>Repos <b>{{ k.repos | num }}</b></a>{% endif %}
@@ -236,6 +237,8 @@
         <td>{{ hhmm(r.premier_pointage) }}{% if r.site_premier %}<br><span class="punch-site" title="Site du premier pointage">{{ r.site_premier }}</span>{% endif %}</td>
         <td class="statut-cell"><span class="badge {{ cls }}">{{ label }}</span>{% if not r.jour_ouvre and r.statut not in ('NON_OUVRE', 'REPOS') %} <span class="muted small" title="Jour non ouvré ou férié">(non ouvré)</span>{% endif %}
           {% if r.poste %}<br><span class="poste-tag" title="Poste planifié (horaires postés)">{{ r.poste }}</span>{% endif %}
+          {% if r.activite %}<br><span class="outing-tag" title="Activité extérieure validée">🎓 {{ r.activite }}</span>{% endif %}
+          {% set sortie = outings_pending.get((r.emp_key, r.jour)) %}{% if sortie %}<br><span class="pending-tag" title="Tant que l'activité n'est pas validée, elle n'est pas prise en compte">⏳ {{ sortie }}</span>{% endif %}
           {% set attente = pending.get((r.emp_key, r.jour)) if r.statut == 'ABSENT' else none %}
           {% if attente %}<br><span class="pending-tag" title="Tant que la demande n'est pas validée, la journée reste comptée absente">⏳ {{ attente }}</span>{% endif %}
           {% if r.allaitement %}<br><span class="allait-tag" title="Période d'allaitement : ces heures complètent la durée travaillée jusqu'à l'objectif">Allaitement {{ hhmm(r.allaitement) }}</span>{% endif %}</td>

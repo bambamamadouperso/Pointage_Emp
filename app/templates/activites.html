@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block title %}Activités extérieures{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Activités extérieures</h1>
+    <p class="muted">Formation, réunion à l'extérieur, visite client… : déclarez l'activité (journée entière ou plage horaire)
+      pour qu'elle ne compte ni en absence, ni en retard, ni en pointage partiel.</p></div>
+  {% if can(role, 'rh') %}<a href="/admin/activites" class="muted">Paramètres et circuit →</a>{% endif %}
+</div>
+
+{% if pending %}
+<section class="card pending-card">
+  <div class="card-head"><div><h2>À valider <span class="count-pill">{{ pending | length }}</span></h2>
+    <p class="muted small">Déclarations dont l'étape en cours vous revient.</p></div></div>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Employé</th><th>Activité</th><th>Date</th><th>Étape</th><th>Déclarée le</th><th></th></tr></thead>
+    <tbody>{% for x in pending %}
+      <tr><td><span class="mono small">{{ x.matricule }}</span> {{ x.name }}</td>
+        <td><span class="badge st-outing">{{ x.kind }}</span>{% if x.subject %}<br><span class="muted small">{{ x.subject }}</span>{% endif %}</td>
+        <td class="nowrap">{{ x.start_date.strftime('%d/%m/%Y') }}{% if x.days > 1 %} → {{ x.end_date.strftime('%d/%m/%Y') }}{% endif %}<br><span class="muted small">{{ x.hours_label }}</span></td>
+        <td class="small">Étape {{ x.step + 1 }}</td><td class="small">{{ x.created_at | dt }}</td>
+        <td><a class="btn small primary" href="/activites/{{ x.id }}">Examiner</a></td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+</section>
+{% endif %}
+
+<section class="card">
+  <div class="card-head"><div><h2>Déclarer une activité</h2>
+    <p class="muted small">{% if hr %}Saisie par un agent RH : <strong>validée immédiatement</strong>.
+      {% elif s.validation_required and workflow %}Circuit de validation : {{ workflow | join(' → ') }}.{% if s.manager_direct %} Déclarée par le responsable pour son équipe : validée d'office.{% endif %}
+      {% else %}Prise en compte dès la déclaration.{% endif %}
+      {% if not hr %}Déclaration possible jusqu'à {{ s.retro_days }} jour(s) après l'activité.{% endif %}</p></div></div>
+  {% if not hr and not (me and me.emp_matricule) %}
+    <p class="empty">Votre compte n'est rattaché à aucun employé : demandez à un administrateur d'indiquer votre matricule.</p>
+  {% else %}
+  <form method="post" action="/activites" enctype="multipart/form-data" class="form outing-form">
+    <div class="row">
+      <label>Employé {% if hr %}<span class="muted small">(matricule)</span>{% else %}<span class="muted small">(vous, ou une personne de votre équipe)</span>{% endif %}
+        <input name="matricule" placeholder="{{ me.emp_matricule if me and me.emp_matricule else 'ex. 590394' }}" value="{{ '' if hr else (me.emp_matricule if me else '') }}" autocomplete="off"></label>
+      <label>Type <select name="type" required>{% for k in kinds %}<option value="{{ k }}">{{ k }}</option>{% endfor %}</select></label>
+      <label>Du <input type="date" name="du" required></label>
+      <label>Au <span class="muted small">(vide = même jour)</span><input type="date" name="au"></label>
+    </div>
+    <div class="row">
+      <label class="check"><input type="checkbox" name="journee" value="true" id="o_full"> Journée entière</label>
+      <label class="o-hours">De <input type="time" name="debut" step="60"></label>
+      <label class="o-hours">À <input type="time" name="fin" step="60"></label>
+      <label class="grow">Lieu <input name="lieu" placeholder="ex. Hôtel Ivoire, client X, centre de formation…"></label>
+    </div>
+    <label>Objet <input name="objet" placeholder="ex. Formation sécurité incendie, réunion fournisseur…"></label>
+    <label class="file-drop compact">
+      <input type="file" name="justificatif" accept=".pdf,.jpg,.jpeg,.png">
+      <span class="file-drop-text"><strong>Joindre un justificatif</strong> (facultatif : convocation, attestation…)<br>
+        <span class="muted small">PDF, JPG ou PNG · 10 Mo maximum</span></span>
+    </label>
+    <label>Commentaire <span class="muted small">(facultatif)</span><textarea name="commentaire" rows="2" class="plain"></textarea></label>
+    <div class="form-actions"><button class="btn primary">Envoyer la déclaration</button></div>
+  </form>
+  {% endif %}
+</section>
+
+<section class="card">
+  <div class="card-head"><div><h2>{{ 'Toutes les déclarations' if hr else 'Mes déclarations et celles de mon équipe' }}</h2></div>
+    <div class="actions">
+      <a class="chip {{ 'selected' if not statut }}" href="/activites">Toutes</a>
+      {% for code, label in statuses.items() %}<a class="chip {{ 'selected' if statut == code }}" href="?statut={{ code }}">{{ label }}</a>{% endfor %}
+    </div></div>
+  {% if not requests %}<p class="empty">Aucune déclaration.</p>{% else %}
+  <div class="table-wrap"><table>
+    <thead><tr><th>Employé</th><th>Activité</th><th>Date</th><th>Lieu</th><th>Origine</th><th>Statut</th><th></th></tr></thead>
+    <tbody>{% for x in requests %}
+      <tr><td><span class="mono small">{{ x.matricule }}</span> {{ x.name }}</td>
+        <td><span class="badge st-outing">{{ x.kind }}</span>{% if x.subject %}<br><span class="muted small">{{ x.subject }}</span>{% endif %}</td>
+        <td class="nowrap">{{ x.start_date.strftime('%d/%m/%Y') }}{% if x.days > 1 %} → {{ x.end_date.strftime('%d/%m/%Y') }}{% endif %}<br><span class="muted small">{{ x.hours_label }}</span></td>
+        <td class="small">{{ x.place or '—' }}</td>
+        <td class="small">{{ sources.get(x.source, x.source) }} · {{ x.created_by }}</td>
+        <td><span class="badge {{ {'valide': 'ok', 'refuse': 'err', 'annule': '', 'en_attente': 'warn'}[x.status] }}">{{ x.status_label }}{% if x.status == 'en_attente' %} · étape {{ x.step + 1 }}{% endif %}</span></td>
+        <td><a class="btn small {{ 'primary' if can_act(x) else '' }}" href="/activites/{{ x.id }}">{{ 'Examiner' if can_act(x) else 'Détail' }}</a></td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+  {% endif %}
+</section>
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  const full = document.getElementById('o_full');
+  if (!full) return;
+  const sync = () => document.querySelectorAll('.o-hours').forEach(el => {
+    el.hidden = full.checked; el.querySelector('input').required = !full.checked;
+  });
+  full.addEventListener('change', sync);
+  sync();
+})();
+</script>
+{% endblock %}

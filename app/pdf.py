@@ -25,6 +25,7 @@ _CSS_PILLS = {
     "st-inc": ("#e2e8f0", "#475569"), "st-off": ("#e0f2fe", "#0369a1"), "st-leave": ("#e4f5d3", "#3f6212"),
     "st-remote": ("#cdeee7", "#0f6b5f"), "st-field": ("#dbeafe", "#1d4ed8"), "st-sick": ("#ece8e5", "#57534e"),
     "st-train": ("#ede9fe", "#6d28d9"), "st-mission": ("#f3e8ff", "#7e22ce"), "st-mater": ("#fce7f3", "#be185d"),
+    "st-outing": ("#e0e7ff", "#4338ca"),
 }
 # Pastilles (fond, texte) par statut, objectif atteint ou non, niveau d'un taux.
 STATUS_PILLS = {code: tuple(map(_hex, _CSS_PILLS.get(css, _CSS_PILLS["st-inc"])))

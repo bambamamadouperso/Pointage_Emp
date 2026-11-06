@@ -199,6 +199,23 @@ def maternity_pending_count(username: str, role: str) -> int:
 templates.env.globals["maternity_pending_count"] = maternity_pending_count
 
 
+def outing_pending_count(username: str, role: str) -> int:
+    """Nombre d'activités extérieures dont l'étape de validation en cours revient à cet utilisateur."""
+    if not username:
+        return 0
+    try:
+        from . import activites
+        from .database import SessionLocal
+
+        with SessionLocal() as db:
+            return len(activites.pending_for(db, activites.get_user(db, username), role, username))
+    except Exception:  # noqa: BLE001
+        return 0
+
+
+templates.env.globals["outing_pending_count"] = outing_pending_count
+
+
 def redirect(url: str) -> RedirectResponse:
     return RedirectResponse(url, status_code=303)
 

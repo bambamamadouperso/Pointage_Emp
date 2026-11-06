@@ -986,3 +986,13 @@ table.suivi .pending-tag, table.suivi .allait-tag, table.suivi .poste-tag { whit
 table.suivi td.right { white-space: nowrap; }
 table.suivi td.small { max-width: 11rem; }
 @media (max-width: 1400px) { table.suivi td { font-size: .82rem; } }
+
+/* Activité extérieure (formation, réunion à l'extérieur…) */
+.badge.st-outing { background: #e0e7ff; color: #4338ca; border-color: transparent; }
+.chip-check.st-outing { background: #e0e7ff; color: #4338ca; }
+.dot.st-outing { background: #6366f1; }
+table.suivi tr.st-outing td:first-child { border-left-color: #6366f1; }
+table.suivi tr.st-outing td { background: color-mix(in srgb, #e0e7ff 35%, transparent); }
+.outing-tag { display: inline-block; margin-top: .2rem; padding: .05rem .45rem; border-radius: 8px; font-size: .72rem;
+  font-weight: 600; background: #e0e7ff; color: #4338ca; white-space: normal; line-height: 1.3; }
+@media (prefers-color-scheme: dark) { .badge.st-outing, .outing-tag { background: #23264a; color: #a5b4fc; } }

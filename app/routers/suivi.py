@@ -209,7 +209,7 @@ def suivi(request: Request, db: Session = Depends(get_db)):
                    hhmm=pointage.hhmm, configured=mapping is not None, data=None, error=None, services=[],
                    managers=[], categories=[], directions=[], dims=dimension_filters(mapping), has_direction=bool(mapping and mapping.dir_col), objectif_min=480, scope_label=None, population=None, last_punch=None, stale=False, has_hierarchy=bool(mapping and mapping.hier_table),
                    single_day=f.du == f.au, mode="jour" if f.du == f.au else "periode",
-                   validee_ok=validee_ok, show_validee=validee_shown, horaires=pointage.HORAIRES, pending={}, hors_liste=[])
+                   validee_ok=validee_ok, show_validee=validee_shown, horaires=pointage.HORAIRES, pending={}, outings_pending={}, hors_liste=[])
     if mapping is None:
         return render(request, "suivi.html", **context)
     engine = make_engine(cfg.conn, **pointage.WEB_LIMITS)
@@ -217,6 +217,9 @@ def suivi(request: Request, db: Session = Depends(get_db)):
         context["scope_label"] = apply_scope(request, db, engine, mapping, f)
         context["data"] = pointage.daily(engine, mapping, f, page, size)
         context["pending"] = _pending_requests(db, engine, mapping, f, context["data"]["rows"])
+        from .. import activites
+
+        context["outings_pending"] = activites.pending_by_day(db, f.du, f.au)
         # Badges sans fiche : pas pour un compte limité à son équipe, ni quand on cherche un employé ou les seuls
         # employés de la liste.
         if context["scope_label"] is None and not f.q and f.population != "liste":
@@ -355,7 +358,7 @@ def export(request: Request, db: Session = Depends(get_db)):
              "CONGE_ANNUEL": "E4F5D3", "CONGE_EXCEP": "E4F5D3", "CONGE_MATERNITE": "FCE7F3",
              "TELETRAVAIL": "CDEEE7", "TERRAIN": "DBEAFE",
              "ARRET_MALADIE": "E7E5E4", "REPOS": "E0F2FE", "FORMATION": "EDE9FE",
-             "MISSION": "F3E8FF"}
+             "MISSION": "F3E8FF", "ACTIVITE": "E0E7FF"}
     for r in rows:
         ws.append([
             r["jour"], r["matricule"], r["nom"], r["prenom"], r["service"], r["categorie"],

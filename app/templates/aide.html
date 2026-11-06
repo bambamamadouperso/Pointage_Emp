@@ -54,6 +54,9 @@
       <tr><td><span class="badge st-train">Formation</span></td><td>Poste « formation » du planning des horaires postés.</td><td>durée du poste</td></tr>
       <tr><td><span class="badge st-off">Repos (planning)</span></td><td>Poste « repos » du planning.</td><td>durée du code, sinon [{{ p.duree_repos }}]</td></tr>
       <tr><td><span class="badge st-mission">En mission</span></td><td>Autorisation de mission approuvée un jour travaillé (même si la personne badge), sauf arrêt maladie ou congé le même jour.</td><td>[{{ p.duree_mission }}]</td></tr>
+      <tr><td><span class="badge st-outing">Activité extérieure</span></td><td>Formation, réunion à l'extérieur… <strong>validée</strong>, un jour sans pointage.
+        Avec des pointages : statut habituel, mais pas de retard si l'activité couvre le début de journée (seuil repoussé à sa fin)
+        et pas de pointage partiel (la journée est complétée par l'activité).</td><td>plage déclarée ou forfait (paramètre)</td></tr>
       <tr><td><span class="badge st-sick">Arrêt maladie</span></td><td>Arrêt maladie validé, jour attendu sans pointage.</td><td>[{{ p.duree_arret_maladie }}]</td></tr>
       <tr><td><span class="badge st-remote">Télétravail</span></td><td>Télétravail approuvé, jour sans pointage (y compris un jour non ouvré).</td><td>[{{ p.duree_teletravail }}]</td></tr>
       <tr><td><span class="badge st-field">Sur le terrain</span></td><td>Agent terrain (commercial…) un jour ouvré, qu'il passe au bureau ou non : ni retard ni pointage incomplet.</td><td>au moins [{{ p.duree_terrain }}]</td></tr>

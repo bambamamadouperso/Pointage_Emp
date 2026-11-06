@@ -445,6 +445,90 @@ class SickLeaveSettings(Base):
     notify: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True, default=False)
 
 
+class OutingRequest(Base):
+    """Activité extérieure déclarée par l'employé (formation, réunion à l'extérieur, visite client…), sur une
+    journée entière ou une plage horaire, éventuellement sur plusieurs jours. Validée (circuit paramétrable ou
+    d'office selon les options), elle est recopiée dans PostgreSQL (table pointage_activites) : pas d'absence, de
+    retard ni de pointage partiel pendant l'activité, durée créditée selon le paramètre (plage réelle ou forfait)."""
+
+    __tablename__ = "outing_requests"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    emp_key: Mapped[str] = mapped_column(String(100), index=True)
+    matricule: Mapped[str] = mapped_column(String(100), default="")
+    name: Mapped[str] = mapped_column(String(255), default="")
+    kind: Mapped[str] = mapped_column(String(100), default="Formation")       # type choisi dans la liste paramétrée
+    start_date: Mapped[datetime] = mapped_column(DateTime)
+    end_date: Mapped[datetime] = mapped_column(DateTime)
+    full_day: Mapped[bool] = mapped_column(Boolean, default=True)
+    start_time: Mapped[str] = mapped_column(String(5), default="")            # plage horaire (HH:MM) si pas la journée
+    end_time: Mapped[str] = mapped_column(String(5), default="")
+    place: Mapped[str] = mapped_column(String(255), default="")
+    subject: Mapped[str] = mapped_column(String(255), default="")
+    comment: Mapped[str] = mapped_column(Text, default="")
+    source: Mapped[str] = mapped_column(String(20), default="employe")        # employe, responsable, rh
+    status: Mapped[str] = mapped_column(String(20), default="en_attente")     # voir SICK_STATUS
+    step: Mapped[int] = mapped_column(Integer, default=0)
+    workflow: Mapped[str] = mapped_column(Text, default="[]")
+    manager_matricule: Mapped[str] = mapped_column(String(100), default="")
+    manager_name: Mapped[str] = mapped_column(String(255), default="")
+    file_name: Mapped[str] = mapped_column(String(255), default="")
+    file_path: Mapped[str] = mapped_column(String(255), default="")
+    file_type: Mapped[str] = mapped_column(String(100), default="")
+    created_by: Mapped[str] = mapped_column(String(100), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    decided_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+    @property
+    def status_label(self) -> str:
+        return SICK_STATUS.get(self.status, self.status)
+
+    @property
+    def days(self) -> int:
+        return (self.end_date.date() - self.start_date.date()).days + 1
+
+    @property
+    def hours_label(self) -> str:
+        return "journée entière" if self.full_day else f"{self.start_time.replace(':', 'h')}–{self.end_time.replace(':', 'h')}"
+
+
+class OutingAction(Base):
+    """Historique d'une activité extérieure : déclaration, validations, refus, annulation."""
+
+    __tablename__ = "outing_actions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    request_id: Mapped[int] = mapped_column(ForeignKey("outing_requests.id", ondelete="CASCADE"), index=True)
+    at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    actor: Mapped[str] = mapped_column(String(100), default="")
+    action: Mapped[str] = mapped_column(String(30), default="")
+    step_label: Mapped[str] = mapped_column(String(255), default="")
+    comment: Mapped[str] = mapped_column(Text, default="")
+
+
+OUTING_CREDIT = {"plage": "La plage horaire déclarée (journée entière : durée forfaitaire)",
+                 "forfait": "Une durée forfaitaire par jour d'activité"}
+
+
+class OutingSettings(Base):
+    """Paramètres des activités extérieures (une seule ligne) : types proposés, validation, durée créditée,
+    délai de déclaration après coup, circuit de validation et notifications."""
+
+    __tablename__ = "outing_settings"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    kinds: Mapped[str] = mapped_column(Text, default="Formation, Réunion extérieure, Visite client, Autre")
+    validation_required: Mapped[bool] = mapped_column(Boolean, default=True)  # déclaration de l'employé : circuit
+    manager_direct: Mapped[bool] = mapped_column(Boolean, default=True)       # déclarée par le responsable : d'office
+    credit_mode: Mapped[str] = mapped_column(String(20), default="plage")     # voir OUTING_CREDIT
+    forfait: Mapped[str] = mapped_column(String(5), default="08:00")
+    retro_days: Mapped[int] = mapped_column(Integer, default=5)               # déclaration après coup : N jours max
+    workflow: Mapped[str] = mapped_column(Text, default="")
+    notify: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True, default=False)
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    updated_by: Mapped[str] = mapped_column(String(100), default="")
+
+
 class SiteAlertSettings(Base):
     """Surveillance des sites : chaque jour, à l'heure indiquée, mail à une liste de destinataires si un site n'a
     remonté aucun pointage depuis le début de la journée (une seule ligne)."""

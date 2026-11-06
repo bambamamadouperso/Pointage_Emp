@@ -73,13 +73,14 @@ STATUTS = {
     "REPOS": ("Repos (planning)", "st-off"),
     "FORMATION": ("Formation", "st-train"),
     "MISSION": ("En mission", "st-mission"),
+    "ACTIVITE": ("Activité extérieure", "st-outing"),
 }
 CONGES = ("CONGE_ANNUEL", "CONGE_EXCEP", "CONGE_MATERNITE")
 # Maternité (table pointage_maternite) : congé de maternité, ou période d'allaitement avec ses heures par jour.
 MATERNITY_KINDS = {"maternite": "Congé de maternité", "allaitement": "Période d'allaitement"}
 ALLAITEMENT_HOURS = ("01:00", "02:00", "03:00")
 # Version des objets PostgreSQL : si elle change, ils sont réinstallés automatiquement.
-SQL_VERSION = 23
+SQL_VERSION = 24
 # Taille maximale des fichiers importés (planning, agents terrain).
 MAX_IMPORT_MB = 50
 # Limites des requêtes lancées depuis les pages web : une attente de verrou ou une requête lente ne doit jamais
@@ -712,7 +713,7 @@ RETURNS TABLE (
     statut text, statut_libelle text, debut_valide time, fin_validee time, pause_deduite interval,
     duree_validee interval, duree_effective interval, duree_validee_min numeric, duree_effective_min numeric,
     hors_liste boolean, terrain boolean, retard_min numeric, categorie text, poste text, direction text, site text,
-    allaitement interval, site_premier text, site_dernier text
+    allaitement interval, site_premier text, site_dernier text, activite text
 )
 LANGUAGE sql STABLE
 -- La compilation JIT coûte plus d'une seconde par appel, pour aucun gain sur ce type de requête.
@@ -807,6 +808,18 @@ maternite AS (  -- congés de maternité saisis par les RH (Administration → M
                                        interval '1 day') AS d
     WHERE x.type = 'maternite' AND x.du <= p_au AND x.au >= p_du
 ),
+activite AS (  -- activités extérieures validées (formation, réunion…) : journée entière ou plage horaire
+    SELECT x.emp_key, d::date AS jour,
+           bool_or(x.debut IS NULL) AS a_journee, min(x.debut) AS a_debut, max(x.fin) AS a_fin,
+           sum(x.fin - x.debut) AS a_plage, max(x.forfait) AS a_forfait, bool_or(x.mode = 'forfait') AS a_mode_forfait,
+           string_agg(x.type || CASE WHEN x.debut IS NULL THEN '' ELSE ' ' || to_char(x.debut, 'HH24"h"MI') || '–'
+                      || to_char(x.fin, 'HH24"h"MI') END, ', ' ORDER BY x.debut NULLS FIRST) AS a_libelle
+    FROM {S}.pointage_activites x
+    CROSS JOIN LATERAL generate_series(GREATEST(x.du, p_du)::timestamp, LEAST(x.au, p_au)::timestamp,
+                                       interval '1 day') AS d
+    WHERE x.du <= p_au AND x.au >= p_du
+    GROUP BY 1, 2
+),
 allaitement AS (  -- périodes d'allaitement : heures par jour (vide = paramètre « heures d'allaitement »)
     SELECT DISTINCT ON (e.emp_key, d::date) e.emp_key, d::date AS jour, x.heures
     FROM {S}.pointage_maternite x
@@ -825,6 +838,8 @@ g AS (
     SELECT b.emp_key, b.jour, e.matricule, e.nom, e.prenom, e.service, e.responsable_key, e.responsable, e.categorie,
            e.direction, e.site,
            a.p1, a.p2, a.n, a.site_p1, a.site_p2, (e.emp_key IS NULL) AS hors_liste,
+           (act.emp_key IS NOT NULL) AS activite, COALESCE(act.a_journee, false) AS a_journee, act.a_debut, act.a_fin,
+           act.a_plage, act.a_forfait, COALESCE(act.a_mode_forfait, false) AS a_mode_forfait, act.a_libelle,
            p.debut_journee, p.debut_pause, p.fin_pause, p.fin_journee, p.seuil_retard, p.duree_pause,
            p.duree_conge, p.duree_teletravail, p.duree_terrain, p.duree_maladie, p.duree_repos, p.duree_mission, k.statut AS conge, t.statut AS tele,
            (mal.emp_key IS NOT NULL) AS maladie, (mi.emp_key IS NOT NULL) AS mission,
@@ -848,6 +863,7 @@ g AS (
     LEFT JOIN maladie mal ON mal.emp_key = b.emp_key AND mal.jour = b.jour
     LEFT JOIN maternite mat ON mat.emp_key = b.emp_key AND mat.jour = b.jour
     LEFT JOIN allaitement al ON al.emp_key = b.emp_key AND al.jour = b.jour
+    LEFT JOIN activite act ON act.emp_key = b.emp_key AND act.jour = b.jour
     LEFT JOIN plan s ON s.emp_key = b.emp_key AND s.jour = b.jour
 ),
 c AS (
@@ -863,18 +879,25 @@ c AS (
              -- un arrêt maladie ou un congé approuvé le même jour l'emporte.
              WHEN g.mission AND g.jour_ouvre AND NOT g.maladie AND g.conge IS NULL THEN 'MISSION'
              WHEN g.poste_type = 'travail' THEN
-                 CASE WHEN g.n IS NULL THEN COALESCE(CASE WHEN g.maladie THEN 'ARRET_MALADIE' END, g.conge, g.tele, 'ABSENT')
-                      WHEN g.n < 2 THEN 'INCOMPLET'
+                 CASE WHEN g.n IS NULL THEN COALESCE(CASE WHEN g.maladie THEN 'ARRET_MALADIE' END, g.conge, g.tele,
+                                                     CASE WHEN g.activite THEN 'ACTIVITE' END, 'ABSENT')
+                      WHEN g.n < 2 AND NOT g.activite THEN 'INCOMPLET'
+                      -- Activité extérieure en début de poste (ou toute la journée) : pas de retard jusqu'à sa fin.
+                      WHEN g.a_journee OR (g.a_debut <= (g.s_debut + g.tolerance)::time
+                                           AND g.p1::time <= g.a_fin + g.tolerance) THEN 'A_L_HEURE'
                       -- Allaitement : l'heure peut être prise en début de poste, le seuil de retard est décalé d'autant.
                       WHEN g.p1 >= g.s_debut + g.tolerance + COALESCE(g.allaitement, interval '0') THEN 'RETARD'
                       ELSE 'A_L_HEURE' END
              WHEN g.n IS NULL THEN CASE WHEN g.jour_ouvre
                                           THEN COALESCE(CASE WHEN g.maladie THEN 'ARRET_MALADIE' END, g.conge, g.tele,
+                                                        CASE WHEN g.activite THEN 'ACTIVITE' END,
                                                         CASE WHEN g.terrain THEN 'TERRAIN' END, 'ABSENT')
                                      ELSE COALESCE(g.tele, 'NON_OUVRE') END  -- le télétravail vaut aussi les jours non ouvrés
              -- Agent terrain qui passe au bureau un jour ouvré : ni retard ni pointage incomplet.
              WHEN g.terrain AND g.jour_ouvre THEN 'TERRAIN'
-             WHEN g.n < 2 THEN 'INCOMPLET'
+             WHEN g.n < 2 AND NOT g.activite THEN 'INCOMPLET'
+             -- Activité extérieure le matin (ou toute la journée) : seuil de retard repoussé à sa fin.
+             WHEN g.a_journee OR (g.a_debut <= g.seuil_retard AND g.p1::time <= g.a_fin + g.tolerance) THEN 'A_L_HEURE'
              WHEN g.p1::time >= g.seuil_retard + COALESCE(g.allaitement, interval '0') THEN 'RETARD'
              ELSE 'A_L_HEURE' END AS statut,
         CASE WHEN g.n >= 2 AND g.poste_type IS NOT NULL THEN g.s_pause
@@ -896,8 +919,8 @@ c AS (
 )
 SELECT c.emp_key, COALESCE(c.matricule, c.emp_key), COALESCE(c.nom, 'Hors liste'), c.prenom, c.service,
        c.responsable_key, c.responsable, c.jour, c.jour_ouvre, c.p1, c.p2, COALESCE(c.n, 0), c.statut, CASE c.statut {labels} END,
-       c.debut_valide, c.fin_validee, c.pause, w.hv, v.de,
-       round((extract(epoch FROM w.hv) / 60)::numeric, 2), round((extract(epoch FROM v.de) / 60)::numeric, 2),
+       c.debut_valide, c.fin_validee, c.pause, z.hv, z.de,
+       round((extract(epoch FROM z.hv) / 60)::numeric, 2), round((extract(epoch FROM z.de) / 60)::numeric, 2),
        c.hors_liste, c.terrain,
        CASE WHEN c.statut = 'RETARD' AND c.poste_type = 'travail'
                 THEN round((extract(epoch FROM c.p1 - c.s_debut - COALESCE(c.allaitement, interval '0')) / 60)::numeric, 0)
@@ -907,7 +930,7 @@ SELECT c.emp_key, COALESCE(c.matricule, c.emp_key), COALESCE(c.nom, 'Hors liste'
        CASE WHEN c.poste_type = 'travail'
                  THEN c.poste_code || ' · ' || to_char(c.s_debut, 'HH24"h"MI') || '–' || to_char(c.s_fin, 'HH24"h"MI')
             WHEN c.poste_code IS NOT NULL THEN c.poste_code || ' · ' || c.poste_libelle END,
-       c.direction, c.site, c.allaitement, c.site_p1, c.site_p2
+       c.direction, c.site, c.allaitement, c.site_p1, c.site_p2, c.a_libelle
 FROM c
 CROSS JOIN LATERAL (
     -- Durées attribuées (congé, télétravail…) : seulement pour les situations cochées dans le paramètre
@@ -944,6 +967,23 @@ CROSS JOIN LATERAL (
                      AND COALESCE(v.de, v.hv) IS NOT NULL
                 THEN GREATEST(v.hv, LEAST(c.objectif, COALESCE(v.de, v.hv) + c.allaitement)) ELSE v.hv END AS hv
 ) w
+CROSS JOIN LATERAL (
+    -- Activité extérieure : durée créditée selon le paramètre — forfait par jour, ou plage déclarée (journée entière :
+    -- forfait). Avec des pointages : temps au bureau + partie de l'activité hors des pointages, plafonné à l'objectif.
+    SELECT CASE WHEN NOT c.activite THEN w.hv
+                WHEN c.statut = 'ACTIVITE' THEN CASE WHEN c.a_mode_forfait OR c.a_journee THEN c.a_forfait ELSE c.a_plage END
+                WHEN c.statut IN ('A_L_HEURE', 'RETARD', 'TERRAIN') THEN
+                    CASE WHEN c.a_mode_forfait OR c.a_journee THEN GREATEST(w.hv, c.a_forfait)
+                         ELSE GREATEST(w.hv, LEAST(c.objectif,
+                              CASE WHEN c.n >= 2 THEN COALESCE(w.hv, interval '0') + GREATEST(c.a_plage - GREATEST(
+                                       LEAST(c.a_fin, c.p2::time) - GREATEST(c.a_debut, c.p1::time), interval '0'), interval '0')
+                                   -- un seul pointage : travail avant l'activité (ou après elle, jusqu'à la fin de journée)
+                                   ELSE CASE WHEN c.p1::time <= c.a_debut THEN c.a_debut - GREATEST(c.p1::time, c.debut_journee)
+                                             ELSE GREATEST(c.fin_journee - c.p1::time, interval '0') END + c.a_plage END)) END
+                ELSE w.hv END AS hv,
+           CASE WHEN c.statut = 'ACTIVITE' THEN CASE WHEN c.a_mode_forfait OR c.a_journee THEN c.a_forfait ELSE c.a_plage END
+                ELSE v.de END AS de
+) z
 WHERE c.statut IS NOT NULL
 $fn$"""
     first_day = f"(SELECT min(({ts})::date) FROM {punch} p)"
@@ -959,6 +999,7 @@ $fn$"""
 )""",
         "params_index": f"CREATE INDEX IF NOT EXISTS pointage_parametres_cle_date ON {S}.pointage_parametres (cle, date_effet)",
         "sick_table": sick_table_sql(m),
+        "outing_table": outing_table_sql(m),
         "field_table": f"""CREATE TABLE IF NOT EXISTS {S}.pointage_terrain (
     id serial PRIMARY KEY,
     type text NOT NULL CHECK (type IN ('service', 'employe')),
@@ -1088,7 +1129,7 @@ def install(engine: Engine, m: Mapping, author: str) -> None:
                                    f"({qi(m.punch_ts_col)})"))
             except Exception:
                 pass
-        for key in ("schema", "params_table", "params_index", "holidays_table", "field_table", "sick_table",
+        for key in ("schema", "params_table", "params_index", "holidays_table", "field_table", "sick_table", "outing_table",
                     "postes_table", "planning_table", "planning_index", "maternity_table", "drop_view", "drop_raw_view",
                     "drop_function", "drop_team_function", "drop_employees_view", "employees_view",
                     "team_function", "function", "view", "raw_view", "comment"):
@@ -1916,14 +1957,15 @@ def daily(engine: Engine, m: Mapping, f: Filters, page: int = 1, size: int = 100
         count(*) FILTER (WHERE statut = 'REPOS') AS repos,
         count(*) FILTER (WHERE statut = 'FORMATION') AS formations,
         count(*) FILTER (WHERE statut = 'MISSION') AS missions,
+        count(*) FILTER (WHERE statut = 'ACTIVITE') AS activites,
         count(DISTINCT emp_key) FILTER (WHERE hors_liste) AS hors_liste,
-        avg(duree_validee) FILTER (WHERE statut NOT IN ('CONGE_ANNUEL', 'CONGE_EXCEP', 'CONGE_MATERNITE', 'TELETRAVAIL', 'TERRAIN', 'ARRET_MALADIE', 'FORMATION', 'REPOS', 'MISSION')) AS moy_validee,
+        avg(duree_validee) FILTER (WHERE statut NOT IN ('CONGE_ANNUEL', 'CONGE_EXCEP', 'CONGE_MATERNITE', 'TELETRAVAIL', 'TERRAIN', 'ARRET_MALADIE', 'FORMATION', 'REPOS', 'MISSION', 'ACTIVITE')) AS moy_validee,
         -- Heures moyennes de premier et de dernier pointage des personnes venues au bureau.
         time '00:00' + avg(premier_pointage::time - time '00:00')
             FILTER (WHERE statut IN ('A_L_HEURE', 'RETARD', 'INCOMPLET') AND poste IS NULL) AS moy_premier,
         time '00:00' + avg(dernier_pointage::time - time '00:00')
             FILTER (WHERE statut IN ('A_L_HEURE', 'RETARD') AND nb_pointages >= 2 AND poste IS NULL) AS moy_dernier,
-        avg(duree_effective) FILTER (WHERE statut NOT IN ('CONGE_ANNUEL', 'CONGE_EXCEP', 'CONGE_MATERNITE', 'TELETRAVAIL', 'TERRAIN', 'ARRET_MALADIE', 'FORMATION', 'REPOS', 'MISSION')) AS moy_effective,
+        avg(duree_effective) FILTER (WHERE statut NOT IN ('CONGE_ANNUEL', 'CONGE_EXCEP', 'CONGE_MATERNITE', 'TELETRAVAIL', 'TERRAIN', 'ARRET_MALADIE', 'FORMATION', 'REPOS', 'MISSION', 'ACTIVITE')) AS moy_effective,
         count(DISTINCT emp_key) AS employes
         FROM {source}{where}""").bindparams(*binds)
     rows_sql = text(f"SELECT * FROM {source}{where}{_order(f)} LIMIT :lim OFFSET :off").bindparams(*binds)
@@ -2124,6 +2166,23 @@ def manager_of(engine: Engine, m: Mapping, emp_key: str) -> Optional[tuple[str, 
             f"JOIN {S}.v_pointage_employes r ON r.emp_key = e.responsable_key WHERE e.emp_key = :k LIMIT 1"),
             {"k": emp_key}).first()
     return (row[0], row[1]) if row else None
+
+
+def outing_table_sql(m: Mapping) -> str:
+    """Activités extérieures validées (recopiées depuis l'application) : journée entière (debut NULL) ou plage."""
+    return f"""CREATE TABLE IF NOT EXISTS {qi(m.objs)}.pointage_activites (
+    id integer PRIMARY KEY,
+    emp_key text NOT NULL,
+    matricule text,
+    du date NOT NULL,
+    au date NOT NULL,
+    debut time,
+    fin time,
+    type text NOT NULL,
+    mode text NOT NULL DEFAULT 'plage',
+    forfait interval,
+    modifie_le timestamptz NOT NULL DEFAULT now()
+)"""
 
 
 def sick_table_sql(m: Mapping) -> str:
