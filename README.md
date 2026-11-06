@@ -233,7 +233,8 @@ employé) avec statuts et taux en couleur. Suivi : 300 premières lignes (au-del
 que l'écran (durée standard, analyses réservées).
 
 **Rapports — analyses réservées à l'administrateur** : le graphique « Heures d'arrivée au bureau » et le tableau
-« À suivre » (employés à suivre) ne sont affichés qu'aux administrateurs, dans une partie dédiée en bas de la page ;
+« À suivre » (employés à suivre) ne sont affichés qu'aux administrateurs, dans *Administration → Analyses* (mêmes
+filtres et période que les rapports) ;
 la feuille « Alertes » de l'export Excel et la section « Employés à suivre » du PDF leur sont aussi réservées.
 
 **Durée standard** (anciennement « durée validée ») : réservée aux **RH et aux administrateurs** — suivi, rapports

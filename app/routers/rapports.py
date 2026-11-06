@@ -49,6 +49,19 @@ def _filters(request: Request, defaults: Optional[list[str]] = None) -> tuple[po
 
 @router.get("")
 def page(request: Request, db: Session = Depends(get_db)):
+    return _page(request, db, "rapports")
+
+
+# Analyses réservées à l'administrateur (heures d'arrivée, employés à suivre) : Administration → Analyses.
+admin_router = APIRouter(prefix="/admin/analyses", dependencies=[Depends(require_login)])
+
+
+@admin_router.get("")
+def analyses(request: Request, db: Session = Depends(get_db)):
+    return _page(request, db, "analyses")
+
+
+def _page(request: Request, db: Session, mode: str):
     cfg, mapping = load_config(db)
     f, preset = _filters(request, default_categories(db, mapping))
     std = validee_allowed(db, request.session.get("role"))
@@ -60,7 +73,7 @@ def page(request: Request, db: Session = Depends(get_db)):
                    data=None, error=None, services=[], managers=[], categories=[], directions=[], scope_label=None,
                    hhmm=pointage.hhmm, dims=dimension_filters(mapping),
                    series=rapports.SERIES, has_hierarchy=bool(mapping and mapping.hier_table), today=date.today(),
-                   horaires=pointage.HORAIRES)
+                   horaires=pointage.HORAIRES, mode=mode)
     if mapping is None:
         return render(request, "rapports.html", **context)
     engine = make_engine(cfg.conn, **pointage.WEB_LIMITS)

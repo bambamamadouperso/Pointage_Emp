@@ -92,7 +92,8 @@
     {{ nav('/admin/envoi', 'sliders', "Serveur d'envoi des e-mails", path.startswith('/admin/envoi')) }}{% endif %}
     {% endcall %}
     {% if is_admin %}
-    {% call group('systeme', 'Administration', path.startswith(('/admin/pointage', '/admin/users', '/admin/audit'))) %}
+    {% call group('systeme', 'Administration', path.startswith(('/admin/pointage', '/admin/users', '/admin/audit', '/admin/analyses'))) %}
+    {{ nav('/admin/analyses', 'chart', 'Analyses', path.startswith('/admin/analyses')) }}
     {{ nav('/admin/pointage', 'link', 'Source des pointages', path.startswith('/admin/pointage')) }}
     {{ nav('/admin/users', 'users', 'Utilisateurs', path.startswith('/admin/users')) }}
     {{ nav('/admin/audit', 'shield', "Journal d'audit", path.startswith('/admin/audit')) }}

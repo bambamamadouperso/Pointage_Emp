@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Rapports{% endblock %}
+{% block title %}{{ 'Analyses' if mode == 'analyses' else 'Rapports' }}{% endblock %}
 {% block main_class %}container wide{% endblock %}
 {% macro pct(v) %}{{ '%.1f'|format(v) ~ ' %' if v is not none else '—' }}{% endmacro %}
 {% macro delta(cur, prev, good_up=True, unit=' pt') %}
@@ -30,11 +30,13 @@
 {% from "_multiselect.html" import multiselect %}
 <div class="page-head">
   <div>
-    <h1>Rapports</h1>
+    <h1>{{ 'Analyses (administrateur)' if mode == 'analyses' else 'Rapports' }}</h1>
     <p class="muted">Du {{ f.du | jour_fr }} au {{ f.au | jour_fr }} · employés de la liste
       {%- if scope_label %} · équipe de {{ scope_label }}{% endif %}</p>
   </div>
-  {% if data %}<div class="actions"><a class="btn" href="/rapports/export.xlsx?{{ request.query_params }}">⬇ Export Excel</a>
+  {% if mode == 'analyses' %}<div class="actions"><a class="btn ghost" href="/rapports?{{ request.query_params }}">Rapports →</a></div>
+  {% elif data %}<div class="actions">{% if can(role, 'admin') %}<a class="btn ghost" href="/admin/analyses?{{ request.query_params }}" title="Heures d'arrivée et employés à suivre">Analyses →</a>{% endif %}
+    <a class="btn" href="/rapports/export.xlsx?{{ request.query_params }}">⬇ Export Excel</a>
     <a class="btn" href="/rapports/export.pdf?{{ request.query_params }}">⬇ Export PDF</a>
     <a class="btn" href="/rapports/export.pptx?{{ request.query_params }}" title="Présentation PowerPoint avec graphiques modifiables">⬇ PowerPoint</a></div>{% endif %}
 </div>
@@ -84,6 +86,7 @@
 {% if not k.attendus %}
   <div class="card"><p class="empty">Aucune journée à analyser sur cette période avec ces filtres.</p></div>
 {% else %}
+{% if mode != 'analyses' %}
 <section class="stats report-kpis">
   <div class="stat c-ok hero"><span class="label">Taux de présence</span><span class="value">{{ pct(k.taux_presence) }}</span>
     <span class="hint">{{ k.presents | num }} journées présentes sur {{ k.disponibles | num }} (hors congés) {{ delta(k.taux_presence, prev.get('taux_presence')) }}</span></div>
@@ -179,9 +182,10 @@
   </table></div>
 </section>
 
-{% if can(role, 'admin') %}
-<h2 class="section-title" id="admin-analyses">Analyses réservées à l'administrateur</h2>
-<p class="muted small">Heures d'arrivée au bureau et employés à suivre : visibles seulement des administrateurs (écran et exports).</p>
+{% endif %}
+{% if mode == 'analyses' %}
+
+<p class="muted small">Réservé aux administrateurs : heures d'arrivée au bureau et employés à suivre, sur la période et les filtres choisis.</p>
 {% set a = data.arrival %}
 <section class="card">
   <h2>Heures d'arrivée au bureau</h2>

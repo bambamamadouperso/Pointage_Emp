@@ -601,8 +601,14 @@ def test_reports_page_and_export(configured, pg, logged_client):
     assert page.status_code == 200, page.text[:2000]
     html = page.text
     for part in ("Taux de présence", "Taux d'absentéisme", "Présence par jour", "Selon le jour de la semaine",
-                 "Heures d'arrivée au bureau", "Par service", "À suivre", "Par employé", "Absences répétées"):
+                 "Par service", "Par employé"):
         assert part in html, part
+    # Heures d'arrivée et employés à suivre : page Administration → Analyses (mêmes filtres).
+    assert "Heures d'arrivée au bureau" not in html and 'href="/admin/analyses?' in html
+    analyses = logged_client.get(url.replace("/rapports?", "/admin/analyses?")).text
+    for part in ("Analyses (administrateur)", "Heures d'arrivée au bureau", "À suivre", "Absences répétées"):
+        assert part in analyses, part
+    assert "Par employé" not in analyses and 'href="/admin/analyses"' in analyses
     assert "Ba Khady" in html and "Production" in html and "RH" in html
     assert "<svg class=\"chart\"" in html and "data-tip=" in html
     assert "Taux de présence</li>" in html and "de présence (" in html  # par jour de la semaine
@@ -622,7 +628,6 @@ def test_reports_page_and_export(configured, pg, logged_client):
     rows = {row[0]: row for row in wb["Employés"].iter_rows(min_row=2, values_only=True)}
     assert rows["E005"][14] == 4  # Ba Khady : 4 absences (mercredi férié)
     assert any(row[0] == "Absences répétées" for row in wb["Alertes"].iter_rows(min_row=2, values_only=True))
-    assert "Analyses réservées à l'administrateur" in html
 
     # Heures d'arrivée et employés à suivre : réservés à l'administrateur (écran, Excel, PDF).
     from fastapi.testclient import TestClient
@@ -641,6 +646,9 @@ def test_reports_page_and_export(configured, pg, logged_client):
         page = mgr.get(url).text
         assert "Selon le jour de la semaine" in page and "Par employé" in page
         assert "Heures d'arrivée au bureau" not in page and "À suivre" not in page and "Absences répétées" not in page
+        denied = mgr.get(url.replace("/rapports?", "/admin/analyses?"), follow_redirects=False)
+        assert denied.status_code in (302, 303) and "/admin/analyses" not in denied.headers["location"]
+        assert "/admin/analyses" not in page
         wb = load_workbook(io.BytesIO(mgr.get("/rapports/export.xlsx?" + url.split("?", 1)[1]).content))
         assert "Alertes" not in wb.sheetnames
         assert "Employés à suivre" not in _pdf_text(mgr.get("/rapports/export.pdf?" + url.split("?", 1)[1]).content)
