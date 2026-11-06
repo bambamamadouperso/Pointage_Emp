@@ -11,10 +11,14 @@
   <h2>Règles</h2>
   <label>Types d'activité proposés <span class="muted small">(séparés par des virgules)</span>
     <input name="kinds" value="{{ s.kinds }}" required></label>
-  <fieldset class="limits"><legend>Validation</legend>
-    <label class="check"><input type="checkbox" name="validation_required" value="1" {{ 'checked' if s.validation_required }}>
-      <span><strong>Validation obligatoire</strong> des activités déclarées par l'employé (circuit ci-dessous).
-        Décochée : prises en compte dès la déclaration.</span></label>
+  <fieldset class="limits"><legend>Déclaration par l'employé</legend>
+    <label class="check"><input type="radio" name="mode" value="information" {{ 'checked' if not s.validation_required }}>
+      <span><strong>Information du N+1</strong> : l'activité est prise en compte dès la déclaration et le responsable
+        direct reçoit un e-mail pour information (sans rien à valider).</span></label>
+    <label class="check"><input type="radio" name="mode" value="validation" {{ 'checked' if s.validation_required }}>
+      <span><strong>Validation</strong> selon le circuit ci-dessous avant d'être prise en compte.</span></label>
+    <p class="muted small">L'e-mail au N+1 part à l'adresse de son compte, à défaut à celle de l'annuaire des employés ;
+      il nécessite seulement le serveur d'envoi des e-mails.</p>
     <label class="check"><input type="checkbox" name="manager_direct" value="1" {{ 'checked' if s.manager_direct }}>
       <span><strong>Effet immédiat quand c'est le responsable qui déclare</strong> pour une personne de son équipe.
         Décochée : sa déclaration suit aussi le circuit.</span></label>

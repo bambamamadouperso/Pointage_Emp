@@ -18,7 +18,7 @@ from .suivi import (ScopeError, apply_scope, chosen_categories, default_categori
 router = APIRouter(prefix="/rapports", dependencies=[Depends(require_login)])
 
 SORTS = {"absences": "Absences", "retards": "Retards", "retard_min": "Minutes de retard", "incomplets": "Pointages partiels",
-         "presence": "Taux de présence (croissant)", "heures": "Heures standard", "nom": "Nom"}
+         "presence": "Taux de présence (croissant)", "heures": "Heures standard", "teletravail": "Heures de télétravail", "nom": "Nom"}
 
 
 # Durée standard (heures standard, moyenne par jour) : réservée aux RH et aux administrateurs (Paramètres horaires).
@@ -160,12 +160,12 @@ def export(request: Request, db: Session = Depends(get_db)):
     sheets = [
         ("Employés", ["Matricule", "Nom", "Prénom", "Service", "Statut du personnel", "Responsable", "Agent terrain", "Jours attendus",
                       "Présences", "Taux de présence", "À l'heure", "Retards", "Minutes de retard", "Taux de ponctualité",
-                      "Absences", "dont lundi/vendredi", "Pointages incomplets", "Congés", "Télétravail", "Sur le terrain",
-                      "Heures standard", "Direction", "Site"],
+                      "Absences", "dont lundi/vendredi", "Pointages incomplets", "Congés", "Télétravail", "Heures de télétravail",
+                      "Sur le terrain", "Heures standard", "Direction", "Site"],
          [[e["matricule"], e["nom"], e["prenom"], e["service"], e["categorie"], e["responsable"], "Oui" if e["terrain"] else "Non",
            e["attendus"], e["presents"], pct(e["taux_presence"]), e["a_l_heure"], e["retards"], float(e["retard_min_total"]),
            pct(e["taux_ponctualite"]), e["absences"], e["absences_lun_ven"], e["incomplets"], e["conges"], e["teletravail"],
-           e["terrain_jours"], hours(e["heures_validees"]), e.get("direction"), e.get("site")]
+           hours(e["heures_teletravail"]), e["terrain_jours"], hours(e["heures_validees"]), e.get("direction"), e.get("site")]
           for e in data["employes"]], {10, 14}),
         ("Services", ["Service", "Employés", "Taux de présence", "Taux d'absentéisme", "Taux de ponctualité", "Retards",
                       "Minutes de retard", "Absences", "Pointages incomplets", "Heures standard",

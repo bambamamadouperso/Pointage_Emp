@@ -193,6 +193,7 @@ def build(engine: Engine, m: Mapping, f: Filters, sort: str = "absences", compar
                 count(*) FILTER (WHERE statut = 'INCOMPLET' AND jour < current_date) AS incomplets,
                 count(*) FILTER (WHERE statut IN ('CONGE_ANNUEL', 'CONGE_EXCEP', 'CONGE_MATERNITE')) AS conges,
                 count(*) FILTER (WHERE statut = 'TELETRAVAIL') AS teletravail,
+                COALESCE(sum(duree_validee_min) FILTER (WHERE statut = 'TELETRAVAIL'), 0) / 60.0 AS heures_teletravail,
                 count(*) FILTER (WHERE statut = 'TERRAIN') AS terrain_jours,
                 count(*) FILTER (WHERE statut = 'ARRET_MALADIE') AS maladies,
                 count(*) FILTER (WHERE statut = 'MISSION') AS missions,
@@ -206,7 +207,8 @@ def build(engine: Engine, m: Mapping, f: Filters, sort: str = "absences", compar
         "absences": lambda e: (-e["absences"], -e["retards"]), "retards": lambda e: (-e["retards"], -e["retard_min_total"]),
         "retard_min": lambda e: (-e["retard_min_total"], -e["retards"]), "incomplets": lambda e: (-e["incomplets"],),
         "presence": lambda e: (e["taux_presence"] if e["taux_presence"] is not None else 999,),
-        "heures": lambda e: (-(e["heures_validees"] or 0),), "nom": lambda e: ((e["nom"] or "").lower(),),
+        "heures": lambda e: (-(e["heures_validees"] or 0),),
+        "teletravail": lambda e: (-float(e["heures_teletravail"] or 0), -e["teletravail"]), "nom": lambda e: ((e["nom"] or "").lower(),),
     }
     employees.sort(key=lambda e: (*keys.get(sort, keys["absences"])(e), (e["nom"] or "").lower()))
     out["employes"] = employees

@@ -176,7 +176,7 @@
         <td class="right {{ 'hot' if e.absences >= 3 }}">{{ e.absences or '·' }}</td><td class="right {{ 'hot' if e.retards >= 3 }}">{{ e.retards or '·' }}</td>
         <td class="right">{{ hhmm(timedelta(minutes=e.retard_min_total | float)) if e.retard_min_total else '·' }}</td>
         <td class="right">{% if e.arrivee_moy_min %}{{ '%02d' | format((e.arrivee_moy_min // 60) | int) }}h{{ '%02d' | format((e.arrivee_moy_min % 60) | int) }}{% else %}—{% endif %}</td>
-        <td class="right">{{ e.incomplets or '·' }}</td><td class="right">{{ e.conges or '·' }}</td><td class="right">{{ e.teletravail or '·' }}</td>
+        <td class="right">{{ e.incomplets or '·' }}</td><td class="right">{{ e.conges or '·' }}</td><td class="right">{% if e.teletravail %}{{ e.teletravail }} j{% if e.heures_teletravail %}<br><span class="muted small">{{ '%.1f' | format(e.heures_teletravail | float) }} h</span>{% endif %}{% else %}·{% endif %}</td>
         {% if std %}<td class="right">{{ '%.1f' | format(e.heures_validees | float) if e.heures_validees else '—' }}</td>{% endif %}</tr>
     {% endfor %}</tbody>
   </table></div>

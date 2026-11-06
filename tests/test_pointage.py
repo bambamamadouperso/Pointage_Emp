@@ -620,6 +620,8 @@ def test_reports_page_and_export(configured, pg, logged_client):
     assert lundi["taux_presence"] == lundi["presents"] * 100.0 / lundi["disponibles"] and lundi["presents"] > 0
     # Tri, filtre service et période prédéfinie
     assert logged_client.get(url + "&tri=retards&service=RH").status_code == 200
+    page = logged_client.get(url + "&tri=teletravail").text
+    assert '<option value="teletravail" selected>Heures de télétravail</option>' in page
     assert logged_client.get("/rapports?p=mois-1").status_code == 200
     r = logged_client.get("/rapports/export.xlsx?" + url.split("?", 1)[1])
     assert r.status_code == 200
@@ -1673,7 +1675,7 @@ def test_direction_filter_and_reports(configured, pg, logged_client):
         assert "(DIRECTION) Tj" in _pdf_text(logged_client.get("/rapports/export.pdf?" + url.split("?", 1)[1]).content)
         assert "Ba Khady" not in logged_client.get(url + "&direction=Direction+RH").text
         wb = load_workbook(io.BytesIO(logged_client.get("/rapports/export.xlsx?" + url.split("?", 1)[1]).content))
-        assert "Directions" in wb.sheetnames and wb["Employés"].cell(1, 22).value == "Direction"
+        assert "Directions" in wb.sheetnames and wb["Employés"].cell(1, 23).value == "Direction"
         assert "<code>Direction Industrielle</code>" in logged_client.get("/admin/pointage").text
     finally:
         restore = {**pointage.Mapping.from_json(original).__dict__, "conn_id": conn_id}
@@ -1712,7 +1714,7 @@ def test_site_filter_and_reports(configured, pg, logged_client):
         plateau = logged_client.get(url + "&site=Plateau").text
         assert "E003</td>" in plateau and "E001</td>" not in plateau
         wb = load_workbook(io.BytesIO(logged_client.get("/rapports/export.xlsx?" + url.split("?", 1)[1]).content))
-        assert "Sites" in wb.sheetnames and wb["Employés"].cell(1, 23).value == "Site"
+        assert "Sites" in wb.sheetnames and wb["Employés"].cell(1, 24).value == "Site"
     finally:
         restore = {**pointage.Mapping.from_json(original).__dict__, "conn_id": conn_id}
         assert "installées" in logged_client.post("/admin/pointage", data=restore, follow_redirects=True).text
@@ -2954,12 +2956,12 @@ def test_outings_external_activities(configured, pg, logged_client):
         # Le responsable déclare pour une personne de son équipe (Fall Ibou, sous Sow Fatou) : validée d'office.
         # Un seul pointage (07h40) puis formation l'après-midi : plus « pointage partiel », 5h20 + 4h → plafonné à 8h.
         r = declare(awa, type="Formation", matricule="E004", debut="13:00", fin="17:00")
-        assert "enregistrée et validée" in r.text
+        assert "Activité enregistrée" in r.text and "informé par e-mail" not in r.text
         ibou = rows(pg, MON)[("E004", MON)]
         assert ibou.statut == "A_L_HEURE" and hm(ibou.duree_validee) == "8h00"
 
         # Les RH : journée entière pour Ba Khady (absente) → « Activité extérieure », forfait 8h.
-        assert "enregistrée et validée" in declare(rh, type="Formation", matricule="E005", journee="true").text
+        assert "Activité enregistrée" in declare(rh, type="Formation", matricule="E005", journee="true").text
         khady = rows(pg, MON)[("E005", MON)]
         assert (khady.statut, hm(khady.duree_validee), hm(khady.duree_effective)) == ("ACTIVITE", "8h00", "8h00")
 
@@ -2971,9 +2973,22 @@ def test_outings_external_activities(configured, pg, logged_client):
         assert aminata.statut == "RETARD" and hm(aminata.duree_validee) == "7h00"
 
         # Validation non requise : la déclaration de l'employé s'applique tout de suite.
-        settings(validation_required=None, retro_days="365")
-        assert "enregistrée et validée" in declare(moussa, type="Formation", du=TUE.isoformat(), journee="true").text
+        # Mode « information du N+1 » : la déclaration de l'employé s'applique tout de suite et le responsable
+        # reçoit un e-mail pour information.
+        settings(validation_required=None, mode="information", retro_days="365")
+        assert "Information du N+1" in logged_client.get("/admin/activites").text
+        r = declare(moussa, type="Formation", du=TUE.isoformat(), journee="true")
+        assert "Activité enregistrée" in r.text and "Votre responsable en est informé par e-mail" in r.text
         assert rows(pg, TUE)[("E002", TUE)].activite == "Formation"
+        from app import activites
+        with SessionLocal() as db:
+            tue = db.query(OutingRequest).filter_by(matricule="E002", kind="Formation").one()
+            assert activites.informs_manager(tue) and tue.manager_matricule == "E001"
+            subject, _, text_body = activites.build_notification(tue, "information", "http://p")
+            assert subject.startswith("Activité extérieure — ") and "aucune action n'est attendue" in text_body
+            db.query(User).filter_by(username="act_awa").update({"email": "awa@example.com"})
+            db.commit()
+            assert activites.manager_addresses(db, tue)[0][0] == "awa@example.com"
 
         # Annulation par les RH : la journée redevient une absence.
         with SessionLocal() as db:

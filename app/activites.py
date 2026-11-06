@@ -24,7 +24,8 @@ ACTIONS = {"declare": "Déclarée", "saisi_rh": "Saisie par les RH (validée d'o
            "saisi_responsable": "Déclarée par le responsable", "valide": "Validée", "refuse": "Refusée",
            "annule": "Annulée"}
 SOURCES = {"employe": "Employé", "responsable": "Responsable", "rh": "RH"}
-EVENTS = {"a_valider": "Activité à valider", "valide": "Activité validée", "refuse": "Activité refusée"}
+EVENTS = {"a_valider": "Activité à valider", "valide": "Activité validée", "refuse": "Activité refusée",
+          "information": "Information du responsable"}
 MAX_DAYS = 366
 _TIME = re.compile(r"^([01]?\d|2[0-3])[:hH]([0-5]\d)$")
 
@@ -281,7 +282,15 @@ def build_notification(req: OutingRequest, event: str, base_url: str, company: s
     if req.place:
         rows.append(("Lieu", req.place))
     link = f"{base_url.rstrip('/')}/activites/{req.id}" if base_url else ""
-    if event == "a_valider":
+    if event == "information":
+        rows.append(("Déclarée par", req.created_by))
+        if req.comment:
+            rows.append(("Commentaire", req.comment[:500]))
+        title, intro, button = (f"Activité extérieure — {req.name}",
+                                f"Pour information : {req.name}, de votre équipe, a déclaré une activité extérieure. "
+                                "Elle est prise en compte dans le suivi des pointages ; aucune action n'est attendue de votre part.",
+                                "Voir la déclaration")
+    elif event == "a_valider":
         steps = leave_steps(req)
         rows.append(("Étape à valider", step_label(steps[req.step]) if req.step < len(steps) else "—"))
         rows.append(("Déclarée par", req.created_by))
@@ -311,15 +320,23 @@ def notify(request_id: int, event: str, base_url: str = "", actor: str = "", com
 
     try:
         with SessionLocal() as db:
-            if not notify_enabled(db) or event not in EVENTS:
+            # L'information du N+1 fait partie du mode « sans validation » : elle ne dépend pas de l'interrupteur
+            # général des notifications.
+            if event not in EVENTS or (event != "information" and not notify_enabled(db)):
                 return {"status": "disabled"}
             req = db.get(OutingRequest, request_id)
             ms = mail_settings_of(db)
             if req is None or not ms.smtp_host or not ms.from_email:
                 return {"status": "unconfigured"}
-            users = arrets.step_recipients(db, req) if event == "a_valider" else arrets.outcome_recipients(db, req)
-            users = [u for u in users if u.username != actor]
-            recipients = arrets.addresses(db, users)
+            if event == "information":
+                recipients = manager_addresses(db, req)
+            else:
+                users = arrets.step_recipients(db, req) if event == "a_valider" else arrets.outcome_recipients(db, req)
+                users = [u for u in users if u.username != actor]
+                recipients = arrets.addresses(db, users)
+            if not recipients and event == "information":
+                write_log("WARNING", f"Activité extérieure n°{request_id} : responsable (N+1) sans adresse e-mail, "
+                                     f"information non envoyée.")
             if not recipients:
                 return {"status": "no_recipient", "sent": 0}
             subject, body, text_body = build_notification(req, event, base_url, ms.company, comment)
@@ -336,6 +353,25 @@ def notify(request_id: int, event: str, base_url: str = "", actor: str = "", com
         except Exception:  # noqa: BLE001
             pass
         return {"status": "error", "error": str(exc)}
+
+
+def manager_addresses(db, req: OutingRequest) -> list[tuple[str, str]]:
+    """Adresse du responsable (N+1) : celle de son compte, sinon celle de l'annuaire des employés."""
+    from .mails import valid_email
+
+    if not req.manager_matricule:
+        return []
+    users = db.query(User).filter(User.active.is_(True), User.emp_matricule == req.manager_matricule).all()
+    found = arrets.addresses(db, users)
+    if found:
+        return found
+    email = (arrets._directory_emails(db, {req.manager_matricule}).get(req.manager_matricule) or "").strip()
+    return [(email, req.manager_name or req.manager_matricule)] if valid_email(email) else []
+
+
+def informs_manager(req: OutingRequest) -> bool:
+    """Déclaration d'un employé prise en compte sans validation : le N+1 est informé par e-mail."""
+    return req.source == "employe" and req.status == "valide"
 
 
 def start_notify(request_id: int, event: str, base_url: str = "", actor: str = "", comment: str = "") -> None:

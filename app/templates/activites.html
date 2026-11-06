@@ -29,7 +29,7 @@
   <div class="card-head"><div><h2>Déclarer une activité</h2>
     <p class="muted small">{% if hr %}Saisie par un agent RH : <strong>validée immédiatement</strong>.
       {% elif s.validation_required and workflow %}Circuit de validation : {{ workflow | join(' → ') }}.{% if s.manager_direct %} Déclarée par le responsable pour son équipe : validée d'office.{% endif %}
-      {% else %}Prise en compte dès la déclaration.{% endif %}
+      {% else %}Prise en compte dès la déclaration{% if not s.validation_required %} ; votre responsable (N+1) en est informé par e-mail{% endif %}.{% endif %}
       {% if not hr %}Déclaration possible jusqu'à {{ s.retro_days }} jour(s) après l'activité.{% endif %}</p></div></div>
   {% if not hr and not (me and me.emp_matricule) %}
     <p class="empty">Votre compte n'est rattaché à aucun employé : demandez à un administrateur d'indiquer votre matricule.</p>

@@ -82,10 +82,13 @@ async def create(request: Request, db: Session = Depends(get_db), type: str = Fo
     finally:
         engine.dispose()
     _notify(request, req, username)
+    if activites.informs_manager(req):
+        activites.start_notify(req.id, "information", str(request.base_url), username)
     auth.audit(request, f"Activité extérieure déclarée ({activites.SOURCES[req.source].lower()})",
                f"{req.matricule} {req.name}", _summary(req))
     if req.status == "valide":
-        flash(request, f"Activité enregistrée et validée : {_summary(req)}.", "ok")
+        flash(request, f"Activité enregistrée : {_summary(req)}."
+                       + (" Votre responsable en est informé par e-mail." if activites.informs_manager(req) else ""), "ok")
     else:
         flash(request, "Activité déclarée : elle est transmise pour validation "
                        f"({activites.step_label(activites.leave_steps(req)[0])}).", "ok")
@@ -224,12 +227,13 @@ async def settings_save(request: Request, db: Session = Depends(get_db)):
         return redirect("/admin/activites")
     s = activites.get_settings(db)
     s.kinds, s.forfait, s.retro_days = ", ".join(types), forfait, retro
-    s.validation_required, s.manager_direct = bool(form.get("validation_required")), bool(form.get("manager_direct"))
+    s.validation_required = get("mode") == "validation" if get("mode") else bool(form.get("validation_required"))
+    s.manager_direct = bool(form.get("manager_direct"))
     s.credit_mode = get("credit_mode") if get("credit_mode") in OUTING_CREDIT else "plage"
     s.updated_at, s.updated_by = utcnow(), request.session.get("user", "")
     db.commit()
     auth.audit(request, "Activités extérieures : paramètres", "",
-               f"types {s.kinds} ; validation {'obligatoire' if s.validation_required else 'non requise'} ; "
+               f"types {s.kinds} ; {'validation selon le circuit' if s.validation_required else 'information du N+1 par e-mail'} ; "
                f"responsable {'d’office' if s.manager_direct else 'circuit'} ; crédit {s.credit_mode} ({s.forfait}) ; "
                f"après coup {s.retro_days} j")
     flash(request, "Paramètres des activités extérieures enregistrés. Ils s'appliquent aux prochaines déclarations.", "ok")
