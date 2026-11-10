@@ -14,12 +14,13 @@ from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
 from pptx.util import Emu, Inches, Pt
 
 from . import APP_NAME
+from .pdf import LOGO, LOGO_MARK
 
 MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
 ROWS_PER_SLIDE = 14
 EMPLOYEE_MAX_ROWS = 300  # au-delà : export Excel (une présentation de dizaines de diapositives n'est plus lisible)
 
-NAVY, TEAL, INK, MUTED = (27, 79, 138), (14, 124, 110), (11, 26, 43), (122, 136, 152)
+NAVY, TEAL, INK, MUTED = (13, 77, 146), (19, 168, 198), (11, 26, 43), (122, 136, 152)  # couleurs du logo
 HEAD_BG, ZEBRA, CARD_BORDER, PAGE = (235, 241, 248), (248, 250, 252), (230, 236, 243), (255, 255, 255)
 W, H = Inches(13.333), Inches(7.5)
 MARGIN = Inches(0.5)
@@ -68,6 +69,20 @@ class Deck:
         s.shadow.inherit = False
         return s
 
+    def _logo(self, slide, x, y, size, path, pad=Inches(0.05)):
+        """Logo sur une pastille blanche arrondie (carré de côté `size`)."""
+        if not path.is_file():
+            return
+        tile = self._rect(slide, int(x), int(y), int(size), int(size), PAGE, None, MSO_SHAPE.ROUNDED_RECTANGLE)
+        tile.adjustments[0] = 0.16
+        from PIL import Image
+
+        with Image.open(path) as im:
+            ratio = im.size[1] / im.size[0]
+        inner = int(size - 2 * pad)
+        w_img, h_img = (inner, int(inner * ratio)) if ratio <= 1 else (int(inner / ratio), inner)
+        slide.shapes.add_picture(str(path), int(x + (size - w_img) / 2), int(y + (size - h_img) / 2), w_img, h_img)
+
     def _slide(self, title: str, note: str = ""):
         """Diapositive de contenu : bandeau bleu, titre, sous-titre, pied de page."""
         slide = self.prs.slides.add_slide(self.blank)
@@ -75,9 +90,10 @@ class Deck:
         self._rect(slide, 0, Inches(0.95), W, Inches(0.06), TEAL)
         self._text(slide, MARGIN, Inches(0.16), Inches(9), Inches(0.5), title, 24, True, (255, 255, 255))
         self._text(slide, MARGIN, Inches(0.58), Inches(6.8), Inches(0.3), note or self.subtitle, 11, False, (199, 219, 240))
-        self._text(slide, Inches(9.6), Inches(0.22), Inches(3.25), Inches(0.3), APP_NAME.upper(), 11, True, (255, 255, 255),
+        self._logo(slide, W - MARGIN - Inches(0.72), Inches(0.12), Inches(0.72), LOGO_MARK)
+        self._text(slide, Inches(8.7), Inches(0.22), Inches(3.25), Inches(0.3), APP_NAME.upper(), 11, True, (255, 255, 255),
                    PP_ALIGN.RIGHT)
-        self._text(slide, Inches(7.35), Inches(0.52), Inches(5.5), Inches(0.3), self.subtitle if note else "", 10, False,
+        self._text(slide, Inches(6.45), Inches(0.52), Inches(5.5), Inches(0.3), self.subtitle if note else "", 10, False,
                    (199, 219, 240), PP_ALIGN.RIGHT)
         n = len(self.prs.slides)
         self._text(slide, MARGIN, H - Inches(0.4), Inches(8), Inches(0.25),
@@ -91,6 +107,7 @@ class Deck:
         slide = self.prs.slides.add_slide(self.blank)
         self._rect(slide, 0, 0, W, H, NAVY)
         self._rect(slide, 0, Inches(4.55), W, Inches(0.08), TEAL)
+        self._logo(slide, W - Inches(0.8) - Inches(2.2), Inches(0.6), Inches(2.2), LOGO, pad=Inches(0.16))
         self._text(slide, Inches(0.8), Inches(0.7), Inches(6), Inches(0.4), APP_NAME.upper(), 14, True, (199, 219, 240))
         self._text(slide, Inches(0.8), Inches(2.2), Inches(11.5), Inches(1.2), self.title, 44, True, (255, 255, 255))
         self._text(slide, Inches(0.8), Inches(3.45), Inches(11.5), Inches(0.6), self.subtitle, 20, False, (199, 219, 240))

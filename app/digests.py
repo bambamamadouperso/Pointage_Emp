@@ -290,7 +290,7 @@ def render(data: dict, manager_name: str, company: str = "", app_url: str = "") 
     if app_url:
         url = f"{app_url.rstrip('/')}/{'suivi' if daily else 'rapports'}?du={data['du'].isoformat()}&au={data['au'].isoformat()}"
         link = (f'<p style="margin:22px 0 0;"><a href="{html.escape(url)}" style="display:inline-block;padding:11px 20px;'
-                f'background:#1b4f8a;color:#ffffff;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px;">'
+                f'background:#0d4d92;color:#ffffff;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px;">'
                 f'{"Ouvrir le suivi" if daily else "Ouvrir les rapports"}</a></p>')
     body_html = f"""<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{html.escape(title)}</title></head>
@@ -298,9 +298,9 @@ def render(data: dict, manager_name: str, company: str = "", app_url: str = "") 
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f2f5f9;"><tr><td align="center" style="padding:28px 10px;">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:680px;font-family:'Segoe UI',Helvetica,Arial,sans-serif;">
 <tr><td style="background:#ffffff;border:1px solid #e3e9f0;border-radius:16px;overflow:hidden;">
-  <div style="height:4px;background:#0e7c6e;background-image:linear-gradient(90deg,#1b4f8a,#0e7c6e);"></div>
+  <div style="height:4px;background:#13a8c6;background-image:linear-gradient(90deg,#0d4d92,#13a8c6);"></div>
   <div style="padding:26px 28px 6px;">
-    <p style="margin:0 0 6px;font-size:12px;font-weight:600;letter-spacing:1.2px;text-transform:uppercase;color:#0e7c6e;">{'Résumé quotidien' if daily else 'Résumé hebdomadaire'}</p>
+    <p style="margin:0 0 6px;font-size:12px;font-weight:600;letter-spacing:1.2px;text-transform:uppercase;color:#13a8c6;">{'Résumé quotidien' if daily else 'Résumé hebdomadaire'}</p>
     <h1 style="margin:0;font-size:22px;line-height:1.3;color:#0b1a2b;">{html.escape(title)}</h1>
     <p style="margin:6px 0 0;font-size:14px;color:#46566a;">{html.escape(label[0].upper() + label[1:])} · {count} collaborateur(s) · {k.get('attendus') or 0} journée(s) attendue(s)</p>
   </div>

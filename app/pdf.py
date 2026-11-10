@@ -1,6 +1,7 @@
 """Exports PDF (suivi journalier, rapports) : A4 paysage, bandeau d'en-tête, filtres en pastilles, cartes
 d'indicateurs et tableaux aérés (sans grille), statuts et durées en pastilles colorées comme à l'écran."""
 from datetime import datetime
+from pathlib import Path
 
 from fpdf import FPDF
 
@@ -11,9 +12,13 @@ _REPLACE = str.maketrans({"—": "-", "–": "-", "’": "'", "‘": "'", "“":
                           "→": "->", " ": " ", " ": " ", "≥": ">=", "≤": "<="})
 
 # Charte (identique au tableau de bord et aux mails).
-NAVY, TEAL, INK, MUTED = (27, 79, 138), (14, 124, 110), (11, 26, 43), (122, 136, 152)
+NAVY, TEAL, INK, MUTED = (13, 77, 146), (19, 168, 198), (11, 26, 43), (122, 136, 152)  # couleurs du logo
 LINE, ZEBRA, CHIP = (230, 236, 243), (248, 250, 252), (238, 243, 248)
 GREEN, BLUE, RED, ORANGE, GREY, VIOLET = (16, 185, 129), (59, 130, 246), (225, 29, 72), (249, 115, 22), (100, 116, 139), (124, 58, 237)
+
+
+LOGO_MARK = Path(__file__).resolve().parent / "static" / "logo-mark.png"
+LOGO = Path(__file__).resolve().parent / "static" / "logo.png"
 
 
 def _hex(value: str) -> tuple:
@@ -78,14 +83,22 @@ class Document(FPDF):
             self.set_font("Helvetica", "", 9)
             self.set_text_color(199, 219, 240)
             self.cell(0, 5, self.subtitle)
+        # Logo (pastille blanche à droite du bandeau) puis nom de l'application et date d'édition.
+        tile = self.BAND - 6
+        x_tile = self.w - self.r_margin - tile
+        self.set_fill_color(255, 255, 255)
+        self.rect(x_tile, 3, tile, tile, style="F", round_corners=True, corner_radius=2)
+        if LOGO_MARK.is_file():
+            self.image(str(LOGO_MARK), x=x_tile + 0.8, y=3.8, w=tile - 1.6, h=tile - 1.6)
+        right = self.w - self.l_margin - self.r_margin - tile - 3
         self.set_xy(self.l_margin, 6)
         self.set_font("Helvetica", "B", 8)
         self.set_text_color(255, 255, 255)
-        self.cell(0, 4, text(APP_NAME.upper()), align="R")
+        self.cell(right, 4, text(APP_NAME.upper()), align="R")
         self.set_xy(self.l_margin, 11)
         self.set_font("Helvetica", "", 7.5)
         self.set_text_color(199, 219, 240)
-        self.cell(0, 4, text(f"Édité le {self.stamp:%d/%m/%Y à %H:%M}"), align="R")
+        self.cell(right, 4, text(f"Édité le {self.stamp:%d/%m/%Y à %H:%M}"), align="R")
         self.set_xy(self.l_margin, self.BAND + 7)
         self.set_text_color(*INK)
 

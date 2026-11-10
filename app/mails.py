@@ -61,19 +61,19 @@ DEFAULT_HTML = """<!doctype html>
 
       <tr><td style="padding:0 4px 18px;font-family:'Segoe UI',Helvetica,Arial,sans-serif;">
         <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
-          <td style="width:34px;height:34px;background:#0e7c6e;border-radius:9px;text-align:center;vertical-align:middle;color:#ffffff;font-size:18px;line-height:34px;">&#9719;</td>
+          <td style="width:34px;height:34px;background:#13a8c6;border-radius:9px;text-align:center;vertical-align:middle;color:#ffffff;font-size:18px;line-height:34px;">&#9719;</td>
           <td style="padding-left:10px;font-size:15px;font-weight:700;color:#0b1a2b;letter-spacing:-0.2px;">{{entreprise}}</td>
         </tr></table>
       </td></tr>
 
       <tr><td style="background:#ffffff;border:1px solid #e3e9f0;border-radius:16px;overflow:hidden;">
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-          <tr><td style="height:4px;background:#0e7c6e;background-image:linear-gradient(90deg,#1b4f8a,#0e7c6e);font-size:0;line-height:0;">&nbsp;</td></tr>
+          <tr><td style="height:4px;background:#13a8c6;background-image:linear-gradient(90deg,#0d4d92,#13a8c6);font-size:0;line-height:0;">&nbsp;</td></tr>
           <tr><td style="padding:34px 36px 8px;font-family:'Segoe UI',Helvetica,Arial,sans-serif;">
             <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
-              <td style="width:44px;height:44px;border-radius:50%;background:#e3f6ef;text-align:center;vertical-align:middle;color:#0e7c6e;font-size:22px;font-weight:700;line-height:44px;">&#10003;</td>
+              <td style="width:44px;height:44px;border-radius:50%;background:#e3f6ef;text-align:center;vertical-align:middle;color:#13a8c6;font-size:22px;font-weight:700;line-height:44px;">&#10003;</td>
             </tr></table>
-            <p style="margin:20px 0 6px;font-size:13px;font-weight:600;letter-spacing:1.2px;text-transform:uppercase;color:#0e7c6e;">Pointage enregistré</p>
+            <p style="margin:20px 0 6px;font-size:13px;font-weight:600;letter-spacing:1.2px;text-transform:uppercase;color:#13a8c6;">Pointage enregistré</p>
             <h1 style="margin:0;font-size:24px;line-height:1.3;font-weight:700;color:#0b1a2b;letter-spacing:-0.3px;">Bonjour {{prenom}},</h1>
             <p style="margin:12px 0 0;font-size:15px;line-height:1.6;color:#46566a;">Votre badge a bien été pris en compte. Voici le détail de ce pointage.</p>
           </td></tr>
@@ -158,7 +158,7 @@ def _punch_list(times: list[datetime], new: set) -> str:
     for i, t in enumerate(times):
         label = "Arrivée" if i == 0 else ("Départ" if i == len(times) - 1 else f"Pointage {i + 1}")
         mark = ('<span style="display:inline-block;margin-left:8px;padding:1px 8px;border-radius:10px;'
-                'background:#e3f6ef;color:#0e7c6e;font-size:11px;font-weight:600;">nouveau</span>') if t in new else ""
+                'background:#e3f6ef;color:#13a8c6;font-size:11px;font-weight:600;">nouveau</span>') if t in new else ""
         rows.append(f'<tr><td style="padding:8px 0;border-bottom:1px solid #eef2f6;font-size:14px;color:#46566a;">'
                     f'{label}{mark}</td><td align="right" style="padding:8px 0;border-bottom:1px solid #eef2f6;'
                     f'font-size:14px;font-weight:600;color:#0b1a2b;">{t:%H}h{t:%M}</td></tr>')

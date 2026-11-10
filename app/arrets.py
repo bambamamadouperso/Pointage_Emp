@@ -423,7 +423,7 @@ def _mail_html(title: str, intro: str, leave, rows: list[tuple[str, str]], link:
         f'<tr><td style="padding:7px 0;color:#7a8898;font-size:13px;width:40%;">{h.escape(k)}</td>'
         f'<td style="padding:7px 0;color:#0b1a2b;font-size:14px;font-weight:600;">{h.escape(v)}</td></tr>' for k, v in rows)
     cta = (f'<p style="margin:24px 0 4px;"><a href="{h.escape(link)}" style="display:inline-block;padding:11px 20px;'
-           f'background:#1b4f8a;color:#ffffff;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px;">'
+           f'background:#0d4d92;color:#ffffff;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px;">'
            f'{h.escape(button)}</a></p>') if link else ""
     return f"""<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>{h.escape(title)}</title></head>
 <body style="margin:0;padding:0;background:#f2f5f9;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f2f5f9;">
