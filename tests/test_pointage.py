@@ -3221,8 +3221,9 @@ def test_weekly_worked_time_vs_target(configured, pg, logged_client):
             db.commit()
 
 
-def test_test_accounts_command(configured, logged_client):
-    """python -m app.comptes_test : crée test.employe (lecteur) et test.rh (RH), relançable."""
+def test_test_accounts_command(configured, pg, logged_client, capsys):
+    """python -m app.comptes_test : test.employe simule un employé qui a des N-1 (choisi automatiquement, suivi
+    limité à son équipe) ; test.rh est RH ; relançable."""
     from fastapi.testclient import TestClient
 
     from app import comptes_test
@@ -3230,17 +3231,27 @@ def test_test_accounts_command(configured, logged_client):
     from app.models import User
 
     try:
-        assert comptes_test.main(["--mdp-employe", "Employe-Test-2026", "--mdp-rh", "Rh-Test-2026!", "--matricule", "E002"]) == 0
-        assert comptes_test.main(["--mdp-employe", "Employe-Test-2026", "--mdp-rh", "Rh-Test-2026!"]) == 0  # relançable
+        assert comptes_test.main(["--mdp-employe", "Employe-Test-2026", "--mdp-rh", "Rh-Test-2026!"]) == 0
+        out = capsys.readouterr().out
+        assert "collaborateur(s) direct(s) (N-1)" in out and "ATTENTION" not in out
         with SessionLocal() as db:
+            m = pointage.Mapping.from_json(db.query(PointageConfig).one().data)
             emp, rh = db.query(User).filter_by(username="test.employe").one(), db.query(User).filter_by(username="test.rh").one()
-            assert (emp.role, emp.emp_matricule, rh.role, rh.sick_leave_hr) == ("lecteur", "E002", "rh", True)
+            assert (emp.role, emp.scope, rh.role, rh.sick_leave_hr) == ("lecteur", "equipe", "rh", True)
+        managers = {pointage.employee_matricule(pg, m, k): n for k, _, n in pointage.managers(pg, m)}
+        assert managers.get(emp.emp_matricule, 0) >= 1 and managers[emp.emp_matricule] == max(managers.values())
+        # Matricule imposé sans N-1 : avertissement ; relançable.
+        assert comptes_test.main(["--mdp-employe", "Employe-Test-2026", "--mdp-rh", "Rh-Test-2026!", "--matricule", "E002"]) == 0
+        assert "n'encadre personne" in capsys.readouterr().out
+        assert comptes_test.main(["--mdp-employe", "Employe-Test-2026", "--mdp-rh", "Rh-Test-2026!",
+                                  "--matricule", emp.emp_matricule]) == 0
         c = TestClient(app)
         c.post("/login", data={"username": "test.rh", "password": "Rh-Test-2026!"})
         assert c.get("/admin/hebdo").status_code == 200
         c = TestClient(app)
         c.post("/login", data={"username": "test.employe", "password": "Employe-Test-2026"})
         assert "Mes retards" in c.get("/retards").text
+        assert "équipe de" in c.get(f"/suivi?date={MON.isoformat()}").text.lower()
         assert c.get("/admin/hebdo", follow_redirects=False).status_code in (302, 303)
         assert comptes_test.main(["--mdp-rh", "court"]) == 1
     finally:
