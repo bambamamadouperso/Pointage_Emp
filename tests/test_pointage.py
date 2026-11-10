@@ -2886,7 +2886,14 @@ def test_application_name(configured, logged_client):
 
     page = logged_client.get(f"/suivi?date={MON.isoformat()}").text
     assert "· HR Smart - Attendance</title>" in page and "<strong>HR Smart - Attendance</strong>" in page
-    assert "<h1>HR Smart - Attendance</h1>" in TestClient(app).get("/login").text
+    login = TestClient(app).get("/login").text
+    assert '<h1 class="sr-only">HR Smart - Attendance</h1>' in login and 'class="guest bg-vagues"' in login
+    # Administration → Apparence : fond de la page de connexion.
+    assert "Fond de la page de connexion" in logged_client.get("/admin/apparence").text
+    assert "« Nuit »" in logged_client.post("/admin/apparence", data={"fond": "nuit"}, follow_redirects=True).text
+    assert 'class="guest bg-nuit"' in TestClient(app).get("/login").text
+    assert "Choisissez un fond" in logged_client.post("/admin/apparence", data={"fond": "xx"}, follow_redirects=True).text
+    logged_client.post("/admin/apparence", data={"fond": "vagues"})
     assert "(HR SMART - ATTENDANCE) Tj" in _pdf_text(logged_client.get(f"/suivi/export.pdf?date={MON.isoformat()}").content)
 
 

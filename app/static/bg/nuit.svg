@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid slice">
+  <defs>
+    <radialGradient id="bg" cx=".5" cy=".45" r=".8"><stop offset="0" stop-color="#0d3a73"/><stop offset=".6" stop-color="#072450"/><stop offset="1" stop-color="#03122b"/></radialGradient>
+    <radialGradient id="glow" cx=".5" cy=".5" r=".5"><stop offset="0" stop-color="#13a8c6" stop-opacity=".45"/><stop offset="1" stop-color="#13a8c6" stop-opacity="0"/></radialGradient>
+    <pattern id="dots" width="28" height="28" patternUnits="userSpaceOnUse"><circle cx="2" cy="2" r="1.3" fill="#9fdcec" opacity=".18"/></pattern>
+  </defs>
+  <rect width="1600" height="900" fill="url(#bg)"/>
+  <rect width="1600" height="900" fill="url(#dots)"/>
+  <circle cx="1320" cy="760" r="420" fill="url(#glow)"/>
+  <circle cx="220" cy="140" r="320" fill="url(#glow)" opacity=".7"/>
+  <path d="M-100 700 C 300 560 600 820 960 640 S 1500 420 1700 520" fill="none" stroke="#13a8c6" stroke-width="2" opacity=".35"/>
+  <path d="M-100 740 C 320 600 620 860 980 680 S 1520 460 1700 560" fill="none" stroke="#13a8c6" stroke-width="1.2" opacity=".2"/>
+</svg>

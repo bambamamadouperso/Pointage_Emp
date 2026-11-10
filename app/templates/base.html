@@ -9,7 +9,7 @@
   <link rel="stylesheet" href="/static/style.css?v={{ app_version }}">
   {% block head %}{% endblock %}
 </head>
-<body class="{{ 'app' if user else 'guest' }}">
+<body class="{{ 'app' if user else 'guest bg-' ~ login_background() }}">
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
   <defs>
     <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
@@ -101,8 +101,9 @@
     {{ nav('/admin/envoi', 'sliders', "Serveur d'envoi des e-mails", path.startswith('/admin/envoi')) }}{% endif %}
     {% endcall %}
     {% if is_admin %}
-    {% call group('systeme', 'Administration', path.startswith(('/admin/pointage', '/admin/users', '/admin/audit', '/admin/analyses'))) %}
+    {% call group('systeme', 'Administration', path.startswith(('/admin/pointage', '/admin/users', '/admin/audit', '/admin/analyses', '/admin/apparence'))) %}
     {{ nav('/admin/analyses', 'chart', 'Analyses', path.startswith('/admin/analyses')) }}
+    {{ nav('/admin/apparence', 'sliders', 'Apparence', path.startswith('/admin/apparence')) }}
     {{ nav('/admin/pointage', 'link', 'Source des pointages', path.startswith('/admin/pointage')) }}
     {{ nav('/admin/users', 'users', 'Utilisateurs', path.startswith('/admin/users')) }}
     {{ nav('/admin/audit', 'shield', "Journal d'audit", path.startswith('/admin/audit')) }}

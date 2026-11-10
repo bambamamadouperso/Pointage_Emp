@@ -870,6 +870,26 @@ VALIDEE_DISPLAY = {
 }
 
 
+LOGIN_BACKGROUNDS = {
+    "degrade": ("Dégradé doux", "Halo bleu et turquoise très léger (fond actuel)"),
+    "vagues": ("Vagues", "Vagues bleu → turquoise en bas de page, ciel clair"),
+    "rubans": ("Rubans", "Larges rubans courbes qui rappellent le « R » du logo"),
+    "reseau": ("Réseau", "Motif hexagonal discret et points connectés, très clair"),
+    "nuit": ("Nuit", "Bleu marine profond, halos turquoise et trame de points"),
+}
+
+
+class AppearanceSettings(Base):
+    """Apparence (une seule ligne) : fond de la page de connexion."""
+
+    __tablename__ = "appearance_settings"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    login_background: Mapped[str] = mapped_column(String(20), default="vagues")
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    updated_by: Mapped[str] = mapped_column(String(100), default="")
+
+
 class SuiviSettings(Base):
     """Affichage du suivi journalier (une seule ligne) : visibilité de la durée standard."""
 

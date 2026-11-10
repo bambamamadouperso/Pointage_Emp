@@ -376,6 +376,23 @@ body.guest { min-height: 100vh; background:
 }
 .login { min-height: 88vh; display: grid; place-items: center; padding: 16px; }
 .login-card { width: 100%; max-width: 380px; display: flex; flex-direction: column; gap: 1rem; padding: 2rem; box-shadow: var(--shadow-lg); border-radius: 18px; }
+/* Fonds de la page de connexion (Administration → Apparence) */
+body.guest.bg-vagues, body.guest.bg-rubans, body.guest.bg-reseau, body.guest.bg-nuit {
+  background-size: cover; background-position: center; background-attachment: fixed; }
+body.guest.bg-vagues { background-image: url("/static/bg/vagues.svg"); }
+body.guest.bg-rubans { background-image: url("/static/bg/rubans.svg"); }
+body.guest.bg-reseau { background-image: url("/static/bg/reseau.svg"); }
+body.guest.bg-nuit { background-image: url("/static/bg/nuit.svg"); background-color: #041431; }
+body.guest.bg-nuit .footer { color: #a9c7e6; }
+body.guest.bg-vagues .footer { color: #e6f4fb; }
+.bg-swatch { display: block; width: 100%; aspect-ratio: 16 / 9; border-radius: 10px; border: 1px solid var(--border);
+  background-size: cover; background-position: center; }
+.bg-swatch.bg-degrade { background: radial-gradient(120% 90% at 10% -10%, #bfd6ee 0%, transparent 60%),
+  radial-gradient(90% 80% at 110% 110%, #bfe8f0 0%, transparent 55%), #f5f7fa; }
+.bg-choices { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 1rem; }
+.bg-choice { display: flex; flex-direction: column; gap: .45rem; padding: .6rem; border: 2px solid var(--border); border-radius: 14px; cursor: pointer; }
+.bg-choice:has(input:checked) { border-color: var(--brand-cyan); box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-cyan) 20%, transparent); }
+.bg-choice input { margin-right: .35rem; }
 .login-logo { display: block; width: 190px; max-width: 70%; height: auto; margin: 0 auto .2rem; }
 .login-card > div { text-align: center; }
 @media (prefers-color-scheme: dark) { .login-logo { background: #fff; border-radius: 14px; padding: 10px; } }

@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Apparence{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Apparence</h1>
+    <p class="muted">Fond de la page de connexion, aux couleurs du logo.</p></div>
+  <a href="/login" class="muted" target="_blank" rel="noopener">Voir la page de connexion →</a>
+</div>
+<form method="post" action="/admin/apparence" class="card form">
+  <h2>Fond de la page de connexion</h2>
+  <div class="bg-choices">
+    {% for code, (label, desc) in backgrounds.items() %}
+    <label class="bg-choice">
+      <span class="bg-swatch bg-{{ code }}" {% if code != 'degrade' %}style="background-image:url('/static/bg/{{ code }}.svg')"{% endif %}></span>
+      <span><input type="radio" name="fond" value="{{ code }}" {{ 'checked' if s.login_background == code }}><strong>{{ label }}</strong></span>
+      <span class="muted small">{{ desc }}</span>
+    </label>
+    {% endfor %}
+  </div>
+  <div class="form-actions"><button class="btn primary">Enregistrer</button></div>
+</form>
+{% endblock %}

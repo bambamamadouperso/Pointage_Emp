@@ -129,6 +129,23 @@ def _can(role, minimum: str) -> bool:
 
 templates.env.globals["can"] = _can
 
+
+def login_background() -> str:
+    """Fond choisi pour la page de connexion (Administration → Apparence)."""
+    try:
+        from .database import SessionLocal
+        from .models import LOGIN_BACKGROUNDS, AppearanceSettings
+
+        with SessionLocal() as db:
+            row = db.query(AppearanceSettings).order_by(AppearanceSettings.id).first()
+            code = row.login_background if row else "vagues"
+            return code if code in LOGIN_BACKGROUNDS else "vagues"
+    except Exception:  # noqa: BLE001
+        return "vagues"
+
+
+templates.env.globals["login_background"] = login_background
+
 _JOURS = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
 
 

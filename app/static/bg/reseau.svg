@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid slice">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#eef6fb"/><stop offset="1" stop-color="#f8fbfd"/></linearGradient>
+    <pattern id="hex" width="56" height="97" patternUnits="userSpaceOnUse" patternTransform="scale(.9)">
+      <path d="M28 0 L56 16 V48 L28 64 L0 48 V16Z M28 64 V97" fill="none" stroke="#0d4d92" stroke-width="1" opacity=".07"/>
+    </pattern>
+    <radialGradient id="fade" cx=".5" cy=".5" r=".6"><stop offset=".35" stop-color="#f8fbfd"/><stop offset="1" stop-color="#f8fbfd" stop-opacity="0"/></radialGradient>
+  </defs>
+  <rect width="1600" height="900" fill="url(#bg)"/>
+  <rect width="1600" height="900" fill="url(#hex)"/>
+  <rect width="1600" height="900" fill="url(#fade)"/>
+  <g fill="#13a8c6"><circle cx="160" cy="200" r="5" opacity=".5"/><circle cx="300" cy="120" r="3" opacity=".4"/><circle cx="1400" cy="700" r="6" opacity=".5"/><circle cx="1500" cy="560" r="3" opacity=".4"/><circle cx="1260" cy="820" r="4" opacity=".45"/></g>
+  <g stroke="#13a8c6" stroke-width="1.2" opacity=".3"><line x1="160" y1="200" x2="300" y2="120"/><line x1="1400" y1="700" x2="1500" y2="560"/><line x1="1400" y1="700" x2="1260" y2="820"/></g>
+</svg>
