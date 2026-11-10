@@ -288,7 +288,7 @@ def _late_marks(db: Session, rows, f) -> list:
     out = []
     for r in rows:
         r = dict(r)
-        mark = retards.MARKS.get(marks.get((r.get("emp_key"), r["jour"]))) if r["statut"] == "RETARD" else None
+        mark = retards.MARKS.get(marks.get((r.get("emp_key"), r["jour"]))) if r.get("retard_arrivee") else None
         if mark:
             r["statut_libelle"] = f"{r['statut_libelle']} — {mark}"
         out.append(r)
@@ -464,12 +464,12 @@ def _suivi_content(request: Request, db: Session, data: tuple, max_rows: int) ->
     _, mapping = load_config(db)
     has_dir = bool(mapping and mapping.dir_col)  # colonne Direction quand elle est configurée
     headers = ["Date", "Matricule", "Nom", *(["Direction"] if has_dir else []), "Service", "Statut du personnel",
-               "1er pointage", "Statut", "Dernier", "Nb", "Après 16h30", *(["Durée standard"] if with_validee else []), "Durée effective",
-               "Responsable"]
-    widths = [19, 16, 30, 26, *([28] if has_dir else []), 18, 15, 29, 15, 8, 14, *([17] if with_validee else []), 17, 26]
-    align = ["C", "L", "L", "L", *(["L"] if has_dir else []), "L", "C", "L", "C", "C", "C", *(["C"] if with_validee else []),
-             "C", "L"]
-    status_col, first_duration = 6 + has_dir, 10 + has_dir
+               "1er pointage", "Statut", "Dernier", "Nb", *(["Durée standard"] if with_validee else []), "Durée effective",
+               "Responsable", "Après 16h30"]
+    widths = [19, 16, 30, 26, *([28] if has_dir else []), 18, 15, 29, 15, 8, *([17] if with_validee else []), 17, 26, 14]
+    align = ["C", "L", "L", "L", *(["L"] if has_dir else []), "L", "C", "L", "C", "C", *(["C"] if with_validee else []),
+             "C", "L", "C"]
+    status_col, first_duration = 6 + has_dir, 9 + has_dir
     count = lambda *codes: sum(1 for r in rows if r["statut"] in codes)  # noqa: E731
     moy = _averages(rows)
     kpis = [
@@ -484,15 +484,15 @@ def _suivi_content(request: Request, db: Session, data: tuple, max_rows: int) ->
     ]
     body, pills, colors = [], {}, {}
     for i, r in enumerate(rows[:max_rows]):
-        colors[(i, 1)] = colors[(i, len(headers) - 1)] = pdf.MUTED
+        colors[(i, 1)] = colors[(i, len(headers) - 2)] = pdf.MUTED  # matricule, responsable
         body.append([r["jour"].strftime("%d/%m/%Y"), r["matricule"], " ".join(filter(None, [r["nom"], r["prenom"]])),
                      *([r.get("direction")] if has_dir else []), r["service"], r["categorie"],
                      hhmm(r["premier_pointage"]) if r["premier_pointage"] else "",
                      r["statut_libelle"] + (" (allaitement)" if r.get("allaitement") else ""),
                      hhmm(r["dernier_pointage"]) if r["dernier_pointage"] else "", r["nb_pointages"] or "",
-                     hhmm(r["apres_1630"]) if r.get("apres_1630") else "",
                      *([hhmm(r["duree_validee"]) if r["duree_validee"] is not None else ""] if with_validee else []),
-                     hhmm(r["duree_effective"]) if r["duree_effective"] is not None else "", r["responsable"]])
+                     hhmm(r["duree_effective"]) if r["duree_effective"] is not None else "", r["responsable"],
+                     hhmm(r["apres_1630"]) if r.get("apres_1630") else ""])
         pills[(i, status_col)] = pdf.STATUS_PILLS.get(r["statut"], pdf.STATUS_PILLS["INCOMPLET"])
         for col, key in ((first_duration, "duree_validee_min") if with_validee else (None, None),
                          (first_duration + with_validee, "duree_effective_min")):
@@ -500,9 +500,9 @@ def _suivi_content(request: Request, db: Session, data: tuple, max_rows: int) ->
                 pills[(i, col)] = pdf.GOOD if float(r[key]) >= objectif else pdf.BAD
     body.append(["Moyenne", "", "présents au bureau", "", *([""] if has_dir else []), "",
                  hhmm(moy["premier"]) if moy["premier"] else "", "",
-                 hhmm(moy["dernier"]) if moy["dernier"] else "", "", "",
+                 hhmm(moy["dernier"]) if moy["dernier"] else "", "",
                  *([hhmm(moy["validee"]) if moy["validee"] else ""] if with_validee else []),
-                 hhmm(moy["effective"]) if moy["effective"] else "", ""])
+                 hhmm(moy["effective"]) if moy["effective"] else "", "", ""])
     return {"title": "Suivi journalier des pointages", "subtitle": f"{period} · {len(rows)} ligne(s)",
             "user": request.session.get("user", ""),
             "filters": [(k, v) for k, v in _filter_items(request, f, objectif, with_validee, len(rows))

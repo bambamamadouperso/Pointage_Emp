@@ -1142,6 +1142,7 @@ def test_shift_planning_import_and_calculations(configured, pg, logged_client):
         assert hm(rest.duree_validee) == "8h00" and rest.duree_effective is None  # repos crédité de 8h validées
         late = got[("E005", SAT)]  # 15h00 pour un poste de 14h (tolérance 45 min) : retard de 60 min
         assert late.statut == "RETARD" and late.retard_min == 60 and hm(late.duree_validee) == "7h00" and late.jour_ouvre
+        assert late.retard_arrivee == 60  # justification des retards : limite = début du poste + tolérance
         assert got[("E005", SUN)].statut == "ABSENT" and got[("E005", SUN)].jour_ouvre
         leave = got[("E005", MON2)]
         assert leave.statut == "CONGE_ANNUEL" and hm(leave.duree_validee) == "8h00"
@@ -3108,6 +3109,20 @@ def test_late_justifications(configured, pg, logged_client):
         cell = moussa.get(suivi).text.split("<tbody>")[1]
         assert "Justification refusée" in cell and "#justifier" in cell
 
+        # Un seul pointage au-delà de la limite (« Pointage incomplet ») : justifiable aussi. Seuil de retard
+        # ramené à 7h35 le lundi : Fall Ibou (un pointage à 7h40) a 10 min de retard d'arrivée.
+        with pg.begin() as c:
+            c.execute(text(f"INSERT INTO {SCHEMA}.pointage_parametres (cle, valeur, date_effet, auteur) "
+                           f"VALUES ('seuil_retard', '07:35', :d, 'test-retard')"), {"d": MON})
+        try:
+            ibou = rows(pg, MON)[("E004", MON)]
+            assert (ibou.statut, ibou.retard_min, ibou.retard_arrivee) == ("INCOMPLET", None, 10)
+            cell = logged_client.get(f"/suivi?date={MON.isoformat()}&q=E004").text.split("<tbody>")[1]
+            assert "Pointage incomplet" in cell and f"/retards?jour={MON.isoformat()}&matricule=E004#justifier" in cell
+        finally:
+            with pg.begin() as c:
+                c.execute(text(f"DELETE FROM {SCHEMA}.pointage_parametres WHERE auteur = 'test-retard'"))
+
         # Pièce jointe obligatoire (paramètre).
         logged_client.post("/admin/retards", data={"reasons": "Transport, Autre", "retro_days": "365", "file_required": "1"})
         assert "Joignez une pièce justificative" in justify(moussa, motif="Transport").text
@@ -3128,6 +3143,8 @@ def test_suivi_after_1630_column(configured, pg, logged_client):
 
     page = logged_client.get(f"/suivi?date={MON.isoformat()}&sort=apres&dir=desc").text
     assert "Après 16h30" in page
+    head = page.split("table class=\"suivi\"")[1].split("</thead>")[0]
+    assert head.index("Durée effective") < head.index("Après 16h30")  # dernière colonne
     body = page.split("table class=\"suivi\"")[1].split("</tbody>")[0]
     assert body.index("Diallo Awa") < body.index("Ndiaye Moussa")  # 0h40 avant 0h15
     awa = body.split("Diallo Awa")[1].split("</tr>")[0]
@@ -3201,4 +3218,32 @@ def test_weekly_worked_time_vs_target(configured, pg, logged_client):
     finally:
         with SessionLocal() as db:
             db.query(User).filter_by(username="hebdo_lect").delete()
+            db.commit()
+
+
+def test_test_accounts_command(configured, logged_client):
+    """python -m app.comptes_test : crée test.employe (lecteur) et test.rh (RH), relançable."""
+    from fastapi.testclient import TestClient
+
+    from app import comptes_test
+    from app.main import app
+    from app.models import User
+
+    try:
+        assert comptes_test.main(["--mdp-employe", "Employe-Test-2026", "--mdp-rh", "Rh-Test-2026!", "--matricule", "E002"]) == 0
+        assert comptes_test.main(["--mdp-employe", "Employe-Test-2026", "--mdp-rh", "Rh-Test-2026!"]) == 0  # relançable
+        with SessionLocal() as db:
+            emp, rh = db.query(User).filter_by(username="test.employe").one(), db.query(User).filter_by(username="test.rh").one()
+            assert (emp.role, emp.emp_matricule, rh.role, rh.sick_leave_hr) == ("lecteur", "E002", "rh", True)
+        c = TestClient(app)
+        c.post("/login", data={"username": "test.rh", "password": "Rh-Test-2026!"})
+        assert c.get("/admin/hebdo").status_code == 200
+        c = TestClient(app)
+        c.post("/login", data={"username": "test.employe", "password": "Employe-Test-2026"})
+        assert "Mes retards" in c.get("/retards").text
+        assert c.get("/admin/hebdo", follow_redirects=False).status_code in (302, 303)
+        assert comptes_test.main(["--mdp-rh", "court"]) == 1
+    finally:
+        with SessionLocal() as db:
+            db.query(User).filter(User.username.in_(["test.employe", "test.rh"])).delete()
             db.commit()

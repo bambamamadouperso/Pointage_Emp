@@ -81,7 +81,7 @@ CONGES = ("CONGE_ANNUEL", "CONGE_EXCEP", "CONGE_MATERNITE")
 MATERNITY_KINDS = {"maternite": "Congé de maternité", "allaitement": "Période d'allaitement"}
 ALLAITEMENT_HOURS = ("01:00", "02:00", "03:00")
 # Version des objets PostgreSQL : si elle change, ils sont réinstallés automatiquement.
-SQL_VERSION = 24
+SQL_VERSION = 25
 # Taille maximale des fichiers importés (planning, agents terrain).
 MAX_IMPORT_MB = 50
 # Limites des requêtes lancées depuis les pages web : une attente de verrou ou une requête lente ne doit jamais
@@ -726,7 +726,7 @@ RETURNS TABLE (
     statut text, statut_libelle text, debut_valide time, fin_validee time, pause_deduite interval,
     duree_validee interval, duree_effective interval, duree_validee_min numeric, duree_effective_min numeric,
     hors_liste boolean, terrain boolean, retard_min numeric, categorie text, poste text, direction text, site text,
-    allaitement interval, site_premier text, site_dernier text, activite text
+    allaitement interval, site_premier text, site_dernier text, activite text, retard_arrivee numeric
 )
 LANGUAGE sql STABLE
 -- La compilation JIT coûte plus d'une seconde par appel, pour aucun gain sur ce type de requête.
@@ -943,7 +943,15 @@ SELECT c.emp_key, COALESCE(c.matricule, c.emp_key), COALESCE(c.nom, 'Hors liste'
        CASE WHEN c.poste_type = 'travail'
                  THEN c.poste_code || ' · ' || to_char(c.s_debut, 'HH24"h"MI') || '–' || to_char(c.s_fin, 'HH24"h"MI')
             WHEN c.poste_code IS NOT NULL THEN c.poste_code || ' · ' || c.poste_libelle END,
-       c.direction, c.site, c.allaitement, c.site_p1, c.site_p2, c.a_libelle
+       c.direction, c.site, c.allaitement, c.site_p1, c.site_p2, c.a_libelle,
+       -- Retard d'arrivée : 1er pointage au-delà de la limite (seuil de retard ; horaires postés : début du poste +
+       -- tolérance), y compris avec un seul pointage (pointage incomplet). Sert à la justification des retards.
+       CASE WHEN c.statut NOT IN ('RETARD', 'INCOMPLET') THEN NULL
+            WHEN c.poste_type = 'travail' AND c.p1 >= c.s_debut + c.tolerance + COALESCE(c.allaitement, interval '0')
+                THEN round((extract(epoch FROM c.p1 - c.s_debut - COALESCE(c.allaitement, interval '0')) / 60)::numeric, 0)
+            WHEN c.poste_type IS NULL AND c.p1::time >= c.seuil_retard + COALESCE(c.allaitement, interval '0')
+                THEN round((extract(epoch FROM c.p1::time - c.debut_journee
+                                     - COALESCE(c.allaitement, interval '0')) / 60)::numeric, 0) END
 FROM c
 CROSS JOIN LATERAL (
     -- Durées attribuées (congé, télétravail…) : seulement pour les situations cochées dans le paramètre

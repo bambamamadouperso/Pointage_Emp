@@ -109,11 +109,13 @@ def by_day_ids(db, du: date, au: date) -> dict:
 
 
 def late_days(engine: Engine, m: pointage.Mapping, emp_key: str, du: date, au: date) -> list[dict]:
-    """Journées en retard d'un employé : jour, heure d'arrivée, minutes de retard."""
+    """Journées où le 1er pointage d'un employé dépasse la limite (seuil de retard, ou début du poste + tolérance
+    pour les horaires postés), même avec un seul pointage : jour, heure d'arrivée, minutes de retard."""
     S = pointage.qi(m.objs)
     with engine.connect() as c:
-        rows = c.execute(text(f"SELECT jour, premier_pointage, retard_min FROM {S}.f_pointage_journalier(:du, :au) "
-                              f"WHERE emp_key = :k AND statut = 'RETARD' ORDER BY jour DESC"),
+        rows = c.execute(text(f"SELECT jour, premier_pointage, retard_arrivee AS retard_min "
+                              f"FROM {S}.f_pointage_journalier(:du, :au) "
+                              f"WHERE emp_key = :k AND retard_arrivee > 0 ORDER BY jour DESC"),
                          {"du": du, "au": au, "k": emp_key}).mappings().all()
     return [{"jour": r["jour"], "arrivee": r["premier_pointage"].strftime("%H:%M") if r["premier_pointage"] else "",
              "retard_min": int(r["retard_min"] or 0)} for r in rows]
