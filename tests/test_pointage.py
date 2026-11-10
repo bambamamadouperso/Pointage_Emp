@@ -304,14 +304,16 @@ def test_rh_role_sees_everyone_without_sync(configured, client):
     assert r.headers["location"] == "/suivi"
     page = client.get(f"/suivi?date={MON.isoformat()}").text
     assert "E001</td>" in page and "E002</td>" in page and "E005</td>" in page
-    assert "Ressources humaines" in page and "/admin/planning" in page and "/connections" not in page
-    admin = client.get("/admin").text
-    assert "Horaires postés" in admin and "Source des pointages" not in admin and "Traitements planifiés" not in admin
-    for path in ("/admin/parametres", "/admin/planning", "/admin/terrain", "/admin/arrets", "/admin/resumes",
-                 "/admin/rappels", "/admin/maternite", "/admin/validations", "/rapports", "/arrets"):
+    # Menus « Ressources humaines » et « Mails et relances » réservés à l'administrateur ; les RH gardent
+    # « Temps hebdomadaire » (menu Suivi).
+    assert "Ressources humaines" not in page and "Mails et relances" not in page and "/admin/planning" not in page
+    assert 'href="/admin/hebdo"' in page and "/connections" not in page
+    for path in ("/admin/hebdo", "/rapports", "/arrets", "/retards", "/activites"):
         assert client.get(path, follow_redirects=False).status_code == 200, path
     for path in ("/", "/jobs", "/runs", "/logs", "/data", "/connections", "/connections/new", "/admin/pointage",
-                 "/admin/mails", "/admin/users", "/admin/audit"):
+                 "/admin/mails", "/admin/users", "/admin/audit", "/admin", "/admin/parametres", "/admin/planning",
+                 "/admin/terrain", "/admin/arrets", "/admin/resumes", "/admin/rappels", "/admin/maternite",
+                 "/admin/validations", "/admin/sites", "/admin/retards", "/admin/activites", "/admin/verifier"):
         r = client.get(path, follow_redirects=False)
         assert r.status_code == 303 and r.headers["location"] == "/suivi", path
     assert client.post("/connections/save", data={"name": "x"}, headers={"accept": "application/json"}).status_code == 403

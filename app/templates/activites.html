@@ -5,7 +5,7 @@
   <div><h1>Activités extérieures</h1>
     <p class="muted">Formation, réunion à l'extérieur, visite client… : déclarez l'activité (journée entière ou plage horaire)
       pour qu'elle ne compte ni en absence, ni en retard, ni en pointage partiel.</p></div>
-  {% if can(role, 'rh') %}<a href="/admin/activites" class="muted">Paramètres et circuit →</a>{% endif %}
+  {% if can(role, 'admin') %}<a href="/admin/activites" class="muted">Paramètres et circuit →</a>{% endif %}
 </div>
 
 {% if pending %}

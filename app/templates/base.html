@@ -52,9 +52,10 @@
     {# Groupes repliables (état mémorisé dans le navigateur) ; celui de la page affichée est toujours ouvert. #}
     {% macro group(key, label, active) %}<details class="nav-sec" data-nav-key="{{ key }}" open {% if active %}data-active{% endif %}>
       <summary class="nav-group">{{ label }}<span class="nav-caret" aria-hidden="true">▾</span></summary>{{ caller() }}</details>{% endmacro %}
-    {% call group('suivi', 'Suivi', path.startswith(('/suivi', '/rapports', '/arrets', '/maternite', '/activites', '/retards'))) %}
+    {% call group('suivi', 'Suivi', path.startswith(('/suivi', '/rapports', '/arrets', '/maternite', '/activites', '/retards', '/admin/hebdo'))) %}
     {{ nav('/suivi', 'clock', 'Suivi journalier', path.startswith('/suivi')) }}
     {{ nav('/rapports', 'chart', 'Rapports', path.startswith('/rapports')) }}
+    {% if can(role, 'rh') %}{{ nav('/admin/hebdo', 'chart', 'Temps hebdomadaire', path.startswith('/admin/hebdo')) }}{% endif %}
     {% set late_n = late_pending_count(user, role) %}
     <a href="/retards" class="{{ 'active' if path.startswith('/retards') }}" {% if path.startswith('/retards') %}aria-current="page"{% endif %}>
       <svg class="ico"><use href="#i-clock"/></svg><span>Justification des retards</span>{% if late_n %}<span class="nav-badge" title="{{ late_n }} justification(s) à approuver">{{ late_n }}</span>{% endif %}</a>
@@ -78,12 +79,11 @@
     {% if can(role, 'admin') %}{{ nav('/connections', 'plug', 'Connexions', path.startswith('/connections')) }}{% endif %}
     {% endcall %}
     {% endif %}
-    {% if can(role, 'rh') %}
     {% set is_admin = can(role, 'admin') %}
-    {% call group('rh', 'Ressources humaines', path == '/admin' or path.startswith(('/admin/parametres', '/admin/terrain', '/admin/planning', '/admin/maternite', '/admin/arrets', '/admin/verifier', '/admin/activites', '/admin/retards', '/admin/hebdo'))) %}
+    {% if is_admin %}
+    {% call group('rh', 'Ressources humaines', path == '/admin' or path.startswith(('/admin/parametres', '/admin/terrain', '/admin/planning', '/admin/maternite', '/admin/arrets', '/admin/verifier', '/admin/activites', '/admin/retards'))) %}
     {{ nav('/admin', 'grid', "Vue d'ensemble", path == '/admin') }}
     {{ nav('/admin/parametres', 'sliders', 'Paramètres horaires', path.startswith('/admin/parametres')) }}
-    {{ nav('/admin/hebdo', 'chart', 'Temps hebdomadaire', path.startswith('/admin/hebdo')) }}
     {{ nav('/admin/terrain', 'pin', 'Agents terrain', path.startswith('/admin/terrain')) }}
     {{ nav('/admin/planning', 'cal', 'Horaires postés', path.startswith('/admin/planning')) }}
     {{ nav('/admin/maternite', 'user', 'Maternité : périodes et circuit', path.startswith('/admin/maternite')) }}
@@ -97,10 +97,9 @@
     {{ nav('/admin/rappels', 'bell', 'Rappels de pointage', path.startswith('/admin/rappels')) }}
     {{ nav('/admin/resumes', 'chart', 'Résumés par mail', path.startswith('/admin/resumes')) }}
     {{ nav('/admin/sites', 'pin', 'Surveillance des sites', path.startswith('/admin/sites')) }}
-    {% if is_admin %}{{ nav('/admin/mails', 'mail', 'Mails de badge', path.startswith('/admin/mails')) }}
-    {{ nav('/admin/envoi', 'sliders', "Serveur d'envoi des e-mails", path.startswith('/admin/envoi')) }}{% endif %}
+    {{ nav('/admin/mails', 'mail', 'Mails de badge', path.startswith('/admin/mails')) }}
+    {{ nav('/admin/envoi', 'sliders', "Serveur d'envoi des e-mails", path.startswith('/admin/envoi')) }}
     {% endcall %}
-    {% if is_admin %}
     {% call group('systeme', 'Administration', path.startswith(('/admin/pointage', '/admin/users', '/admin/audit', '/admin/analyses', '/admin/apparence'))) %}
     {{ nav('/admin/analyses', 'chart', 'Analyses', path.startswith('/admin/analyses')) }}
     {{ nav('/admin/apparence', 'sliders', 'Apparence', path.startswith('/admin/apparence')) }}
@@ -108,7 +107,6 @@
     {{ nav('/admin/users', 'users', 'Utilisateurs', path.startswith('/admin/users')) }}
     {{ nav('/admin/audit', 'shield', "Journal d'audit", path.startswith('/admin/audit')) }}
     {% endcall %}
-    {% endif %}
     {% endif %}
     {% call group('aide', 'Aide', path.startswith('/aide')) %}
     {{ nav('/aide', 'help', 'Indicateurs et calculs', path.startswith('/aide')) }}

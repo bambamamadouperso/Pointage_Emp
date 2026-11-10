@@ -7,7 +7,7 @@
   <div><h1>Temps hebdomadaire</h1>
     <p class="muted">Temps travaillé par employé et par semaine (lundi → dimanche), comparé à l'objectif hebdomadaire
       {% if stats and stats.objectif %}de <strong>{{ fmt(stats.objectif) }}</strong>{% endif %}
-      (<a href="/admin/parametres">Paramètres horaires</a>) · du {{ f.du | jour_fr }} au {{ f.au | jour_fr }}.</p></div>
+      ({% if can(role, 'admin') %}<a href="/admin/parametres">Paramètres horaires</a>{% else %}Paramètres horaires{% endif %}) · du {{ f.du | jour_fr }} au {{ f.au | jour_fr }}.</p></div>
   {% if data %}<div class="actions"><a class="btn" href="/admin/hebdo/export.xlsx?{{ query }}">⬇ Export Excel</a></div>{% endif %}
 </div>
 

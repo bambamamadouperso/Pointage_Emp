@@ -5,7 +5,7 @@
   <div><h1>Justification des retards</h1>
     <p class="muted">Justifiez un retard avec un motif et, si besoin, une pièce jointe ; votre responsable (N+1) l'approuve.
       Le retard apparaît alors comme <span class="late-mark ok">✓ Justifié</span> dans le suivi.</p></div>
-  {% if can(role, 'rh') %}<a href="/admin/retards" class="muted">Paramètres et circuit →</a>{% endif %}
+  {% if can(role, 'admin') %}<a href="/admin/retards" class="muted">Paramètres et circuit →</a>{% endif %}
 </div>
 
 {% if pending %}

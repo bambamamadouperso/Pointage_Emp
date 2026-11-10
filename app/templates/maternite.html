@@ -5,7 +5,7 @@
   <div><h1>Maternité et allaitement</h1>
     <p class="muted">{% if hr %}Saisie par les RH (validée d'office) et suivi des demandes des employées.
       {% else %}Demandez votre congé de maternité ou votre période d'allaitement : la demande suit le circuit de validation.{% endif %}</p></div>
-  {% if can(role, 'rh') %}<a href="/admin/maternite" class="muted">Périodes enregistrées et circuit →</a>{% endif %}
+  {% if can(role, 'admin') %}<a href="/admin/maternite" class="muted">Périodes enregistrées et circuit →</a>{% endif %}
 </div>
 
 {% if pending %}
