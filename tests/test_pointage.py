@@ -2879,15 +2879,15 @@ def test_pptx_exports(configured, logged_client):
 
 
 def test_application_name(configured, logged_client):
-    """L'application s'appelle « Suivi de présence » : onglet, menu, page de connexion, exports."""
+    """L'application s'appelle « HR Smart - Attendance » : onglet, menu, page de connexion, exports."""
     from fastapi.testclient import TestClient
 
     from app.main import app
 
     page = logged_client.get(f"/suivi?date={MON.isoformat()}").text
-    assert "· Suivi de présence</title>" in page and "<strong>Suivi de présence</strong>" in page
-    assert "<h1>Suivi de présence</h1>" in TestClient(app).get("/login").text
-    assert "(SUIVI DE PRÉSENCE) Tj" in _pdf_text(logged_client.get(f"/suivi/export.pdf?date={MON.isoformat()}").content)
+    assert "· HR Smart - Attendance</title>" in page and "<strong>HR Smart - Attendance</strong>" in page
+    assert "<h1>HR Smart - Attendance</h1>" in TestClient(app).get("/login").text
+    assert "(HR SMART - ATTENDANCE) Tj" in _pdf_text(logged_client.get(f"/suivi/export.pdf?date={MON.isoformat()}").content)
 
 
 def test_outings_external_activities(configured, pg, logged_client):
@@ -3133,3 +3133,65 @@ def test_suivi_after_1630_column(configured, pg, logged_client):
     assert values["E001"] == timedelta(minutes=40) and values["E002"] == timedelta(minutes=15)
     assert values["E005"] is None  # absente
     assert logged_client.get(f"/suivi/export.pdf?date={MON.isoformat()}").status_code == 200
+
+
+def test_weekly_worked_time_vs_target(configured, pg, logged_client):
+    """RH → Temps hebdomadaire : temps travaillé par semaine et par employé contre l'objectif (paramètre 40h)."""
+    import io as _io
+
+    from openpyxl import load_workbook
+
+    from app import hebdo
+
+    with SessionLocal() as db:
+        m = pointage.Mapping.from_json(db.query(PointageConfig).one().data)
+    assert pointage.params_at(pg, m, MON)["objectif_hebdo"] == "40:00"
+    with pytest.raises(pointage.PointageError):
+        pointage.validate_param("objectif_hebdo", "200:00")
+    assert pointage.validate_param("objectif_hebdo", "37h30") == "37:30"
+    assert 'name="objectif_hebdo" value="40:00"' in logged_client.get("/admin/parametres").text
+
+    q = f"/admin/hebdo?semaine={TUE.isoformat()}&semaines=1"
+    page = logged_client.get(q).text
+    assert "Temps hebdomadaire" in page and "de <strong>40h00</strong>" in page and "Sem. du 21/09" in page
+    data = hebdo.weekly(pg, m, pointage.Filters(du=MON, au=MON + timedelta(days=6), population="liste"))
+    rows = {e["matricule"]: e for e in data["rows"]}
+    with pg.connect() as c:
+        total = c.execute(text(f"SELECT COALESCE(sum(extract(epoch FROM duree_effective)), 0) / 60 FROM "
+                               f"{SCHEMA}.f_pointage_journalier(:d, :a) WHERE matricule = 'E001'"),
+                          {"d": MON, "a": MON + timedelta(days=6)}).scalar()
+    assert round(rows["E001"]["weeks"][MON]) == round(float(total)) and rows["E001"]["ecart"] == rows["E001"]["total"] - 2400
+    assert all(e["ecart"] < 0 for e in hebdo.sort_rows(data["rows"], "ecart")[:1])
+    under = logged_client.get(q + "&sous=1").text
+    assert "Seulement les employés sous l" in under
+
+    # Objectif à 10h : les employés qui ont travaillé au moins 10h dans la semaine l'atteignent.
+    params = pointage.params_at(pg, m, MON)
+    data_p = {k: v for k, v in params.items() if pointage.PARAM_TYPES[k] in ("time", "duration", "hours")}
+    data_p.update({"objectif_hebdo": "10:00", "jours_ouvres": params["jours_ouvres"].split(","), "date_effet": "2026-09-01"})
+    try:
+        assert "1 paramètre(s) modifié(s)" in logged_client.post("/admin/parametres", data=data_p, follow_redirects=True).text
+        assert "de <strong>10h00</strong>" in logged_client.get(q).text
+        ws = load_workbook(_io.BytesIO(logged_client.get("/admin/hebdo/export.xlsx?" + q.split("?")[1]).content)).active
+        headers = [c.value for c in ws[1]]
+        assert headers[5] == "Semaine du 21/09/2026 (h)" and "Objectif hebdo (h)" in headers
+        line = next(r for r in ws.iter_rows(min_row=2, values_only=True) if r[0] == "E001")
+        assert line[headers.index("Objectif hebdo (h)")] == 10
+    finally:
+        with pg.begin() as c:
+            c.execute(text(f"DELETE FROM {SCHEMA}.pointage_parametres WHERE cle = 'objectif_hebdo' AND valeur = '10:00'"))
+
+    # Réservé aux RH et aux administrateurs.
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    from app.models import User
+    logged_client.post("/admin/users/save", data={"username": "hebdo_lect", "role": "lecteur", "password": "motdepasse1"})
+    try:
+        c = TestClient(app)
+        c.post("/login", data={"username": "hebdo_lect", "password": "motdepasse1"})
+        assert c.get("/admin/hebdo", follow_redirects=False).status_code in (302, 303)
+    finally:
+        with SessionLocal() as db:
+            db.query(User).filter_by(username="hebdo_lect").delete()
+            db.commit()

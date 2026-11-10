@@ -1,4 +1,4 @@
-# Suivi de présence
+# HR Smart - Attendance
 
 Suivi des pointages et des présences, avec synchronisation MariaDB / HFSQL / Google Sheets / Smartsheet → PostgreSQL.
 

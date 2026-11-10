@@ -451,7 +451,7 @@ def build_notification(leave: SickLeave, event: str, base_url: str, company: str
         if leave.comment:
             rows.append(("Commentaire", leave.comment[:300]))
         title, intro, button = (f"Arrêt maladie à valider — {leave.name}",
-                                "Un arrêt maladie attend votre validation dans l'application Suivi de présence.",
+                                "Un arrêt maladie attend votre validation dans l'application HR Smart - Attendance.",
                                 "Examiner l'arrêt")
     elif event == "valide":
         title, intro, button = (f"Arrêt maladie validé — {leave.name}",

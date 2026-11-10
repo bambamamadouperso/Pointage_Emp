@@ -117,15 +117,23 @@ DEFAULT_HTML = """<!doctype html>
 # --------------------------------------------------------------------------- réglages
 
 
+_OLD_FROM_NAMES = {"Suivi de présence"}
+
+
 def get_settings(db) -> MailSettings:
     row = db.scalars(select(MailSettings).order_by(MailSettings.id)).first()
     if row is None:
         row = MailSettings(subject=DEFAULT_SUBJECT, html=DEFAULT_HTML)
         db.add(row)
         db.commit()
-    elif row.subject in _OLD_SUBJECTS:  # ancien objet par défaut (accord incorrect avec « Départ »)
-        row.subject = DEFAULT_SUBJECT
-        db.commit()
+    else:
+        changed = False
+        if row.subject in _OLD_SUBJECTS:  # ancien objet par défaut (accord incorrect avec « Départ »)
+            row.subject, changed = DEFAULT_SUBJECT, True
+        if row.from_name in _OLD_FROM_NAMES:  # ancien nom de l'application laissé par défaut
+            row.from_name, changed = APP_NAME, True
+        if changed:
+            db.commit()
     return row
 
 

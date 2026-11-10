@@ -136,7 +136,7 @@ RULES = [
     ("GET", re.compile(r"^/aide$"), "lecteur"),
     # Réglages RH (pas la source des pointages, les mails de badge/SMTP, les utilisateurs ni l'audit).
     ("GET", re.compile(r"^/admin$"), "rh"),
-    ("*", re.compile(r"^/admin/(parametres|feries|planning|terrain|arrets|resumes|rappels|maternite|validations|verifier|sites|activites|retards)(/.*)?$"), "rh"),
+    ("*", re.compile(r"^/admin/(parametres|feries|planning|terrain|arrets|resumes|rappels|maternite|validations|verifier|sites|activites|retards|hebdo)(/.*)?$"), "rh"),
     ("GET", re.compile(r"^/$"), "manager"),
     ("GET", re.compile(r"^/(jobs|runs|logs|data)(/.*)?$"), "manager"),
     ("POST", re.compile(r"^/jobs/\d+/(run|stop)$"), "manager"),

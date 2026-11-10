@@ -80,9 +80,10 @@
     {% endif %}
     {% if can(role, 'rh') %}
     {% set is_admin = can(role, 'admin') %}
-    {% call group('rh', 'Ressources humaines', path == '/admin' or path.startswith(('/admin/parametres', '/admin/terrain', '/admin/planning', '/admin/maternite', '/admin/arrets', '/admin/verifier', '/admin/activites', '/admin/retards'))) %}
+    {% call group('rh', 'Ressources humaines', path == '/admin' or path.startswith(('/admin/parametres', '/admin/terrain', '/admin/planning', '/admin/maternite', '/admin/arrets', '/admin/verifier', '/admin/activites', '/admin/retards', '/admin/hebdo'))) %}
     {{ nav('/admin', 'grid', "Vue d'ensemble", path == '/admin') }}
     {{ nav('/admin/parametres', 'sliders', 'Paramètres horaires', path.startswith('/admin/parametres')) }}
+    {{ nav('/admin/hebdo', 'chart', 'Temps hebdomadaire', path.startswith('/admin/hebdo')) }}
     {{ nav('/admin/terrain', 'pin', 'Agents terrain', path.startswith('/admin/terrain')) }}
     {{ nav('/admin/planning', 'cal', 'Horaires postés', path.startswith('/admin/planning')) }}
     {{ nav('/admin/maternite', 'user', 'Maternité : périodes et circuit', path.startswith('/admin/maternite')) }}

@@ -19,8 +19,9 @@
   <div class="param-grid">
     {% for key, label, kind, default in params if kind not in ('days', 'flags') %}
       <label>{{ label }}
-        <input type="time" name="{{ key }}" value="{{ values[key] }}" required step="60">
-        <span class="muted small">{% if kind == 'duration' %}durée (heures:minutes){% endif %} défaut {{ default }}</span>
+        {% if kind == 'hours' %}<input name="{{ key }}" value="{{ values[key] }}" required pattern="\d{1,3}(:[0-5]\d)?" inputmode="numeric" placeholder="40:00">
+        {% else %}<input type="time" name="{{ key }}" value="{{ values[key] }}" required step="60">{% endif %}
+        <span class="muted small">{% if kind in ('duration', 'hours') %}durée (heures:minutes){% endif %} défaut {{ default }}</span>
       </label>
     {% endfor %}
   </div>

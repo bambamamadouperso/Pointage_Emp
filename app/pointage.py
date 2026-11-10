@@ -31,6 +31,7 @@ PARAMS = [
     ("duree_teletravail", "Durée attribuée par jour de télétravail", "duration", "08:00"),
     ("duree_terrain", "Durée standard minimale par jour pour un agent terrain", "duration", "08:00"),
     ("objectif_duree", "Objectif de durée standard (vert si atteint, rouge sinon)", "duration", "08:00"),
+    ("objectif_hebdo", "Objectif de temps travaillé par semaine (analyse RH « Temps hebdomadaire »)", "hours", "40:00"),
     ("duree_arret_maladie", "Durée attribuée par jour d'arrêt maladie", "duration", "08:00"),
     ("duree_maternite", "Durée attribuée par jour de congé de maternité", "duration", "08:00"),
     ("heures_allaitement", "Heures d'allaitement par jour (période d'allaitement : 01:00, 02:00 ou 03:00)", "duration", "01:00"),
@@ -125,6 +126,11 @@ def validate_param(key: str, raw: str) -> str:
         if not days:
             raise PointageError("Choisissez au moins un jour ouvré.")
         return ",".join(str(d) for d in days)
+    if kind == "hours":  # nombre d'heures pouvant dépasser 24 (ex. 40:00 par semaine)
+        m = re.fullmatch(r"(\d{1,3})\s*(?:[:hH]\s*(\d{1,2})?)?", raw)
+        if not m or int(m.group(1)) > 168 or int(m.group(2) or 0) > 59:
+            raise PointageError(f"{PARAM_LABELS[key]} : format attendu HH:MM (ex. 40:00), 168 heures au plus.")
+        return f"{int(m.group(1)):02d}:{int(m.group(2) or 0):02d}"
     m = re.fullmatch(r"(\d{1,2})\s*[:hH]\s*(\d{1,2})?", raw)
     if not m:
         raise PointageError(f"{PARAM_LABELS[key]} : format attendu HH:MM (ex. 07:30).")

@@ -295,7 +295,7 @@ def build_notification(req: OutingRequest, event: str, base_url: str, company: s
         rows.append(("Étape à valider", step_label(steps[req.step]) if req.step < len(steps) else "—"))
         rows.append(("Déclarée par", req.created_by))
         title, intro, button = (f"Activité extérieure à valider — {req.name}",
-                                "Une activité extérieure attend votre validation dans l'application Suivi de présence.",
+                                "Une activité extérieure attend votre validation dans l'application HR Smart - Attendance.",
                                 "Examiner la déclaration")
     elif event == "valide":
         title, intro, button = (f"Activité extérieure validée — {req.name}",

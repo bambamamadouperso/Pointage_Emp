@@ -270,7 +270,7 @@ def build_notification(req: LateJustification, event: str, base_url: str, compan
         steps = leave_steps(req)
         rows.append(("Étape à valider", step_label(steps[req.step]) if req.step < len(steps) else "—"))
         title, intro, button = (f"Justification de retard à valider — {req.name}",
-                                "Un retard a été justifié et attend votre validation dans l'application Suivi de présence.",
+                                "Un retard a été justifié et attend votre validation dans l'application HR Smart - Attendance.",
                                 "Examiner la justification")
     elif event == "valide":
         title, intro, button = (f"Retard justifié — {req.name}",

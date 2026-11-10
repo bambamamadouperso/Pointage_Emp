@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title %}Temps hebdomadaire{% endblock %}
+{% block main_class %}container wide{% endblock %}
+{% block content %}
+{% from "_multiselect.html" import multiselect %}
+<div class="page-head">
+  <div><h1>Temps hebdomadaire</h1>
+    <p class="muted">Temps travaillé par employé et par semaine (lundi → dimanche), comparé à l'objectif hebdomadaire
+      {% if stats and stats.objectif %}de <strong>{{ fmt(stats.objectif) }}</strong>{% endif %}
+      (<a href="/admin/parametres">Paramètres horaires</a>) · du {{ f.du | jour_fr }} au {{ f.au | jour_fr }}.</p></div>
+  {% if data %}<div class="actions"><a class="btn" href="/admin/hebdo/export.xlsx?{{ query }}">⬇ Export Excel</a></div>{% endif %}
+</div>
+
+{% if not configured %}
+  <div class="flash warn">Le module de pointage n'est pas encore configuré.</div>
+{% else %}
+<form method="get" class="card form report-filters">
+  <div class="row">
+    <label>Dernière semaine <span class="muted small">(un jour de la semaine)</span>
+      <input type="date" name="semaine" value="{{ (f.au - timedelta(days=6)).isoformat() }}"></label>
+    <label>Nombre de semaines <select name="semaines">{% for n in week_choices %}<option value="{{ n }}" {{ 'selected' if n == count }}>{{ n }}</option>{% endfor %}</select></label>
+    {{ multiselect('service', 'Service', services, f.service) }}
+    {% if has_direction %}{{ multiselect('direction', 'Direction', directions, f.direction, 'Toutes') }}{% endif %}
+    <label>Employé <input type="search" name="q" value="{{ f.q }}" placeholder="Matricule ou nom"></label>
+    <label>Trier par <select name="tri">{% for code, label in sorts.items() %}<option value="{{ code }}" {{ 'selected' if sort == code }}>{{ label }}</option>{% endfor %}</select></label>
+  </div>
+  <div class="row">
+    <label class="check"><input type="checkbox" name="sous" value="1" {{ 'checked' if under }}> Seulement les employés sous l'objectif (en moyenne)</label>
+    <div class="form-actions"><button class="btn primary">Afficher</button></div>
+  </div>
+</form>
+
+{% if error %}<div class="flash err">{{ error }}</div>{% endif %}
+{% if data %}
+<section class="stats report-kpis">
+  <div class="stat c-sky"><span class="label">Employés</span><span class="value">{{ stats.employes | num }}</span></div>
+  <div class="stat c-ok"><span class="label">À l'objectif</span><span class="value">{{ stats.a_objectif | num }}</span><span class="sub muted small">moyenne ≥ objectif</span></div>
+  <div class="stat c-err"><span class="label">Sous l'objectif</span><span class="value">{{ stats.sous_objectif | num }}</span></div>
+  <div class="stat c-teal"><span class="label">Moyenne hebdomadaire</span><span class="value">{{ fmt(stats.moyenne) }}</span><span class="sub muted small">objectif {{ fmt(stats.objectif) }}</span></div>
+</section>
+
+<section class="card">
+  <div class="card-head"><div><h2>Par employé</h2>
+    <p class="muted small">{{ data.rows | length | num }} employé(s) · temps travaillé = durée effective du suivi (pointages, pause déduite,
+      et durées attribuées : congé, télétravail…). <span class="dur dur-ok">vert</span> objectif atteint, <span class="dur dur-ko">rouge</span> sous l'objectif.</p></div></div>
+  {% if not data.rows %}<p class="empty">Aucun employé.</p>{% else %}
+  <div class="table-wrap"><table class="report-table hebdo-table">
+    <thead><tr><th>Matricule</th><th>Nom</th>{% if has_direction %}<th>Direction</th>{% endif %}<th>Service</th>
+      {% for w in data.weeks %}<th class="right" title="Objectif {{ fmt(data.targets[w]) }}">Sem. du {{ w.strftime('%d/%m') }}</th>{% endfor %}
+      <th class="right">Moyenne</th><th class="right">Écart / sem.</th><th class="right">Atteinte</th></tr></thead>
+    <tbody>{% for e in data.rows[:500] %}
+      <tr><td class="mono small">{{ e.matricule }}</td><td class="nowrap">{{ e.nom }}</td>
+        {% if has_direction %}<td class="small">{{ e.direction or '—' }}</td>{% endif %}<td class="small">{{ e.service or '—' }}</td>
+        {% for w in data.weeks %}{% set v = e.weeks.get(w, 0) %}
+          <td class="right"><span class="dur {{ 'dur-ok' if v >= data.targets[w] else 'dur-ko' }}">{{ fmt(v) }}</span></td>{% endfor %}
+        <td class="right"><strong>{{ fmt(e.moyenne) }}</strong></td>
+        <td class="right {{ 'hot' if e.ecart < 0 }}">{{ ('+' if e.ecart > 0 else '') ~ fmt(e.ecart) }}</td>
+        <td class="right">{{ '%.0f %%' | format(e.taux) if e.taux is not none else '—' }}</td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+  {% if data.rows | length > 500 %}<p class="muted small">Les 500 premiers à l'écran ; tous dans l'export Excel.</p>{% endif %}
+  {% endif %}
+</section>
+{% endif %}
+{% endif %}
+{% endblock %}
